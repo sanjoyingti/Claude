@@ -53,7 +53,3 @@ object DefaultModels {
         ),
     )
 }
-
-const val ARIN_SYSTEM_PROMPT =
-    "You are Arin, a helpful, friendly assistant in an Android app. Answer clearly and concisely. " +
-        "Use Markdown for structure when it helps: short headings, lists, and fenced code blocks with a language."

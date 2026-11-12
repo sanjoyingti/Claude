@@ -32,8 +32,16 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
+import com.arin.artifact.Artifact
+import com.arin.artifact.ArtifactCard
+import com.arin.artifact.ArtifactViewer
+import com.arin.artifact.Artifacts
 import com.arin.data.Attachment
 import com.arin.data.Message
+import com.arin.data.Source
 import com.arin.design.ArinMark
 import com.arin.design.ImageThumb
 import com.arin.design.ImageViewer
@@ -100,6 +108,11 @@ fun ArinMessage(message: Message, showThinking: Boolean, isLast: Boolean, onRetr
                 }
             } else {
                 SelectionContainer { MarkdownText(message.text) }
+                val artifacts = remember(message.text) { Artifacts.find(message.text) }
+                var open by remember { mutableStateOf<Artifact?>(null) }
+                artifacts.forEach { art -> ArtifactCard(art) { open = art } }
+                open?.let { ArtifactViewer(it) { open = null } }
+                if (message.sources.isNotEmpty()) Sources(message.sources)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (!message.failed) {
@@ -111,9 +124,30 @@ fun ArinMessage(message: Message, showThinking: Boolean, isLast: Boolean, onRetr
     }
 }
 
+/** Web pages a reply drew on; tap one to open it in the browser. */
+@Composable
+private fun Sources(sources: List<Source>) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text("Sources", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        sources.forEachIndexed { i, src ->
+            Text(
+                "${i + 1}. ${src.title}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().clickable {
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(src.url))) }
+                }.padding(vertical = 4.dp),
+            )
+        }
+    }
+}
+
 /** The reply as it streams in. */
 @Composable
-fun LiveReply(text: String, thinking: String, showThinking: Boolean) {
+fun LiveReply(text: String, thinking: String, showThinking: Boolean, status: String?) {
     Row(Modifier.fillMaxWidth()) {
         ArinMark(size = 22.dp, modifier = Modifier.padding(top = 2.dp))
         Spacer(Modifier.width(10.dp))
@@ -123,6 +157,11 @@ fun LiveReply(text: String, thinking: String, showThinking: Boolean) {
                 Spacer(Modifier.size(8.dp))
             }
             when {
+                status != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text(status, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 text.isNotEmpty() -> MarkdownText(text)
                 thinking.isEmpty() || !showThinking -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))

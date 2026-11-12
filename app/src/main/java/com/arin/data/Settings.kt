@@ -42,6 +42,27 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("show_thinking", true)
         set(value) = prefs.edit().putBoolean("show_thinking", value).apply()
 
+    var webSearch: Boolean
+        get() = prefs.getBoolean("web_search", true)
+        set(value) = prefs.edit().putBoolean("web_search", value).apply()
+
+    var memoryOn: Boolean
+        get() = prefs.getBoolean("memory_on", true)
+        set(value) = prefs.edit().putBoolean("memory_on", value).apply()
+
+    var notifyOnReply: Boolean
+        get() = prefs.getBoolean("notify_on_reply", true)
+        set(value) = prefs.edit().putBoolean("notify_on_reply", value).apply()
+
+    /** Whether Arin has already asked Android for permission to show notifications. */
+    var askedNotifications: Boolean
+        get() = prefs.getBoolean("asked_notifications", false)
+        set(value) = prefs.edit().putBoolean("asked_notifications", value).apply()
+
+    var voiceRate: Float
+        get() = prefs.getFloat("voice_rate", 1.0f)
+        set(value) = prefs.edit().putFloat("voice_rate", value).apply()
+
     fun key(provider: Provider): String = keys.getString(provider.name, "").orEmpty()
 
     fun setKey(provider: Provider, value: String) = keys.edit().putString(provider.name, value.trim()).apply()

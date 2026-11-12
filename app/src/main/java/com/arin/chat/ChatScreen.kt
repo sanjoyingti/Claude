@@ -3,6 +3,7 @@ package com.arin.chat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,13 +79,44 @@ private val starters = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
+fun ChatScreen(
+    vm: ChatViewModel,
+    onOpenSettings: () -> Unit,
+    onOpenProjects: () -> Unit,
+    onOpenProject: (com.arin.data.Project) -> Unit,
+    startVoice: Boolean = false,
+    onVoiceStarted: () -> Unit = {},
+) {
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var input by rememberSaveable { mutableStateOf("") }
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.attach(it) }
     val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { vm.attach(it) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var voiceOpen by rememberSaveable { mutableStateOf(false) }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) voiceOpen = true else vm.notice = "Voice mode needs microphone permission."
+    }
+    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    fun openVoice() {
+        val has = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (has) voiceOpen = true else micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+    fun send() {
+        // Ask once, at the first message, so a finished reply can notify while Arin is in the background.
+        if (android.os.Build.VERSION.SDK_INT >= 33 && !vm.settings.askedNotifications) {
+            vm.settings.askedNotifications = true
+            notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        vm.send(input)
+        input = ""
+    }
+    LaunchedEffect(startVoice) {
+        if (startVoice) { onVoiceStarted(); openVoice() }
+    }
+    if (voiceOpen) com.arin.voice.VoiceMode(vm, onClose = { voiceOpen = false })
 
     LaunchedEffect(vm.sharedText) {
         val shared = vm.sharedText ?: return@LaunchedEffect
@@ -104,6 +136,8 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 vm,
                 onPick = { scope.launch { drawer.close() } },
                 onSettings = { scope.launch { drawer.close() }; onOpenSettings() },
+                onProjects = { scope.launch { drawer.close() }; onOpenProjects() },
+                onProject = { p -> scope.launch { drawer.close() }; onOpenProject(p) },
             )
         },
     ) {
@@ -114,7 +148,8 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 TopBar(
                     vm,
                     onMenu = { scope.launch { drawer.open() } },
-                    onNew = { vm.newChat(); input = "" },
+                    onNew = { vm.newChat(vm.chatProject.takeIf { vm.messages.isEmpty() }); input = "" },
+                    onProject = onOpenProject,
                 )
             },
             bottomBar = {
@@ -122,7 +157,8 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     vm,
                     text = input,
                     onText = { input = it },
-                    onSend = { vm.send(input); input = "" },
+                    onSend = { send() },
+                    onVoice = { openVoice() },
                     onPhotos = {
                         pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
@@ -133,7 +169,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
                 if (vm.messages.isEmpty() && !vm.streaming) {
-                    Welcome(onPick = { input = it })
+                    Welcome(project = vm.chatProject?.name, onPick = { input = it })
                 } else {
                     Conversation(vm, onEdit = { i -> vm.startEdit(i)?.let { input = it } })
                 }
@@ -143,7 +179,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun TopBar(vm: ChatViewModel, onMenu: () -> Unit, onNew: () -> Unit) {
+private fun TopBar(vm: ChatViewModel, onMenu: () -> Unit, onNew: () -> Unit, onProject: (com.arin.data.Project) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp),
@@ -158,6 +194,16 @@ private fun TopBar(vm: ChatViewModel, onMenu: () -> Unit, onNew: () -> Unit) {
             ) {
                 Row(Modifier.padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column {
+                        vm.chatProject?.let { p ->
+                            Text(
+                                "▸ " + p.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.secondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.clickable { onProject(p) },
+                            )
+                        }
                         Text(
                             vm.title.takeIf { vm.messages.isNotEmpty() } ?: "Arin",
                             style = MaterialTheme.typography.titleSmall,
@@ -196,7 +242,7 @@ private fun TopBar(vm: ChatViewModel, onMenu: () -> Unit, onNew: () -> Unit) {
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun Welcome(onPick: (String) -> Unit) {
+private fun Welcome(project: String?, onPick: (String) -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -204,10 +250,11 @@ private fun Welcome(onPick: (String) -> Unit) {
     ) {
         ArinMark(size = 56.dp)
         Spacer(Modifier.height(18.dp))
-        Text("Hi, I'm Arin", style = MaterialTheme.typography.headlineSmall)
+        Text(if (project != null) project else "Hi, I'm Arin", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Ask me anything, or attach a photo, PDF or file to talk about it.",
+            if (project != null) "New chat in this project. Its instructions and files are included."
+            else "Ask me anything, attach a photo or PDF, or tap the mic to talk.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -240,7 +287,7 @@ private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
             else ArinMessage(m, vm.showThinking, isLast = i == vm.messages.lastIndex && !vm.streaming, onRetry = vm::retry)
         }
         if (vm.streaming) {
-            item(key = "live") { LiveReply(vm.liveText, vm.liveThinking, vm.showThinking) }
+            item(key = "live") { LiveReply(vm.liveText, vm.liveThinking, vm.showThinking, vm.status) }
         }
     }
 }
@@ -251,6 +298,7 @@ private fun Composer(
     text: String,
     onText: (String) -> Unit,
     onSend: () -> Unit,
+    onVoice: () -> Unit,
     onPhotos: () -> Unit,
     onFiles: () -> Unit,
     onCancelEdit: () -> Unit,
@@ -288,6 +336,11 @@ private fun Composer(
                     DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
                         DropdownMenuItem(text = { Text("Photos") }, onClick = { attachMenu = false; onPhotos() })
                         DropdownMenuItem(text = { Text("Files and PDFs") }, onClick = { attachMenu = false; onFiles() })
+                        androidx.compose.material3.HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text((if (vm.webSearch) "✓ " else "") + "Web search") },
+                            onClick = { vm.toggleWebSearch(!vm.webSearch); attachMenu = false },
+                        )
                     }
                 }
                 TextField(
@@ -316,8 +369,22 @@ private fun Composer(
                     }
                 } else {
                     val canSend = text.isNotBlank() || vm.pending.isNotEmpty()
-                    FilledIconButton(onClick = onSend, enabled = canSend, shape = CircleShape) {
-                        Icon(Icons.Filled.Send, contentDescription = "Send", modifier = Modifier.size(20.dp))
+                    if (canSend) {
+                        FilledIconButton(onClick = onSend, shape = CircleShape) {
+                            Icon(Icons.Filled.Send, contentDescription = "Send", modifier = Modifier.size(20.dp))
+                        }
+                    } else {
+                        FilledIconButton(
+                            onClick = onVoice,
+                            shape = CircleShape,
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        ) {
+                            Icon(
+                                androidx.compose.ui.res.painterResource(com.arin.R.drawable.ic_mic),
+                                contentDescription = "Voice mode",
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.width(2.dp))

@@ -48,8 +48,15 @@ import java.util.Calendar
 
 /** The side panel: search, new chat, chats grouped by day (long-press to rename or delete), Settings. */
 @Composable
-fun ChatsDrawer(vm: ChatViewModel, onPick: () -> Unit, onSettings: () -> Unit) {
+fun ChatsDrawer(
+    vm: ChatViewModel,
+    onPick: () -> Unit,
+    onSettings: () -> Unit,
+    onProjects: () -> Unit,
+    onProject: (com.arin.data.Project) -> Unit,
+) {
     var renaming by remember { mutableStateOf<ChatSummary?>(null) }
+    var moving by remember { mutableStateOf<ChatSummary?>(null) }
     var deleting by remember { mutableStateOf<ChatSummary?>(null) }
 
     ModalDrawerSheet(
@@ -82,6 +89,20 @@ fun ChatsDrawer(vm: ChatViewModel, onPick: () -> Unit, onSettings: () -> Unit) {
             }
             val groups = remember(vm.chats.toList()) { group(vm.chats.toList()) }
             LazyColumn(Modifier.weight(1f).padding(top = 4.dp)) {
+                item(key = "projects_header") {
+                    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Projects",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onProjects) { Text(if (vm.projects.isEmpty()) "New" else "All") }
+                    }
+                }
+                items(vm.projects.take(5), key = { "p_" + it.id }) { p ->
+                    DrawerRow(icon = { Text("▸", color = MaterialTheme.colorScheme.secondary) }, label = p.name) { onProject(p) }
+                }
                 if (groups.isEmpty()) {
                     item {
                         Text(
@@ -107,6 +128,7 @@ fun ChatsDrawer(vm: ChatViewModel, onPick: () -> Unit, onSettings: () -> Unit) {
                             selected = c.id == vm.chatId,
                             onOpen = { vm.open(c.id); onPick() },
                             onRename = { renaming = c },
+                            onMove = { moving = c },
                             onDelete = { deleting = c },
                         )
                     }
@@ -124,6 +146,26 @@ fun ChatsDrawer(vm: ChatViewModel, onPick: () -> Unit, onSettings: () -> Unit) {
             text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) },
             confirmButton = { TextButton(onClick = { vm.rename(c.id, name); renaming = null }) { Text("Save") } },
             dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } },
+        )
+    }
+    moving?.let { c ->
+        AlertDialog(
+            onDismissRequest = { moving = null },
+            title = { Text("Move to project") },
+            text = {
+                Column {
+                    if (vm.projects.isEmpty()) Text("No projects yet. Create one from Projects in the side panel.")
+                    vm.projects.forEach { p ->
+                        TextButton(onClick = { vm.moveToProject(c.id, p); moving = null }) {
+                            Text((if (c.projectId == p.id) "✓ " else "") + p.name)
+                        }
+                    }
+                    if (c.projectId != null) {
+                        TextButton(onClick = { vm.moveToProject(c.id, null); moving = null }) { Text("Remove from project") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { moving = null }) { Text("Close") } },
         )
     }
     deleting?.let { c ->
@@ -154,7 +196,7 @@ private fun DrawerRow(icon: @Composable () -> Unit, label: String, onClick: () -
 }
 
 @Composable
-private fun ChatRow(c: ChatSummary, selected: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun ChatRow(c: ChatSummary, selected: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onMove: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth()
@@ -175,6 +217,7 @@ private fun ChatRow(c: ChatSummary, selected: Boolean, onOpen: () -> Unit, onRen
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
+            DropdownMenuItem(text = { Text("Move to project") }, onClick = { menu = false; onMove() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
         }
     }

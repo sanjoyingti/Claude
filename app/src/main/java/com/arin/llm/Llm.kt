@@ -23,15 +23,15 @@ object Llm {
     private const val ANTHROPIC_BASE = "https://api.anthropic.com/v1"
     private const val ANTHROPIC_VERSION = "2023-06-01"
 
-    fun stream(provider: Provider, key: String, model: String, turns: List<Turn>): Flow<Delta> {
+    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>): Flow<Delta> {
         if (provider.needsKey && key.isBlank()) {
             throw LlmException("Add your ${provider.label} API key in Settings, or switch to Free models.")
         }
         return when (provider) {
-            Provider.Free -> openAiStream("$FREE_BASE/openai", emptyMap(), model, turns, extra = true)
-            Provider.Gemini -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, turns)
-            Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, turns)
-            Provider.Claude -> anthropicStream(key, model, turns)
+            Provider.Free -> openAiStream("$FREE_BASE/openai", emptyMap(), model, system, turns, extra = true)
+            Provider.Gemini -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns)
+            Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, system, turns)
+            Provider.Claude -> anthropicStream(key, model, system, turns)
         }
     }
 
@@ -85,7 +85,7 @@ object Llm {
         }
     }
 
-    private fun openAiStream(url: String, headers: Map<String, String>, model: String, turns: List<Turn>, extra: Boolean = false): Flow<Delta> {
+    private fun openAiStream(url: String, headers: Map<String, String>, model: String, system: String, turns: List<Turn>, extra: Boolean = false): Flow<Delta> {
         val body = buildJsonObject {
             put("model", model)
             put("stream", true)
@@ -96,7 +96,7 @@ object Llm {
             putJsonArray("messages") {
                 addJsonObject {
                     put("role", "system")
-                    put("content", ARIN_SYSTEM_PROMPT)
+                    put("content", system)
                 }
                 turns.forEach { t ->
                     addJsonObject {
@@ -145,12 +145,12 @@ object Llm {
         }
     }
 
-    private fun anthropicStream(key: String, model: String, turns: List<Turn>): Flow<Delta> {
+    private fun anthropicStream(key: String, model: String, system: String, turns: List<Turn>): Flow<Delta> {
         val body = buildJsonObject {
             put("model", model)
             put("max_tokens", 8192)
             put("stream", true)
-            put("system", ARIN_SYSTEM_PROMPT)
+            put("system", system)
             putJsonArray("messages") {
                 turns.forEach { t ->
                     addJsonObject {

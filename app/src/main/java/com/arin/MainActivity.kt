@@ -7,7 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import com.arin.app.AppShell
-import com.arin.app.IncomingShare
+import com.arin.app.Launch
 import com.arin.chat.ChatViewModel
 import com.arin.design.ArinTheme
 
@@ -17,16 +17,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        // Opened from another app's Share button (and not a rotation replaying that).
-        if (savedInstanceState == null) IncomingShare.handle(intent, chat)
+        // Opened from a share, the widget or a notification (and not a rotation replaying that).
+        if (savedInstanceState == null) Launch.handle(intent, chat)
         setContent {
             ArinTheme(chat.theme) { AppShell(chat) }
         }
     }
 
-    /** Arin was already open when something was shared to it. */
+    /** Arin was already open. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        IncomingShare.handle(intent, chat)
+        Launch.handle(intent, chat)
     }
 }

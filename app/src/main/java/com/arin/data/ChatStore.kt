@@ -40,7 +40,12 @@ data class Message(
     val attachments: List<Attachment> = emptyList(),
     /** Set when the reply failed; the text then holds the error to show. */
     val failed: Boolean = false,
+    /** Web pages the reply drew on. */
+    val sources: List<Source> = emptyList(),
 )
+
+@Serializable
+data class Source(val title: String, val url: String)
 
 @Serializable
 data class Chat(
@@ -48,11 +53,12 @@ data class Chat(
     val title: String = "New chat",
     val updated: Long = System.currentTimeMillis(),
     val messages: List<Message> = emptyList(),
+    val projectId: String? = null,
 )
 
 /** What the chats list needs, without loading every message. */
 @Serializable
-data class ChatSummary(val id: String, val title: String, val updated: Long)
+data class ChatSummary(val id: String, val title: String, val updated: Long, val projectId: String? = null)
 
 /** Keeps each chat as a JSON file in the app's private storage, plus a small index for the list. */
 class ChatStore(private val context: Context) {
@@ -72,13 +78,25 @@ class ChatStore(private val context: Context) {
     fun save(chat: Chat) {
         writeAtomically(File(dir, "${chat.id}.json"), json.encodeToString(chat))
         val rest = list().filterNot { it.id == chat.id }
-        writeIndex(rest + ChatSummary(chat.id, chat.title, chat.updated))
+        writeIndex(rest + ChatSummary(chat.id, chat.title, chat.updated, chat.projectId))
     }
 
     @Synchronized
     fun rename(id: String, title: String) {
         val chat = load(id) ?: return
         save(chat.copy(title = title))
+    }
+
+    @Synchronized
+    fun moveToProject(id: String, projectId: String?) {
+        val chat = load(id) ?: return
+        save(chat.copy(projectId = projectId))
+    }
+
+    /** Chats in a project lose their project when it's deleted; they stay in the main list. */
+    @Synchronized
+    fun detachProject(projectId: String) {
+        list().filter { it.projectId == projectId }.forEach { moveToProject(it.id, null) }
     }
 
     @Synchronized
@@ -107,7 +125,7 @@ class ChatStore(private val context: Context) {
     private fun rebuildIndex(): List<ChatSummary> {
         val all = dir.listFiles { f -> f.name.endsWith(".json") && f != indexFile }.orEmpty()
             .mapNotNull { f -> runCatching { json.decodeFromString<Chat>(f.readText()) }.getOrNull() }
-            .map { ChatSummary(it.id, it.title, it.updated) }
+            .map { ChatSummary(it.id, it.title, it.updated, it.projectId) }
         writeIndex(all)
         return all
     }

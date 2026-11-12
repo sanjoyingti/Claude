@@ -155,7 +155,44 @@ object Attachments {
      * Turns saved messages into what [provider] is sent. Text files go inline; photos and PDFs go
      * as the model's own image and document formats, only for the most recent messages that have them.
      */
-    suspend fun toTurns(provider: Provider, messages: List<Message>): List<Turn> = withContext(Dispatchers.IO) {
+    suspend fun toTurns(provider: Provider, messages: List<Message>, projectMedia: List<Attachment> = emptyList()): List<Turn> =
+        withContext(Dispatchers.IO) {
+            val turns = messageTurns(provider, messages)
+            if (projectMedia.isEmpty()) return@withContext turns
+            // A project's photos and PDFs go with the first message, so every reply can see them.
+            if (provider == Provider.Free) {
+                throw LlmException("This project has photos or PDFs, which free models can't read. Choose Claude, Gemini or ChatGPT in Settings.")
+            }
+            val first = turns.indexOfFirst { it.fromUser }
+            if (first < 0) return@withContext turns
+            val extra = encodeMedia(provider, projectMedia)
+            turns.toMutableList().also { list ->
+                val t = list[first]
+                list[first] = t.copy(
+                    text = "Project files: " + projectMedia.joinToString { it.name } + "\n\n" + t.text,
+                    images = extra.first + t.images,
+                    pdfs = extra.second + t.pdfs,
+                )
+            }
+        }
+
+    private fun encodeMedia(provider: Provider, media: List<Attachment>): Pair<List<Image>, List<Pdf>> {
+        val images = mutableListOf<Image>()
+        val pdfs = mutableListOf<Pdf>()
+        media.forEach { a ->
+            val f = File(a.path)
+            if (!f.exists()) return@forEach
+            when (a.kind) {
+                Attachment.IMAGE -> images += Image(a.mime.ifEmpty { "image/jpeg" }, base64(f.readBytes()))
+                Attachment.PDF ->
+                    if (provider == Provider.Gemini) images += pdfPagesAsImages(f)
+                    else pdfs += Pdf(a.name, base64(f.readBytes()))
+            }
+        }
+        return images to pdfs
+    }
+
+    private fun messageTurns(provider: Provider, messages: List<Message>): List<Turn> = run {
         val mediaIndices = messages.indices
             .filter { i -> messages[i].fromUser && messages[i].attachments.any { it.isMedia } }
             .takeLast(MEDIA_MESSAGES_SENT)
@@ -174,18 +211,7 @@ object Attachments {
             val notes = if (!sendMedia && media.isNotEmpty()) media.joinToString("\n") { "[Earlier attachment: ${it.name}]" } else ""
             val text = listOf(promptWithFiles(m.text, textFiles), notes).filter { it.isNotBlank() }.joinToString("\n\n")
             if (!sendMedia) return@mapIndexed Turn(true, text)
-            val images = mutableListOf<Image>()
-            val pdfs = mutableListOf<Pdf>()
-            media.forEach { a ->
-                val f = File(a.path)
-                if (!f.exists()) return@forEach
-                when (a.kind) {
-                    Attachment.IMAGE -> images += Image(a.mime.ifEmpty { "image/jpeg" }, base64(f.readBytes()))
-                    Attachment.PDF ->
-                        if (provider == Provider.Gemini) images += pdfPagesAsImages(f)
-                        else pdfs += Pdf(a.name, base64(f.readBytes()))
-                }
-            }
+            val (images, pdfs) = encodeMedia(provider, media)
             Turn(true, text.ifBlank { "Here's the attached file." }, images, pdfs)
         }
     }

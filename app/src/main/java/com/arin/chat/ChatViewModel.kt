@@ -8,34 +8,49 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.arin.ArinApp
+import com.arin.app.ReplyService
 import com.arin.data.Attachment
 import com.arin.data.Attachments
 import com.arin.data.Chat
 import com.arin.data.ChatStore
 import com.arin.data.ChatSummary
+import com.arin.data.Memory
+import com.arin.data.MemoryStore
 import com.arin.data.Message
+import com.arin.data.Project
+import com.arin.data.ProjectStore
 import com.arin.data.Settings
+import com.arin.data.Source
 import com.arin.data.ThemeMode
+import com.arin.llm.DefaultModels
 import com.arin.llm.Delta
 import com.arin.llm.Llm
 import com.arin.llm.ModelOption
+import com.arin.llm.Prompt
 import com.arin.llm.Provider
 import com.arin.llm.Turn
+import com.arin.llm.WebSearch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Everything the chat, the chats list and Settings share. One instance for the whole app. */
+/** Everything the chat, the chats list, projects and Settings share. One instance for the whole app. */
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ChatStore(app)
+    private val projectStore = ProjectStore(app)
+    private val memoryStore = MemoryStore(app)
     val settings = Settings(app)
 
     // ---- Current chat ----
     var chatId by mutableStateOf<String?>(null)
         private set
     var title by mutableStateOf("New chat")
+        private set
+    /** The project the current chat belongs to, or null. */
+    var chatProject by mutableStateOf<Project?>(null)
         private set
     val messages = mutableStateListOf<Message>()
 
@@ -45,26 +60,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Text from another app's Share button, waiting to be placed in the message box. */
     var sharedText by mutableStateOf<String?>(null)
 
+    /** Index of the sent message being edited, or null. */
+    var editing by mutableStateOf<Int?>(null)
+        private set
+
     var streaming by mutableStateOf(false)
         private set
     var liveText by mutableStateOf("")
         private set
     var liveThinking by mutableStateOf("")
         private set
+    /** What Arin is doing right now when it isn't writing, such as "Searching the web for …". */
+    var status by mutableStateOf<String?>(null)
+        private set
     var notice by mutableStateOf<String?>(null)
 
-    private var job: Job? = null
-    private var thinkStart = 0L
+    /** Set when a reply finishes; voice mode reads it aloud. */
+    var lastFinished by mutableStateOf<Message?>(null)
+        private set
 
-    // ---- Chats list ----
+    private var job: Job? = null
+
+    // ---- Chats and projects ----
     val chats = mutableStateListOf<ChatSummary>()
     var query by mutableStateOf("")
         private set
+    val projects = mutableStateListOf<Project>()
+    val memories = mutableStateListOf<Memory>()
 
     // ---- Settings ----
     var provider by mutableStateOf(settings.provider)
         private set
-    var models by mutableStateOf(com.arin.llm.DefaultModels.byProvider.getValue(settings.provider))
+    var models by mutableStateOf(DefaultModels.byProvider.getValue(settings.provider))
         private set
     var model by mutableStateOf(settings.model(settings.provider) ?: models.first().id)
         private set
@@ -72,17 +99,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var showThinking by mutableStateOf(settings.showThinking)
         private set
+    var webSearch by mutableStateOf(settings.webSearch)
+        private set
+    var memoryOn by mutableStateOf(settings.memoryOn)
+        private set
+    var notifyOnReply by mutableStateOf(settings.notifyOnReply)
+        private set
 
     init {
         refreshChats()
+        refreshProjects()
+        memories.addAll(memoryStore.list())
         loadModels()
     }
 
     // ---------------- Sending ----------------
-
-    /** Index of the sent message being edited, or null. */
-    var editing by mutableStateOf<Int?>(null)
-        private set
 
     fun send(text: String) {
         if (streaming) return
@@ -133,53 +164,96 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val p = provider
         val m = model
         val key = settings.key(p)
+        val project = chatProject
+        val system = Prompt.system(webSearch, memoryOn, if (memoryOn) memories.toList() else emptyList(), project)
+        val useSearch = webSearch
+        val app = getApplication<Application>()
         streaming = true
         liveText = ""
         liveThinking = ""
-        thinkStart = 0L
-        job = viewModelScope.launch {
-            val text = StringBuilder()
+        status = null
+        ReplyService.start(app)
+        // App-wide scope: the reply finishes even if this screen goes away.
+        job = ArinApp.scope.launch {
             val thinking = StringBuilder()
+            var thinkStart = 0L
+            var answer = ""
+            val sources = mutableListOf<Source>()
             var failure: String? = null
             try {
-                val turns = Attachments.toTurns(p, history)
-                Llm.stream(p, key, m, turns).collect { d ->
-                    when (d) {
-                        is Delta.Text -> { text.append(d.text); liveText = text.toString() }
-                        is Delta.Thinking -> {
-                            if (thinkStart == 0L) thinkStart = System.currentTimeMillis()
-                            thinking.append(d.text)
-                            liveThinking = thinking.toString()
+                val turns = Attachments.toTurns(p, history, projectMedia(project)).toMutableList()
+                var searches = 0
+                while (true) {
+                    val text = StringBuilder()
+                    Llm.stream(p, key, m, system, turns).collect { d ->
+                        when (d) {
+                            is Delta.Text -> {
+                                text.append(d.text)
+                                val now = text.toString()
+                                // Hold back what may be a search request; show everything else as it arrives.
+                                liveText = if (useSearch && searches < Prompt.MAX_SEARCHES && Prompt.maybeSearch(now)) "" else Prompt.clean(now)
+                            }
+                            is Delta.Thinking -> {
+                                if (thinkStart == 0L) thinkStart = System.currentTimeMillis()
+                                thinking.append(d.text)
+                                liveThinking = thinking.toString()
+                            }
                         }
                     }
+                    val full = text.toString()
+                    val q = if (useSearch && searches < Prompt.MAX_SEARCHES) Prompt.searchQuery(full) else null
+                    if (q == null) {
+                        answer = full
+                        break
+                    }
+                    searches++
+                    status = "Searching the web for “$q”"
+                    liveText = ""
+                    val (hits, results) = WebSearch.searchForModel(q)
+                    hits.take(5).forEach { h -> if (sources.none { it.url == h.url }) sources += Source(h.title, h.url) }
+                    status = null
+                    turns += Turn(false, "<search>$q</search>")
+                    turns += Turn(true, results + "\n\nNow answer my earlier message using these results where they help.")
                 }
-                if (text.isBlank()) failure = "The model sent an empty reply. Tap Retry, or pick another model."
+                if (Prompt.clean(answer).isBlank()) failure = "The model sent an empty reply. Tap Retry, or pick another model."
             } catch (e: CancellationException) {
-                // Stop pressed: keep whatever arrived.
+                answer = liveText // Stop pressed: keep whatever arrived.
             } catch (e: Throwable) {
                 failure = e.message ?: "Something went wrong."
             } finally {
                 val seconds = if (thinkStart > 0) ((System.currentTimeMillis() - thinkStart) / 1000).toInt() else 0
-                when {
-                    failure != null && text.isBlank() -> messages += Message(fromUser = false, text = failure, failed = true)
-                    else -> {
-                        messages += Message(
-                            fromUser = false,
-                            text = text.toString().ifBlank { "(Stopped)" },
-                            thinking = thinking.toString(),
-                            thoughtSeconds = seconds,
-                        )
-                        if (failure != null) notice = failure
-                    }
+                if (memoryOn) Prompt.memories(answer).forEach { remember(it) }
+                val shown = Prompt.clean(answer)
+                val msg = if (failure != null && shown.isBlank()) {
+                    Message(fromUser = false, text = failure!!, failed = true)
+                } else {
+                    if (failure != null) notice = failure
+                    Message(
+                        fromUser = false,
+                        text = shown.ifBlank { "(Stopped)" },
+                        thinking = thinking.toString(),
+                        thoughtSeconds = seconds,
+                        sources = sources,
+                    )
                 }
+                messages += msg
                 streaming = false
                 liveText = ""
                 liveThinking = ""
+                status = null
                 job = null
                 persist()
+                lastFinished = msg
+                ReplyService.stop(app)
+                val id = chatId
+                if (!ArinApp.inForeground && notifyOnReply && id != null && !msg.failed) {
+                    ReplyService.notifyReply(app, id, title, msg.text)
+                }
             }
         }
     }
+
+    private fun projectMedia(project: Project?): List<Attachment> = project?.files?.filter { it.isMedia }.orEmpty()
 
     private fun makeTitle(text: String, files: List<Attachment>): String {
         val base = text.lines().firstOrNull { it.isNotBlank() }?.trim() ?: files.firstOrNull()?.name ?: "New chat"
@@ -189,8 +263,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun persist() {
         if (messages.isEmpty()) return
         val id = chatId ?: java.util.UUID.randomUUID().toString().also { chatId = it }
-        val chat = Chat(id = id, title = title, updated = System.currentTimeMillis(), messages = messages.toList())
-        viewModelScope.launch(Dispatchers.IO) {
+        val chat = Chat(id = id, title = title, updated = System.currentTimeMillis(), messages = messages.toList(), projectId = chatProject?.id)
+        ArinApp.scope.launch(Dispatchers.IO) {
             store.save(chat)
             withContext(Dispatchers.Main) { refreshChats() }
         }
@@ -219,10 +293,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- Chats list ----------------
 
-    fun newChat() {
-        stop()
+    /** Start a new chat, optionally inside [project]. */
+    fun newChat(project: Project? = null) {
+        if (streaming) stop()
         chatId = null
         title = "New chat"
+        chatProject = project
         messages.clear()
         Attachments.deleteFiles(pending.toList())
         pending.clear()
@@ -231,7 +307,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun open(id: String) {
         if (id == chatId) return
-        stop()
+        if (streaming) stop()
         viewModelScope.launch {
             val chat = withContext(Dispatchers.IO) { store.load(id) } ?: run {
                 notice = "That chat couldn't be opened."
@@ -239,6 +315,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             chatId = chat.id
             title = chat.title
+            chatProject = chat.projectId?.let { pid -> projects.firstOrNull { it.id == pid } }
             messages.clear()
             messages.addAll(chat.messages)
             Attachments.deleteFiles(pending.toList())
@@ -256,6 +333,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun moveToProject(id: String, project: Project?) {
+        if (id == chatId) chatProject = project
+        viewModelScope.launch(Dispatchers.IO) {
+            store.moveToProject(id, project?.id)
+            withContext(Dispatchers.Main) { refreshChats() }
+        }
+    }
+
     fun delete(id: String) {
         if (id == chatId) newChat()
         viewModelScope.launch(Dispatchers.IO) {
@@ -268,7 +353,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         newChat()
         viewModelScope.launch(Dispatchers.IO) {
             store.deleteAll()
-            withContext(Dispatchers.Main) { refreshChats() }
+            projectStore.deleteAll()
+            withContext(Dispatchers.Main) {
+                refreshChats()
+                refreshProjects()
+            }
         }
     }
 
@@ -288,12 +377,88 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun chatsIn(project: Project): List<ChatSummary> = chats.filter { it.projectId == project.id }
+
+    // ---------------- Projects ----------------
+
+    private fun refreshProjects() {
+        projects.clear()
+        projects.addAll(projectStore.list())
+        chatProject = chatProject?.let { cur -> projects.firstOrNull { it.id == cur.id } }
+    }
+
+    fun createProject(name: String): Project {
+        val p = Project(name = name.trim().ifEmpty { "New project" })
+        projectStore.save(p)
+        refreshProjects()
+        return p
+    }
+
+    fun updateProject(p: Project) {
+        projectStore.save(p)
+        refreshProjects()
+    }
+
+    fun deleteProject(p: Project) {
+        if (chatProject?.id == p.id) chatProject = null
+        viewModelScope.launch(Dispatchers.IO) {
+            store.detachProject(p.id)
+            projectStore.delete(p.id)
+            withContext(Dispatchers.Main) {
+                refreshProjects()
+                refreshChats()
+            }
+        }
+    }
+
+    fun addProjectFiles(p: Project, uris: List<Uri>) {
+        viewModelScope.launch {
+            var current = projects.firstOrNull { it.id == p.id } ?: p
+            uris.forEach { uri ->
+                try {
+                    current = current.copy(files = current.files + Attachments.read(getApplication(), uri))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    notice = e.message ?: "Couldn't read that file."
+                }
+            }
+            updateProject(current)
+        }
+    }
+
+    fun removeProjectFile(p: Project, file: Attachment) {
+        Attachments.deleteFiles(listOf(file))
+        updateProject(p.copy(files = p.files - file))
+    }
+
+    // ---------------- Memory ----------------
+
+    private fun remember(fact: String) {
+        if (memoryStore.add(fact)) {
+            memories.clear()
+            memories.addAll(memoryStore.list())
+        }
+    }
+
+    fun addMemory(fact: String) = remember(fact)
+
+    fun forget(m: Memory) {
+        memoryStore.remove(m.id)
+        memories.remove(m)
+    }
+
+    fun forgetAll() {
+        memoryStore.clear()
+        memories.clear()
+    }
+
     // ---------------- Settings ----------------
 
     fun chooseProvider(p: Provider) {
         provider = p
         settings.provider = p
-        models = com.arin.llm.DefaultModels.byProvider.getValue(p)
+        models = DefaultModels.byProvider.getValue(p)
         model = settings.model(p) ?: models.first().id
         loadModels()
     }
@@ -318,6 +483,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleThinking(show: Boolean) {
         showThinking = show
         settings.showThinking = show
+    }
+
+    fun toggleWebSearch(on: Boolean) {
+        webSearch = on
+        settings.webSearch = on
+    }
+
+    fun toggleMemory(on: Boolean) {
+        memoryOn = on
+        settings.memoryOn = on
+    }
+
+    fun toggleNotify(on: Boolean) {
+        notifyOnReply = on
+        settings.notifyOnReply = on
     }
 
     fun modelLabel(): String = models.firstOrNull { it.id == model }?.label ?: model
