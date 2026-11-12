@@ -1,0 +1,104 @@
+package com.arin.data
+
+import android.content.Context
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
+import java.util.UUID
+
+/** A file attached to a message. Its text is kept so the model can read it again later. */
+@Serializable
+data class Attachment(val name: String, val text: String)
+
+@Serializable
+data class Message(
+    val id: String = UUID.randomUUID().toString(),
+    val fromUser: Boolean,
+    val text: String,
+    val thinking: String = "",
+    val thoughtSeconds: Int = 0,
+    val attachments: List<Attachment> = emptyList(),
+    /** Set when the reply failed; the text then holds the error to show. */
+    val failed: Boolean = false,
+)
+
+@Serializable
+data class Chat(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String = "New chat",
+    val updated: Long = System.currentTimeMillis(),
+    val messages: List<Message> = emptyList(),
+)
+
+/** What the chats list needs, without loading every message. */
+@Serializable
+data class ChatSummary(val id: String, val title: String, val updated: Long)
+
+/** Keeps each chat as a JSON file in the app's private storage, plus a small index for the list. */
+class ChatStore(context: Context) {
+    private val dir = File(context.filesDir, "chats").apply { mkdirs() }
+    private val indexFile = File(dir, "index.json")
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    @Synchronized
+    fun list(): List<ChatSummary> {
+        val stored = runCatching { json.decodeFromString<List<ChatSummary>>(indexFile.readText()) }.getOrNull()
+        return (stored ?: rebuildIndex()).sortedByDescending { it.updated }
+    }
+
+    fun load(id: String): Chat? = runCatching { json.decodeFromString<Chat>(File(dir, "$id.json").readText()) }.getOrNull()
+
+    @Synchronized
+    fun save(chat: Chat) {
+        writeAtomically(File(dir, "${chat.id}.json"), json.encodeToString(chat))
+        val rest = list().filterNot { it.id == chat.id }
+        writeIndex(rest + ChatSummary(chat.id, chat.title, chat.updated))
+    }
+
+    @Synchronized
+    fun rename(id: String, title: String) {
+        val chat = load(id) ?: return
+        save(chat.copy(title = title))
+    }
+
+    @Synchronized
+    fun delete(id: String) {
+        File(dir, "$id.json").delete()
+        writeIndex(list().filterNot { it.id == id })
+    }
+
+    @Synchronized
+    fun deleteAll() {
+        dir.listFiles().orEmpty().forEach { it.delete() }
+    }
+
+    /** Text search across titles and messages. */
+    fun search(query: String): List<ChatSummary> {
+        val q = query.trim()
+        if (q.isEmpty()) return list()
+        return list().filter { s ->
+            s.title.contains(q, ignoreCase = true) ||
+                load(s.id)?.messages?.any { it.text.contains(q, ignoreCase = true) } == true
+        }
+    }
+
+    private fun rebuildIndex(): List<ChatSummary> {
+        val all = dir.listFiles { f -> f.name.endsWith(".json") && f != indexFile }.orEmpty()
+            .mapNotNull { f -> runCatching { json.decodeFromString<Chat>(f.readText()) }.getOrNull() }
+            .map { ChatSummary(it.id, it.title, it.updated) }
+        writeIndex(all)
+        return all
+    }
+
+    private fun writeIndex(items: List<ChatSummary>) = writeAtomically(indexFile, json.encodeToString(items))
+
+    private fun writeAtomically(target: File, text: String) {
+        val tmp = File(target.parentFile, target.name + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(target)) {
+            target.delete()
+            tmp.renameTo(target)
+        }
+    }
+}

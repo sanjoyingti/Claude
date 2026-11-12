@@ -36,17 +36,17 @@ jobs:
           done
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk AIApp-${{ github.run_number }}.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Arin-${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AIApp-debug-${{ github.run_number }}
-          path: AIApp-*.apk
+          name: Arin-${{ github.run_number }}
+          path: Arin-*.apk
 
-      - name: Publish release with direct download link
+      - name: Publish release with a download link
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: AI App build ${{ github.run_number }}
-          files: AIApp-*.apk
+          tag_name: arin-${{ github.run_number }}
+          name: Arin build ${{ github.run_number }}
+          files: Arin-*.apk
           make_latest: true

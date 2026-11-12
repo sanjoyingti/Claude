@@ -6,24 +6,24 @@ plugins {
 }
 
 android {
-    namespace = "com.aiapp"
+    namespace = "com.arin"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.aiapp"
+        applicationId = "com.arin.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 39
-        versionName = "0.20.0"
+        versionCode = 1
+        versionName = "0.1.0"
     }
 
     signingConfigs {
-        // Fixed debug key so each new build installs over the previous one.
+        // Fixed key so each new build installs over the previous one.
         getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            storeFile = file("arin-debug.keystore")
+            storePassword = "arinandroid"
+            keyAlias = "arin"
+            keyPassword = "arinandroid"
         }
     }
 
@@ -45,8 +45,6 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        // Libraries such as LiteRT-LM may be built with a newer Kotlin than this project.
-        freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
 }
 
@@ -56,14 +54,12 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
-    implementation("androidx.browser:browser:1.8.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    // Offline models (Gemma 4) on the phone's GPU/CPU.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
 }

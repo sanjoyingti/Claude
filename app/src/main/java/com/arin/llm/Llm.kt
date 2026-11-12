@@ -1,0 +1,159 @@
+package com.arin.llm
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+
+/**
+ * Talks to every provider. Free models, Gemini and ChatGPT share the OpenAI chat format;
+ * Claude uses the Anthropic Messages format.
+ */
+object Llm {
+    private const val FREE_BASE = "https://text.pollinations.ai"
+    private const val GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
+    private const val OPENAI_BASE = "https://api.openai.com/v1"
+    private const val ANTHROPIC_BASE = "https://api.anthropic.com/v1"
+    private const val ANTHROPIC_VERSION = "2023-06-01"
+
+    fun stream(provider: Provider, key: String, model: String, turns: List<Turn>): Flow<Delta> {
+        if (provider.needsKey && key.isBlank()) {
+            throw LlmException("Add your ${provider.label} API key in Settings, or switch to Free models.")
+        }
+        return when (provider) {
+            Provider.Free -> openAiStream("$FREE_BASE/openai", emptyMap(), model, turns, extra = true)
+            Provider.Gemini -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, turns)
+            Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, turns)
+            Provider.Claude -> anthropicStream(key, model, turns)
+        }
+    }
+
+    /** The provider's current models, newest-looking first; falls back to the built-in list. */
+    suspend fun models(provider: Provider, key: String): List<ModelOption> {
+        val fallback = DefaultModels.byProvider.getValue(provider)
+        if (provider.needsKey && key.isBlank()) return fallback
+        val found = runCatching {
+            when (provider) {
+                Provider.Free -> freeModels()
+                Provider.Claude -> listIds("$ANTHROPIC_BASE/models", anthropicHeaders(key), "data", "id", "display_name")
+                Provider.Gemini -> listIds("$GEMINI_BASE/models", bearer(key), "data", "id", null)
+                    .filter { it.id.contains("gemini") }
+                    .map { ModelOption(it.id.removePrefix("models/"), it.label.removePrefix("models/")) }
+                Provider.ChatGPT -> listIds("$OPENAI_BASE/models", bearer(key), "data", "id", null)
+                    .filter { m -> m.id.startsWith("gpt-") && listOf("audio", "realtime", "image", "tts", "transcribe", "search").none { it in m.id } }
+                    .sortedByDescending { it.id }
+            }
+        }.getOrNull().orEmpty()
+        return found.ifEmpty { fallback }
+    }
+
+    private fun bearer(key: String) = mapOf("Authorization" to "Bearer $key")
+
+    private fun anthropicHeaders(key: String) = mapOf("x-api-key" to key, "anthropic-version" to ANTHROPIC_VERSION)
+
+    private suspend fun listIds(url: String, headers: Map<String, String>, arrayKey: String, idKey: String, labelKey: String?): List<ModelOption> {
+        val root = Http.getJson(url, headers) as? JsonObject ?: return emptyList()
+        val items = root[arrayKey] as? JsonArray ?: return emptyList()
+        return items.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = (o[idKey] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            val label = labelKey?.let { (o[it] as? JsonPrimitive)?.contentOrNull } ?: id
+            ModelOption(id, label)
+        }
+    }
+
+    private suspend fun freeModels(): List<ModelOption> {
+        val list = Http.getJson("$FREE_BASE/models") as? JsonArray ?: return emptyList()
+        return list.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val name = (o["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            // Only models open to everyone with no key.
+            val tier = (o["tier"] as? JsonPrimitive)?.contentOrNull
+            if (tier != null && tier != "anonymous") return@mapNotNull null
+            val output = (o["output_modalities"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            if (output != null && "text" !in output) return@mapNotNull null
+            if ((o["uncensored"] as? JsonPrimitive)?.contentOrNull == "true") return@mapNotNull null
+            val desc = (o["description"] as? JsonPrimitive)?.contentOrNull?.substringBefore(" (")
+            ModelOption(name, "${desc ?: name} (free)")
+        }
+    }
+
+    private fun openAiStream(url: String, headers: Map<String, String>, model: String, turns: List<Turn>, extra: Boolean = false): Flow<Delta> {
+        val body = buildJsonObject {
+            put("model", model)
+            put("stream", true)
+            if (extra) {
+                put("private", true) // keep prompts out of the free service's public feed
+                put("referrer", "arin-android")
+            }
+            putJsonArray("messages") {
+                addJsonObject {
+                    put("role", "system")
+                    put("content", ARIN_SYSTEM_PROMPT)
+                }
+                turns.forEach { t ->
+                    addJsonObject {
+                        put("role", if (t.fromUser) "user" else "assistant")
+                        put("content", t.text)
+                    }
+                }
+            }
+        }.toString()
+        return Http.sse(url, headers, body).mapNotNull { data ->
+            val o = Http.parseObject(data) ?: return@mapNotNull null
+            (o["error"] as? JsonObject)?.let { err ->
+                throw LlmException((err["message"] as? JsonPrimitive)?.contentOrNull ?: "The model returned an error.")
+            }
+            val choice = (o["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return@mapNotNull null
+            val delta = choice["delta"] as? JsonObject ?: return@mapNotNull null
+            val text = (delta["content"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            val thinking = ((delta["reasoning_content"] ?: delta["reasoning"]) as? JsonPrimitive)?.contentOrNull.orEmpty()
+            when {
+                text.isNotEmpty() -> Delta.Text(text)
+                thinking.isNotEmpty() -> Delta.Thinking(thinking)
+                else -> null
+            }
+        }
+    }
+
+    private fun anthropicStream(key: String, model: String, turns: List<Turn>): Flow<Delta> {
+        val body = buildJsonObject {
+            put("model", model)
+            put("max_tokens", 8192)
+            put("stream", true)
+            put("system", ARIN_SYSTEM_PROMPT)
+            putJsonArray("messages") {
+                turns.forEach { t ->
+                    addJsonObject {
+                        put("role", if (t.fromUser) "user" else "assistant")
+                        put("content", t.text)
+                    }
+                }
+            }
+        }.toString()
+        return Http.sse("$ANTHROPIC_BASE/messages", anthropicHeaders(key), body).mapNotNull { data ->
+            val o = Http.parseObject(data) ?: return@mapNotNull null
+            when ((o["type"] as? JsonPrimitive)?.contentOrNull) {
+                "error" -> {
+                    val err = o["error"] as? JsonObject
+                    throw LlmException((err?.get("message") as? JsonPrimitive)?.contentOrNull ?: "Claude returned an error.")
+                }
+                "content_block_delta" -> {
+                    val d = o["delta"] as? JsonObject ?: return@mapNotNull null
+                    when ((d["type"] as? JsonPrimitive)?.contentOrNull) {
+                        "text_delta" -> (d["text"] as? JsonPrimitive)?.contentOrNull?.let { Delta.Text(it) }
+                        "thinking_delta" -> (d["thinking"] as? JsonPrimitive)?.contentOrNull?.let { Delta.Thinking(it) }
+                        else -> null
+                    }
+                }
+                else -> null
+            }
+        }
+    }
+}
