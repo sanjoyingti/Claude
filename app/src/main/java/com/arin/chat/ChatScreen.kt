@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.DrawerValue
@@ -236,6 +237,7 @@ private fun TopBar(vm: ChatViewModel, onMenu: () -> Unit, onNew: () -> Unit, onP
                 }
             }
         }
+        if (vm.messages.isNotEmpty()) ChatMenu(vm)
         IconButton(onClick = onNew) { Icon(Icons.Filled.Create, contentDescription = "New chat") }
     }
 }
@@ -390,5 +392,46 @@ private fun Composer(
                 Spacer(Modifier.width(2.dp))
             }
         }
+    }
+}
+
+/** The chat's ⋮ menu: export, copy everything, and how long the chat is. */
+@Composable
+private fun ChatMenu(vm: ChatViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var open by remember { mutableStateOf(false) }
+    var info by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "Chat options")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Export as Markdown") }, onClick = {
+                open = false
+                runCatching { com.arin.data.ChatExport.shareMarkdown(context, vm.title, vm.messages.toList()) }
+                    .onFailure { vm.notice = "Couldn't export this chat." }
+            })
+            DropdownMenuItem(text = { Text("Copy whole chat") }, onClick = {
+                open = false
+                clipboard.setText(androidx.compose.ui.text.AnnotatedString(com.arin.data.ChatExport.toPlainText(vm.title, vm.messages.toList())))
+                vm.notice = "Chat copied"
+            })
+            DropdownMenuItem(text = { Text("Chat info") }, onClick = { open = false; info = true })
+        }
+    }
+    if (info) {
+        val s = remember(vm.messages.size) { com.arin.data.ChatExport.stats(vm.messages.toList()) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { info = false },
+            title = { Text(vm.title) },
+            text = {
+                Text(
+                    "${s.messages} messages · ${s.words} words · about ${s.readingMinutes} min to read" +
+                        (vm.chatProject?.let { "\nProject: ${it.name}" } ?: ""),
+                )
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { info = false }) { Text("OK") } },
+        )
     }
 }

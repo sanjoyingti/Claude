@@ -161,7 +161,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
 
             Text(
-                "Arin 0.3",
+                "Arin 0.3.1",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 12.dp),
