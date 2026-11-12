@@ -7,32 +7,35 @@ An AI assistant for Android (Kotlin + Jetpack Compose) with its own design.
 Every push to `main` builds an APK in GitHub Actions and publishes it as the latest release:
 **Releases → latest → `Arin-N.apk`**. Each build installs over the previous one.
 
-## What it does (version 0.2)
+## What it does (version 0.3)
 
-- Chat with replies that stream in, a Stop button, and the model's reasoning when it shares it
-- Free models by default, with no key or sign-up; optional Claude, Gemini and ChatGPT keys in Settings
-- Model menu at the top of the chat
-- Chats saved on the phone, grouped by day, with search, rename and delete
-- Attach photos, PDFs, and text, CSV, JSON or code files (photos and PDFs need a Claude, Gemini or ChatGPT key)
-- Edit a sent message and resend it
-- Share to Arin from other apps
-- Light, dark or match-phone theme
+- **Chat:** replies stream in, with Stop, Copy, Retry, editing a sent message, and the model's reasoning when it shares it
+- **Models:** free models by default with no key; optional Claude, Gemini and ChatGPT keys in Settings; model menu at the top
+- **Files:** photos, PDFs, and text, CSV, JSON or code files (photos and PDFs need a Claude, Gemini or ChatGPT key)
+- **Projects:** chats grouped with shared instructions and files
+- **Artifacts:** web pages, SVG images, documents and long code open in a viewer with a live preview, Copy and Share
+- **Web search:** Arin searches when it needs current facts and lists its sources (switch in the + menu and Settings)
+- **Memory:** lasting facts about you, saved on the phone, shown and editable in Settings
+- **Voice mode:** tap the mic to talk; Arin answers aloud and you can tap to interrupt
+- **Background replies:** a reply keeps going if you leave the app, with a notification when it's ready
+- **Home-screen widget:** "Ask Arin" and a mic button
+- **Share to Arin** from other apps; chats saved on the phone with search, rename, move and delete; light and dark themes
 
 ## Code layout
 
 ```
 com.arin
-├── MainActivity.kt   Starts the app, receives shares
-├── app/              AppShell (which screen shows), IncomingShare
+├── ArinApp.kt        App-wide scope for replies, notification channels
+├── MainActivity.kt   Starts the app, receives shares, widget and notification taps
+├── app/              AppShell (screens), Launch (outside entry points), ReplyService
 ├── chat/             Chat screen, messages, view model
-├── chatlist/         Side panel with saved chats
+├── chatlist/         Side panel with projects and saved chats
+├── project/          Projects list and project screen
+├── artifact/         Finding artifacts in replies, and the viewer
+├── voice/            Voice mode screen and speech controller
+├── widget/           Home-screen widget
 ├── settings/         Settings screen
-├── design/           Theme, Arin logo, Markdown
-├── llm/              Providers and streaming
-└── data/             Chats on disk, settings, encrypted keys, file reading
+├── design/           Theme, Arin logo, Markdown, photo thumbnails
+├── llm/              Providers, streaming, prompt and tools, web search
+└── data/             Chats, projects, memory, settings, keys, attachments
 ```
-
-## Planned
-
-Projects, an artifact viewer, web search, memory, voice mode, a home-screen widget,
-notifications when a reply finishes, and replies that keep streaming in the background.
