@@ -7,9 +7,28 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 
-/** A file attached to a message. Its text is kept so the model can read it again later. */
+/**
+ * A file attached to a message. Text files keep their text; photos and PDFs keep a copy in
+ * the app's private storage at [path], so the model can be sent them again later.
+ */
 @Serializable
-data class Attachment(val name: String, val text: String)
+data class Attachment(
+    val name: String,
+    val text: String = "",
+    val kind: String = TEXT,
+    val path: String = "",
+    val mime: String = "",
+    val size: Long = 0,
+    val pages: Int = 0,
+) {
+    val isMedia: Boolean get() = kind == IMAGE || kind == PDF
+
+    companion object {
+        const val TEXT = "text"
+        const val IMAGE = "image"
+        const val PDF = "pdf"
+    }
+}
 
 @Serializable
 data class Message(
@@ -36,7 +55,7 @@ data class Chat(
 data class ChatSummary(val id: String, val title: String, val updated: Long)
 
 /** Keeps each chat as a JSON file in the app's private storage, plus a small index for the list. */
-class ChatStore(context: Context) {
+class ChatStore(private val context: Context) {
     private val dir = File(context.filesDir, "chats").apply { mkdirs() }
     private val indexFile = File(dir, "index.json")
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -64,6 +83,7 @@ class ChatStore(context: Context) {
 
     @Synchronized
     fun delete(id: String) {
+        load(id)?.let { chat -> Attachments.deleteFiles(chat.messages.flatMap { it.attachments }) }
         File(dir, "$id.json").delete()
         writeIndex(list().filterNot { it.id == id })
     }
@@ -71,6 +91,7 @@ class ChatStore(context: Context) {
     @Synchronized
     fun deleteAll() {
         dir.listFiles().orEmpty().forEach { it.delete() }
+        Attachments.deleteAllFiles(context)
     }
 
     /** Text search across titles and messages. */

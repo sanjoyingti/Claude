@@ -11,8 +11,19 @@ enum class Provider(val label: String, val needsKey: Boolean, val keyHint: Strin
 /** One model a provider offers. */
 data class ModelOption(val id: String, val label: String)
 
-/** A turn sent to a model. */
-data class Turn(val fromUser: Boolean, val text: String)
+/** A turn sent to a model, with any photos and PDFs already encoded as base64. */
+data class Turn(
+    val fromUser: Boolean,
+    val text: String,
+    val images: List<Image> = emptyList(),
+    val pdfs: List<Pdf> = emptyList(),
+) {
+    val hasMedia: Boolean get() = images.isNotEmpty() || pdfs.isNotEmpty()
+}
+
+class Image(val mime: String, val base64: String)
+
+class Pdf(val name: String, val base64: String)
 
 /** A piece of a streaming reply: visible text, or the model's reasoning. */
 sealed interface Delta {

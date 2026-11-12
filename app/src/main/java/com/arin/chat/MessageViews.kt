@@ -35,15 +35,29 @@ import androidx.compose.ui.unit.dp
 import com.arin.data.Attachment
 import com.arin.data.Message
 import com.arin.design.ArinMark
+import com.arin.design.ImageThumb
+import com.arin.design.ImageViewer
 import com.arin.design.LocalArinExtras
 import com.arin.design.MarkdownText
 
-/** The person's message: a teal bubble on the right, with any attached files above it. */
+/** The person's message: a teal bubble on the right, attachments above it, and Edit below. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-fun UserMessage(message: Message) {
+fun UserMessage(message: Message, onEdit: (() -> Unit)?) {
     val extras = LocalArinExtras.current
+    var viewing by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxWidth().padding(start = 48.dp), horizontalAlignment = Alignment.End) {
-        message.attachments.forEach { FileChip(it, onRemove = null) }
+        val photos = message.attachments.filter { it.kind == Attachment.IMAGE }
+        if (photos.isNotEmpty()) {
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(bottom = 6.dp),
+            ) {
+                photos.forEach { p -> ImageThumb(p.path, if (photos.size == 1) 180.dp else 96.dp) { viewing = p.path } }
+            }
+        }
+        message.attachments.filterNot { it.kind == Attachment.IMAGE }.forEach { FileChip(it, onRemove = null) }
         if (message.text.isNotBlank()) {
             Surface(
                 color = extras.userBubble,
@@ -59,7 +73,9 @@ fun UserMessage(message: Message) {
                 }
             }
         }
+        if (onEdit != null) TextButton(onClick = onEdit) { Text("Edit") }
     }
+    viewing?.let { ImageViewer(it) { viewing = null } }
 }
 
 /** Arin's reply: full width under the Arin mark, with Copy and (for the last reply) Retry. */
@@ -155,7 +171,7 @@ fun ThinkingPanel(text: String, seconds: Int, live: Boolean) {
     }
 }
 
-/** An attached file. With [onRemove], shows an × to take it off the next message. */
+/** An attached file (or, in the message box, a photo). With [onRemove], shows an × to take it off the next message. */
 @Composable
 fun FileChip(file: Attachment, onRemove: (() -> Unit)?) {
     Surface(
@@ -163,12 +179,24 @@ fun FileChip(file: Attachment, onRemove: (() -> Unit)?) {
         shape = MaterialTheme.shapes.small,
         modifier = Modifier.padding(bottom = 6.dp).widthIn(max = 260.dp),
     ) {
-        Row(Modifier.padding(start = 10.dp, end = if (onRemove == null) 10.dp else 0.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("📄", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.width(6.dp))
+        Row(Modifier.padding(start = 8.dp, end = if (onRemove == null) 10.dp else 0.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            when (file.kind) {
+                Attachment.IMAGE -> ImageThumb(file.path, 36.dp)
+                Attachment.PDF -> Text("📕", style = MaterialTheme.typography.titleMedium)
+                else -> Text("📄", style = MaterialTheme.typography.titleMedium)
+            }
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f, fill = false)) {
                 Text(file.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${file.text.length / 1000 + 1}k characters", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    when (file.kind) {
+                        Attachment.IMAGE -> "Photo"
+                        Attachment.PDF -> "PDF · ${file.pages} page${if (file.pages == 1) "" else "s"}"
+                        else -> "${file.text.length / 1000 + 1}k characters"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (onRemove != null) TextButton(onClick = onRemove) { Text("✕") }
         }

@@ -10,6 +10,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 
 /**
  * Talks to every provider. Free models, Gemini and ChatGPT share the OpenAI chat format;
@@ -100,7 +101,29 @@ object Llm {
                 turns.forEach { t ->
                     addJsonObject {
                         put("role", if (t.fromUser) "user" else "assistant")
-                        put("content", t.text)
+                        if (!t.hasMedia) {
+                            put("content", t.text)
+                        } else {
+                            // OpenAI-style parts: text, images as data URLs, PDFs as files.
+                            putJsonArray("content") {
+                                addJsonObject { put("type", "text"); put("text", t.text) }
+                                t.images.forEach { img ->
+                                    addJsonObject {
+                                        put("type", "image_url")
+                                        putJsonObject("image_url") { put("url", "data:${img.mime};base64,${img.base64}") }
+                                    }
+                                }
+                                t.pdfs.forEach { pdf ->
+                                    addJsonObject {
+                                        put("type", "file")
+                                        putJsonObject("file") {
+                                            put("filename", pdf.name)
+                                            put("file_data", "data:application/pdf;base64,${pdf.base64}")
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -132,7 +155,35 @@ object Llm {
                 turns.forEach { t ->
                     addJsonObject {
                         put("role", if (t.fromUser) "user" else "assistant")
-                        put("content", t.text)
+                        if (!t.hasMedia) {
+                            put("content", t.text)
+                        } else {
+                            // Anthropic content blocks: documents and images first, then the question.
+                            putJsonArray("content") {
+                                t.pdfs.forEach { pdf ->
+                                    addJsonObject {
+                                        put("type", "document")
+                                        putJsonObject("source") {
+                                            put("type", "base64")
+                                            put("media_type", "application/pdf")
+                                            put("data", pdf.base64)
+                                        }
+                                        put("title", pdf.name)
+                                    }
+                                }
+                                t.images.forEach { img ->
+                                    addJsonObject {
+                                        put("type", "image")
+                                        putJsonObject("source") {
+                                            put("type", "base64")
+                                            put("media_type", img.mime)
+                                            put("data", img.base64)
+                                        }
+                                    }
+                                }
+                                addJsonObject { put("type", "text"); put("text", t.text) }
+                            }
+                        }
                     }
                 }
             }

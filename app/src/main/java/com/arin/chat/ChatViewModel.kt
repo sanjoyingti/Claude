@@ -80,15 +80,39 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- Sending ----------------
 
+    /** Index of the sent message being edited, or null. */
+    var editing by mutableStateOf<Int?>(null)
+        private set
+
     fun send(text: String) {
         if (streaming) return
-        val files = pending.toList()
+        val edit = editing?.takeIf { it in messages.indices && messages[it].fromUser }
+        val kept = edit?.let { messages[it].attachments }.orEmpty()
+        val files = kept + pending.toList()
         if (text.isBlank() && files.isEmpty()) return
         pending.clear()
+        if (edit != null) {
+            // Replace the edited message and everything after it.
+            val dropped = messages.subList(edit, messages.size).toList()
+            Attachments.deleteFiles(dropped.flatMap { it.attachments }.filterNot { it in kept })
+            while (messages.size > edit) messages.removeAt(messages.lastIndex)
+            editing = null
+        }
         messages += Message(fromUser = true, text = text.trim(), attachments = files)
         if (messages.size == 1) title = makeTitle(text, files)
         persist()
         reply()
+    }
+
+    /** Start editing a sent message; returns its text for the message box. */
+    fun startEdit(index: Int): String? {
+        if (streaming || index !in messages.indices || !messages[index].fromUser) return null
+        editing = index
+        return messages[index].text
+    }
+
+    fun cancelEdit() {
+        editing = null
     }
 
     /** Ask again for the last reply. */
@@ -105,9 +129,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun reply() {
-        val turns = messages.filterNot { it.failed }.map {
-            Turn(it.fromUser, if (it.fromUser) Attachments.promptWithFiles(it.text, it.attachments) else it.text)
-        }
+        val history = messages.filterNot { it.failed }
         val p = provider
         val m = model
         val key = settings.key(p)
@@ -120,6 +142,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val thinking = StringBuilder()
             var failure: String? = null
             try {
+                val turns = Attachments.toTurns(p, history)
                 Llm.stream(p, key, m, turns).collect { d ->
                     when (d) {
                         is Delta.Text -> { text.append(d.text); liveText = text.toString() }
@@ -191,6 +214,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removePending(a: Attachment) {
         pending.remove(a)
+        Attachments.deleteFiles(listOf(a))
     }
 
     // ---------------- Chats list ----------------
@@ -200,7 +224,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         chatId = null
         title = "New chat"
         messages.clear()
+        Attachments.deleteFiles(pending.toList())
         pending.clear()
+        editing = null
     }
 
     fun open(id: String) {
@@ -215,7 +241,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             title = chat.title
             messages.clear()
             messages.addAll(chat.messages)
+            Attachments.deleteFiles(pending.toList())
             pending.clear()
+            editing = null
         }
     }
 

@@ -1,6 +1,7 @@
 package com.arin.chat
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,6 +84,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
     val snackbar = remember { SnackbarHostState() }
     var input by rememberSaveable { mutableStateOf("") }
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.attach(it) }
+    val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { vm.attach(it) }
 
     LaunchedEffect(vm.sharedText) {
         val shared = vm.sharedText ?: return@LaunchedEffect
@@ -121,7 +123,11 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                     text = input,
                     onText = { input = it },
                     onSend = { vm.send(input); input = "" },
-                    onAttach = { pickFiles.launch(arrayOf("*/*")) },
+                    onPhotos = {
+                        pickPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onFiles = { pickFiles.launch(arrayOf("*/*")) },
+                    onCancelEdit = { vm.cancelEdit(); input = "" },
                 )
             },
         ) { padding ->
@@ -129,7 +135,7 @@ fun ChatScreen(vm: ChatViewModel, onOpenSettings: () -> Unit) {
                 if (vm.messages.isEmpty() && !vm.streaming) {
                     Welcome(onPick = { input = it })
                 } else {
-                    Conversation(vm)
+                    Conversation(vm, onEdit = { i -> vm.startEdit(i)?.let { input = it } })
                 }
             }
         }
@@ -201,7 +207,7 @@ private fun Welcome(onPick: (String) -> Unit) {
         Text("Hi, I'm Arin", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(6.dp))
         Text(
-            "Ask me anything, or attach a file to talk about it.",
+            "Ask me anything, or attach a photo, PDF or file to talk about it.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -214,7 +220,7 @@ private fun Welcome(onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun Conversation(vm: ChatViewModel) {
+private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
     val list = rememberLazyListState()
     val count = vm.messages.size + if (vm.streaming) 1 else 0
     // Follow the reply as it grows, but only if the person hasn't scrolled up to read.
@@ -230,7 +236,7 @@ private fun Conversation(vm: ChatViewModel) {
         modifier = Modifier.fillMaxSize(),
     ) {
         itemsIndexed(vm.messages, key = { _, m -> m.id }) { i, m ->
-            if (m.fromUser) UserMessage(m)
+            if (m.fromUser) UserMessage(m, onEdit = if (vm.streaming) null else ({ onEdit(i) }))
             else ArinMessage(m, vm.showThinking, isLast = i == vm.messages.lastIndex && !vm.streaming, onRetry = vm::retry)
         }
         if (vm.streaming) {
@@ -240,13 +246,36 @@ private fun Conversation(vm: ChatViewModel) {
 }
 
 @Composable
-private fun Composer(vm: ChatViewModel, text: String, onText: (String) -> Unit, onSend: () -> Unit, onAttach: () -> Unit) {
+private fun Composer(
+    vm: ChatViewModel,
+    text: String,
+    onText: (String) -> Unit,
+    onSend: () -> Unit,
+    onPhotos: () -> Unit,
+    onFiles: () -> Unit,
+    onCancelEdit: () -> Unit,
+) {
+    var attachMenu by remember { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth()
             .navigationBarsPadding()
             .imePadding()
             .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp),
     ) {
+        if (vm.editing != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Editing your message. Sending replaces it and the replies after it.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(onClick = onCancelEdit) { Text("Cancel") }
+            }
+        }
         vm.pending.forEach { f -> FileChip(f, onRemove = { vm.removePending(f) }) }
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -254,7 +283,13 @@ private fun Composer(vm: ChatViewModel, text: String, onText: (String) -> Unit, 
             tonalElevation = 0.dp,
         ) {
             Row(Modifier.padding(6.dp), verticalAlignment = Alignment.Bottom) {
-                IconButton(onClick = onAttach) { Icon(Icons.Filled.Add, contentDescription = "Attach a file") }
+                Box {
+                    IconButton(onClick = { attachMenu = true }) { Icon(Icons.Filled.Add, contentDescription = "Attach") }
+                    DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                        DropdownMenuItem(text = { Text("Photos") }, onClick = { attachMenu = false; onPhotos() })
+                        DropdownMenuItem(text = { Text("Files and PDFs") }, onClick = { attachMenu = false; onFiles() })
+                    }
+                }
                 TextField(
                     value = text,
                     onValueChange = onText,
