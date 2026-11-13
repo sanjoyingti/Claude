@@ -123,6 +123,8 @@ class BuildAgent(
     /** Big uploaded files waiting to be committed straight from storage. */
     private val pendingDisk = linkedMapOf<String, java.io.File>()
     private var depsChanged = false
+    /** Times the model-free quick fix was used in this run (it never loops for ever). */
+    private var quickFixes = 0
 
     /** Everything the app must do: the first specification plus every change asked for since, so nothing gets lost. */
     private val requirements: String = kotlin.run {
@@ -519,6 +521,12 @@ class BuildAgent(
                         step(BuildEvent.Kind.DONE, "Compiled on this phone (${mb(out.size)}), saved to ${out.apkPath}. Now building on GitHub for the download links")
                     }
                     is LocalBuild.Outcome.Errors -> {
+                        val quick = quickFix(out.log)
+                        if (quick.isNotEmpty() && quickFixes < MAX_QUICK_FIXES) {
+                            quickFixes++
+                            step(BuildEvent.Kind.DONE, "Fixed without the model: " + quick.joinToString("; "))
+                            continue
+                        }
                         if (localRounds < maxFixRounds) {
                             localRounds++
                             val query = mainError(out.log)
@@ -629,6 +637,14 @@ class BuildAgent(
 
             step(BuildEvent.Kind.STEP, "Reading the build errors")
             val errors = gh.failureSummary(repo, run.id)
+            // Common mistakes (a forgotten import or library) are fixed here, without the model and without using a round.
+            val quick = quickFix(errors)
+            if (quick.isNotEmpty() && quickFixes < MAX_QUICK_FIXES) {
+                quickFixes++
+                step(BuildEvent.Kind.DONE, "Fixed without the model: " + quick.joinToString("; "))
+                saveProject(repo, null)
+                continue
+            }
             if (round >= maxFixRounds) {
                 return BuildResult(
                     false,
@@ -1008,14 +1024,19 @@ class BuildAgent(
             }
         }
         if (imported && parsed.deps.isNotEmpty()) notes += "Add libraries by editing the module's build.gradle(.kts) directly."
-        if (!imported) parsed.deps.forEach { raw ->
+        if (!imported) parsed.deps.forEach { raw -> addDependency(raw)?.let { notes += it } }
+        parsed.downloads.forEach { (url, path) -> download(url, path)?.let { notes += it } }
+        return notes
+    }
+
+    /** Adds a library to the app's build setup; returns a note for the model when it can't be found. */
+    private suspend fun addDependency(raw: String): String? {
             val d = raw.trim().removePrefix("ksp:").removePrefix("ksp ").removePrefix("implementation ").trim().trim('"', '(', ')')
             // Code generators (Room's compiler) are added through KSP, with its Gradle plugin.
             val generator = raw.trim().startsWith("ksp") || ProjectTemplate.kspArtifacts.any { d.contains(":$it") }
             val resolved = resolveDependency(d)
             if (resolved == null) {
-                notes += "Dependency $d was not found on Maven; use a different library."
-                return@forEach
+                return "Dependency $d was not found on Maven; use a different library."
             }
             val entry = if (generator) "ksp:$resolved" else resolved
             if (entry !in deps) {
@@ -1037,9 +1058,56 @@ class BuildAgent(
                     depsChanged = true
                 }
             }
+        return null
+    }
+
+    /**
+     * Fixes the most common compile errors without the model (no tokens, no waiting): a missing import of a well-known
+     * class or function, and a library the code uses but the build setup lacks. Returns what it fixed (empty: nothing).
+     */
+    private suspend fun quickFix(errors: String): List<String> {
+        val fixed = mutableListOf<String>()
+        val wanted = linkedMapOf<String, MutableSet<String>>() // file -> imports to add
+        val unresolved = Regex("""^e: (?:file://)?(\S+?\.kt):\d+:\d+:? Unresolved reference:? '?([A-Za-z_][A-Za-z0-9_]*)'?""")
+        errors.lines().forEach { line ->
+            val m = unresolved.find(line.trim()) ?: return@forEach
+            val errPath = m.groupValues[1]
+            val path = files.keys.filter { it.endsWith(".kt") && errPath.endsWith("/$it") }.maxByOrNull { it.length } ?: return@forEach
+            val text = files[path] ?: return@forEach
+            val name = m.groupValues[2]
+            // A library missing from the build setup: its package can't be found at all.
+            if (!imported) LIBRARY_FOR_PACKAGE.forEach { (pkg, dep) ->
+                if (pkg.substringAfterLast('.') == name && text.contains("import $pkg.") &&
+                    deps.none { it.removePrefix("ksp:").startsWith(dep.removePrefix("ksp:").substringBeforeLast(':')) }
+                ) {
+                    if (addDependency(dep) == null) fixed += "added the missing library ${dep.removePrefix("ksp:").substringBeforeLast(':')}"
+                }
+            }
+            val fq = KNOWN_IMPORTS[name] ?: return@forEach
+            if (name in FLOW_ONLY && !text.contains("Flow")) return@forEach
+            if (text.contains("import $fq\n") || text.contains("import $fq\r") || text.contains("import ${fq.substringBeforeLast('.')}.*")) return@forEach
+            wanted.getOrPut(path) { linkedSetOf() } += fq
+            // DataStore code needs its library too.
+            if (!imported && fq.startsWith("androidx.datastore.") &&
+                deps.none { it.startsWith("androidx.datastore:datastore-preferences") }
+            ) {
+                if (addDependency("androidx.datastore:datastore-preferences:latest") == null) fixed += "added the missing library androidx.datastore:datastore-preferences"
+            }
         }
-        parsed.downloads.forEach { (url, path) -> download(url, path)?.let { notes += it } }
-        return notes
+        wanted.forEach { (path, imports) ->
+            val text = files[path] ?: return@forEach
+            val lines = text.lines().toMutableList()
+            val at = lines.indexOfLast { it.startsWith("import ") }.takeIf { it >= 0 }?.plus(1)
+                ?: lines.indexOfFirst { it.startsWith("package ") }.takeIf { it >= 0 }?.plus(1)
+                ?: 0
+            val add = imports.map { "import $it" }
+            lines.addAll(at, if (at > 0 && lines.getOrNull(at - 1)?.startsWith("package ") == true) listOf("") + add else add)
+            val updated = lines.joinToString("\n")
+            files[path] = updated
+            pendingFiles[path] = updated.toByteArray()
+            fixed += "added ${imports.size} missing import${if (imports.size == 1) "" else "s"} to ${path.substringAfterLast('/')}"
+        }
+        return fixed.distinct()
     }
 
     private suspend fun waitForRun(repo: GitHubClient.Repo, sha: String): GitHubClient.Run? {
@@ -1171,6 +1239,84 @@ class BuildAgent(
         /** Owner name of a project whose repository is made only once the person picks where to compile it. */
         const val PENDING_OWNER = "pending"
         private const val MAX_WEB_STEPS = 3
+        private const val MAX_QUICK_FIXES = 3
+
+        /** Libraries the quick fix may add, by the package the code imports. */
+        private val LIBRARY_FOR_PACKAGE = mapOf(
+            "androidx.datastore" to "androidx.datastore:datastore-preferences:latest",
+            "coil3" to "io.coil-kt.coil3:coil-compose:latest",
+            "retrofit2" to "com.squareup.retrofit2:retrofit:latest",
+            "androidx.work" to "androidx.work:work-runtime-ktx:latest",
+            "androidx.room" to "ksp:androidx.room:room-compiler:latest",
+        )
+
+        /** Names that only need the Flow import when the file works with Flows (List.map etc. need nothing). */
+        private val FLOW_ONLY = setOf("map", "first", "firstOrNull", "catch", "combine", "update", "filterNotNull", "filter", "onEach", "distinctUntilChanged")
+
+        /** Where well-known names live, for adding a forgotten import. */
+        private val KNOWN_IMPORTS: Map<String, String> = buildMap {
+            listOf(
+                "Flow", "StateFlow", "MutableStateFlow", "SharedFlow", "MutableSharedFlow", "SharingStarted", "flowOf", "emptyFlow",
+                "asStateFlow", "asSharedFlow", "stateIn", "shareIn", "collectLatest", "launchIn", "flow", "combine", "map", "first",
+                "firstOrNull", "catch", "onEach", "update", "filterNotNull", "filter", "distinctUntilChanged", "flatMapLatest",
+            ).forEach { put(it, "kotlinx.coroutines.flow.$it") }
+            listOf("launch", "delay", "Dispatchers", "withContext", "CoroutineScope", "Job", "async", "coroutineScope", "isActive", "SupervisorJob")
+                .forEach { put(it, "kotlinx.coroutines.$it") }
+            put("viewModelScope", "androidx.lifecycle.viewModelScope")
+            put("ViewModel", "androidx.lifecycle.ViewModel")
+            put("AndroidViewModel", "androidx.lifecycle.AndroidViewModel")
+            put("collectAsStateWithLifecycle", "androidx.lifecycle.compose.collectAsStateWithLifecycle")
+            put("viewModel", "androidx.lifecycle.viewmodel.compose.viewModel")
+            put("DataStore", "androidx.datastore.core.DataStore")
+            put("preferencesDataStore", "androidx.datastore.preferences.preferencesDataStore")
+            listOf(
+                "Preferences", "edit", "emptyPreferences", "stringPreferencesKey", "intPreferencesKey", "longPreferencesKey",
+                "booleanPreferencesKey", "floatPreferencesKey", "doublePreferencesKey", "stringSetPreferencesKey",
+            ).forEach { put(it, "androidx.datastore.preferences.core.$it") }
+            listOf(
+                "mutableStateOf", "mutableIntStateOf", "mutableLongStateOf", "mutableFloatStateOf", "mutableDoubleStateOf",
+                "mutableStateListOf", "mutableStateMapOf", "remember", "LaunchedEffect", "DisposableEffect", "SideEffect",
+                "collectAsState", "rememberCoroutineScope", "derivedStateOf", "rememberUpdatedState", "snapshotFlow", "Composable",
+            ).forEach { put(it, "androidx.compose.runtime.$it") }
+            put("rememberSaveable", "androidx.compose.runtime.saveable.rememberSaveable")
+            put("Modifier", "androidx.compose.ui.Modifier")
+            put("Alignment", "androidx.compose.ui.Alignment")
+            put("dp", "androidx.compose.ui.unit.dp")
+            put("sp", "androidx.compose.ui.unit.sp")
+            put("Color", "androidx.compose.ui.graphics.Color")
+            put("FontWeight", "androidx.compose.ui.text.font.FontWeight")
+            put("TextAlign", "androidx.compose.ui.text.style.TextAlign")
+            put("KeyboardOptions", "androidx.compose.foundation.text.KeyboardOptions")
+            put("KeyboardType", "androidx.compose.ui.text.input.KeyboardType")
+            put("LocalContext", "androidx.compose.ui.platform.LocalContext")
+            listOf(
+                "Column", "Row", "Box", "Spacer", "Arrangement", "PaddingValues", "fillMaxSize", "fillMaxWidth", "fillMaxHeight",
+                "padding", "size", "height", "width", "aspectRatio", "weight", "wrapContentSize", "imePadding",
+            ).forEach { put(it, "androidx.compose.foundation.layout.$it") }
+            listOf("LazyColumn", "LazyRow", "items", "itemsIndexed", "rememberLazyListState").forEach { put(it, "androidx.compose.foundation.lazy.$it") }
+            listOf("clickable", "background", "border", "Image", "rememberScrollState", "verticalScroll", "horizontalScroll")
+                .forEach { put(it, "androidx.compose.foundation.$it") }
+            put("RoundedCornerShape", "androidx.compose.foundation.shape.RoundedCornerShape")
+            put("CircleShape", "androidx.compose.foundation.shape.CircleShape")
+            listOf(
+                "Text", "Button", "TextButton", "OutlinedButton", "IconButton", "Icon", "Card", "Scaffold", "TopAppBar",
+                "CenterAlignedTopAppBar", "MaterialTheme", "Surface", "OutlinedTextField", "TextField", "FloatingActionButton",
+                "AlertDialog", "Switch", "Checkbox", "Slider", "HorizontalDivider", "CircularProgressIndicator",
+                "LinearProgressIndicator", "DropdownMenu", "DropdownMenuItem", "SnackbarHost", "SnackbarHostState", "NavigationBar",
+                "NavigationBarItem", "ExperimentalMaterial3Api", "TopAppBarDefaults", "CardDefaults", "ButtonDefaults",
+                "FilledTonalButton", "ElevatedButton", "ModalBottomSheet", "Tab", "TabRow", "RadioButton", "lightColorScheme",
+                "darkColorScheme", "Typography",
+            ).forEach { put(it, "androidx.compose.material3.$it") }
+            put("Icons", "androidx.compose.material.icons.Icons")
+            put("Log", "android.util.Log")
+            put("Toast", "android.widget.Toast")
+            put("Context", "android.content.Context")
+            put("Intent", "android.content.Intent")
+            put("Uri", "android.net.Uri")
+            put("Bundle", "android.os.Bundle")
+            put("Serializable", "kotlinx.serialization.Serializable")
+            put("Json", "kotlinx.serialization.json.Json")
+        }
         private const val MANIFEST = "app/src/main/AndroidManifest.xml"
         private const val DEVCONTAINER = ".devcontainer/devcontainer.json"
         private val fileStart = Regex("^=+\\s*FILE:\\s*(.+?)\\s*=*\\s*$")
