@@ -215,7 +215,72 @@ object AppPreview {
     private fun kb(chars: Int) = if (chars < 1024) "$chars characters" else "${chars / 1024} KB"
 
     /** Asks the model for the page, and for the rest of it while the answer keeps getting cut off. */
-    private suspend fun write(project: Project, provider: Provider, apiKey: String, model: String): String {
+    /** The preview is being written by a build (it can't be stopped from the preview screen). */
+    var fromBuild by mutableStateOf(false)
+        private set
+
+    /**
+     * Writes and saves the preview while a build runs, right after the code is written, so View app opens instantly
+     * afterwards. Returns null when it's ready (or already was), else why it couldn't be made.
+     */
+    suspend fun prepare(
+        context: Context,
+        id: String,
+        project: Project,
+        provider: Provider,
+        apiKey: String,
+        model: String,
+        onStatus: (String) -> Unit = {},
+    ): String? {
+        val app = context.applicationContext
+        if (relevant(project).isEmpty()) return "no app code yet"
+        val made = mark(project)
+        val upToDate = withContext(Dispatchers.IO) {
+            runCatching { pageFile(app, id).isFile && markFile(app, id).readText() == made }.getOrDefault(false)
+        }
+        if (upToDate) return null
+        val started = withContext(Dispatchers.Main) {
+            if (generating) return@withContext false
+            if (projectId != id) { projectId = id; html = null; outdated = false }
+            error = null
+            generating = true
+            fromBuild = true
+            status = "Writing the preview…"
+            true
+        }
+        if (!started) return "a preview is already being written"
+        return try {
+            val page = withContext(Dispatchers.Default) { write(project, provider, apiKey, model, onStatus) }
+            withContext(Dispatchers.IO) {
+                pageFile(app, id).writeText(page)
+                markFile(app, id).writeText(made)
+            }
+            withContext(Dispatchers.Main) { if (projectId == id) { html = page; outdated = false } }
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            friendly(e)
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                generating = false
+                fromBuild = false
+                status = ""
+            }
+        }
+    }
+
+    private suspend fun write(
+        project: Project,
+        provider: Provider,
+        apiKey: String,
+        model: String,
+        onStatus: (String) -> Unit = {},
+    ): String {
+        fun note(text: String) {
+            scope.launch { if (generating) status = text }
+            onStatus(text)
+        }
         val messages = mutableListOf(ChatMessage(Role.USER, prompt(project)))
         val page = StringBuilder()
         var lastNote = 0L
@@ -225,7 +290,7 @@ object AppPreview {
                 attempt = { m -> streamModel(provider, apiKey, m, messages.toList(), SYSTEM) },
                 model = model,
                 fallback = { alternativeModel(provider, apiKey, model) },
-                onRetry = { note -> scope.launch { status = note } },
+                onRetry = { text -> note(text) },
             ).collect { raw ->
                 val thinking = raw.startsWith(THOUGHT)
                 if (!thinking) part.append(raw)
@@ -236,7 +301,7 @@ object AppPreview {
                         thinking && part.isEmpty() && page.isEmpty() -> "Working out how the app behaves…"
                         else -> "Writing the preview… " + kb(page.length + part.length)
                     }
-                    scope.launch { if (generating) status = text }
+                    note(text)
                 }
             }
             val piece = if (round == 0) part.toString() else continuation(page, part.toString())
@@ -244,7 +309,7 @@ object AppPreview {
             if (END.containsMatchIn(page) || piece.isBlank()) break
             if (round == MAX_CONTINUES) break
             // Cut off (the answer was longer than the model may write at once): ask for the rest.
-            scope.launch { if (generating) status = "It's a big app: writing the next part… " + kb(page.length) }
+            note("It's a big app: writing the next part of the preview… " + kb(page.length))
             messages.clear()
             messages += ChatMessage(Role.USER, prompt(project))
             messages += ChatMessage(Role.ASSISTANT, page.toString())
@@ -451,7 +516,7 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
                                 enabled = project != null && !AppPreview.generating,
                                 onClick = { menu = false; remake() },
                             )
-                            if (AppPreview.generating) {
+                            if (AppPreview.generating && !AppPreview.fromBuild) {
                                 DropdownMenuItem(text = { Text("Stop writing the preview") }, onClick = { menu = false; AppPreview.cancel() })
                             }
                         }
@@ -475,13 +540,14 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
                             CircularProgressIndicator()
                             Text(AppPreview.status.ifBlank { "Working…" }, textAlign = TextAlign.Center)
                             Text(
-                                "Arin is turning the app's code into a working preview. It takes a minute or two, longer for a big " +
+                                if (AppPreview.fromBuild) "The build is writing the preview together with the code. It opens here as soon as it's done."
+                                else "Arin is turning the app's code into a working preview. It takes a minute or two, longer for a big " +
                                     "app. You can close this screen; it keeps going.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                             )
-                            OutlinedButton(onClick = { AppPreview.cancel() }) { Text("Stop") }
+                            if (!AppPreview.fromBuild) OutlinedButton(onClick = { AppPreview.cancel() }) { Text("Stop") }
                         }
                         else -> Notice(
                             "Couldn't make the preview",

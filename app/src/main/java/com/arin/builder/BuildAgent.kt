@@ -227,7 +227,7 @@ class BuildAgent(
      * Stops before compiling when the request asked to see the app first. Returns the result to hand back,
      * or null when this build can't wait (then it carries on and compiles).
      */
-    private fun pauseForPreview(repo: GitHubClient.Repo, zipKept: Boolean): BuildResult? {
+    private suspend fun pauseForPreview(repo: GitHubClient.Repo, zipKept: Boolean): BuildResult? {
         if (!req.previewFirst || req.resume || self) return null
         if (!zipKept) {
             val template = if (!imported) ProjectTemplate.files(appName, packageName, deps.toList()) else emptyMap()
@@ -249,6 +249,22 @@ class BuildAgent(
         }
         paused = true
         saveProject(repo, null)
+        // Write the preview now, as part of the build, so View app opens instantly when the build says it's ready.
+        context?.let { ctx ->
+            step(BuildEvent.Kind.STEP, "Making the working preview, so View app opens instantly")
+            val problem = try {
+                AppPreview.prepare(ctx, BuildRunner.projectId, currentProject(repo, null), req.provider, req.apiKey, req.model) {
+                    onProgress(-1f, it)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                e.message ?: "unknown error"
+            }
+            onProgress(null, "")
+            if (problem == null) step(BuildEvent.Kind.DONE, "Preview ready")
+            else step(BuildEvent.Kind.ERROR, "Couldn't make the preview now ($problem). View app will try again when you open it")
+        }
         step(BuildEvent.Kind.DONE, "The code is ready (${files.size} file${if (files.size == 1) "" else "s"}). Nothing is compiled yet")
         return BuildResult(
             true,
@@ -615,8 +631,10 @@ class BuildAgent(
 
     private fun mb(bytes: Long) = if (bytes < 1024 * 1024) "${bytes / 1024} KB" else "%.1f MB".format(bytes / 1048576.0)
 
-    private fun saveProject(repo: GitHubClient.Repo, apk: String?) {
-        onProject(
+    private fun saveProject(repo: GitHubClient.Repo, apk: String?) = onProject(currentProject(repo, apk))
+
+    /** The project as it stands now. */
+    private fun currentProject(repo: GitHubClient.Repo, apk: String?): Project =
             Project(
                 appName = appName,
                 packageName = packageName,
@@ -639,9 +657,7 @@ class BuildAgent(
                 pendingDeletes = (pendingFiles.filterValues { it == null }.keys + droppedFromZip).toList(),
                 awaitingPreview = paused,
                 round = currentRound,
-            ),
-        )
-    }
+            )
 
     /**
      * Asks the model, letting it search the web or read pages before it writes files, and reports
