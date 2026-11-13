@@ -23,21 +23,31 @@ object Llm {
     private const val ANTHROPIC_BASE = "https://api.anthropic.com/v1"
     private const val ANTHROPIC_VERSION = "2023-06-01"
 
-    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>): Flow<Delta> {
+    /**
+     * Streams a reply. [maxTokens] asks for a longer answer (Build mode writes whole apps); null leaves the
+     * service's default, which for some (DeepSeek-style APIs) is only about 4,000 tokens.
+     */
+    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null): Flow<Delta> {
         if (provider.needsKey && key.isBlank()) {
             throw LlmException("Add your ${provider.label} API key in Settings, or switch to Free models.")
         }
+        if (model.isBlank()) throw LlmException("Pick a model first, or type a model id in Settings → Custom API.")
         return when (provider) {
-            Provider.Free -> openAiStream("$FREE_BASE/openai", emptyMap(), model, system, turns, extra = true)
-            Provider.Gemini -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns)
+            Provider.Free -> openAiStream("$FREE_BASE/openai", emptyMap(), model, system, turns, extra = true, maxTokens = maxTokens)
+            Provider.Gemini -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns, maxTokens = maxTokens)
+            // OpenAI's newer models take max_completion_tokens; leave ChatGPT on its default.
             Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, system, turns)
-            Provider.Claude -> anthropicStream(key, model, system, turns)
+            Provider.Claude -> anthropicStream("$ANTHROPIC_BASE/messages", anthropicHeaders(key), key, model, system, turns, maxTokens)
+            Provider.Custom -> when (CustomApi.format) {
+                ApiFormat.OpenAI -> openAiStream(CustomApi.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens)
+                ApiFormat.Anthropic -> anthropicStream(CustomApi.chatUrl(), customAnthropicHeaders(key), key, model, system, turns, maxTokens)
+            }
         }
     }
 
     /** The provider's current models, newest-looking first; falls back to the built-in list. */
     suspend fun models(provider: Provider, key: String): List<ModelOption> {
-        val fallback = DefaultModels.byProvider.getValue(provider)
+        val fallback = DefaultModels.of(provider)
         if (provider.needsKey && key.isBlank()) return fallback
         val found = runCatching {
             when (provider) {
@@ -49,14 +59,42 @@ object Llm {
                 Provider.ChatGPT -> listIds("$OPENAI_BASE/models", bearer(key), "data", "id", null)
                     .filter { m -> m.id.startsWith("gpt-") && listOf("audio", "realtime", "image", "tts", "transcribe", "search").none { it in m.id } }
                     .sortedByDescending { it.id }
+                Provider.Custom -> customModels(key)
             }
         }.getOrNull().orEmpty()
+        if (provider == Provider.Custom) {
+            // Keep the typed model id at the top even when the service lists others.
+            val manual = CustomApi.manualModel
+            // Models this service is known for but doesn't always list (e.g. ones that need access turned on).
+            val known = CustomApi.presetFor()?.models.orEmpty()
+                .filter { (_, id) -> found.none { it.id == id } }
+                .map { (label, id) -> ModelOption(id, label) }
+            val typed = if (manual.isNotBlank() && found.none { it.id == manual } && known.none { it.id == manual }) {
+                listOf(ModelOption(manual, manual))
+            } else emptyList()
+            if (typed.isNotEmpty() || known.isNotEmpty()) return typed + known + found
+        }
         return found.ifEmpty { fallback }
     }
 
     private fun bearer(key: String) = mapOf("Authorization" to "Bearer $key")
 
     private fun anthropicHeaders(key: String) = mapOf("x-api-key" to key, "anthropic-version" to ANTHROPIC_VERSION)
+
+    /** Claude-compatible gateways accept either header; send both. */
+    private fun customAnthropicHeaders(key: String) = anthropicHeaders(key) + bearer(key)
+
+    /** Ids that are clearly not chat models. */
+    private val notChat = listOf(
+        "embed", "whisper", "tts", "transcribe", "moderation", "rerank", "dall-e", "gpt-image",
+        "imagen", "flux", "stable-diffusion", "sdxl", "guard",
+    )
+
+    private suspend fun customModels(key: String): List<ModelOption> {
+        val headers = if (CustomApi.format == ApiFormat.Anthropic) customAnthropicHeaders(key) else bearer(key)
+        return listIds(CustomApi.modelsUrl(), headers, "data", "id", if (CustomApi.format == ApiFormat.Anthropic) "display_name" else "name")
+            .filter { m -> notChat.none { m.id.lowercase().contains(it) } }
+    }
 
     private suspend fun listIds(url: String, headers: Map<String, String>, arrayKey: String, idKey: String, labelKey: String?): List<ModelOption> {
         val root = Http.getJson(url, headers) as? JsonObject ?: return emptyList()
@@ -85,10 +123,19 @@ object Llm {
         }
     }
 
-    private fun openAiStream(url: String, headers: Map<String, String>, model: String, system: String, turns: List<Turn>, extra: Boolean = false): Flow<Delta> {
+    private fun openAiStream(
+        url: String,
+        headers: Map<String, String>,
+        model: String,
+        system: String,
+        turns: List<Turn>,
+        extra: Boolean = false,
+        maxTokens: Int? = null,
+    ): Flow<Delta> {
         val body = buildJsonObject {
             put("model", model)
             put("stream", true)
+            if (maxTokens != null) put("max_tokens", maxTokens)
             if (extra) {
                 put("private", true) // keep prompts out of the free service's public feed
                 put("referrer", "arin-android")
@@ -145,10 +192,10 @@ object Llm {
         }
     }
 
-    private fun anthropicStream(key: String, model: String, system: String, turns: List<Turn>): Flow<Delta> {
+    private fun anthropicStream(url: String, headers: Map<String, String>, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null): Flow<Delta> {
         val body = buildJsonObject {
             put("model", model)
-            put("max_tokens", 8192)
+            put("max_tokens", maxTokens ?: 8192)
             put("stream", true)
             put("system", system)
             putJsonArray("messages") {
@@ -188,7 +235,7 @@ object Llm {
                 }
             }
         }.toString()
-        return Http.sse("$ANTHROPIC_BASE/messages", anthropicHeaders(key), body).mapNotNull { data ->
+        return Http.sse(url, headers, body).mapNotNull { data ->
             val o = Http.parseObject(data) ?: return@mapNotNull null
             when ((o["type"] as? JsonPrimitive)?.contentOrNull) {
                 "error" -> {

@@ -6,9 +6,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Run commands in Termux (the person grants this in Settings → Terminal). -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <!-- Build mode: install the APKs it builds, and keep building with the screen off. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Android 11+: let Arin find the phone's speech recognition and voice. -->
     <queries>
+        <package android:name="com.termux" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
@@ -18,6 +24,8 @@
     </queries>
 
     <application
+        android:largeHeap="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:name=".ArinApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -34,7 +42,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- "Share to Arin" from other apps: text, text files, photos and PDFs. -->
+            <!-- "Share to Arin" from other apps: text and files of any type. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
@@ -45,9 +53,7 @@
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/json" />
-                <data android:mimeType="application/pdf" />
-                <data android:mimeType="image/*" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 
@@ -66,6 +72,17 @@
             android:name=".app.ReplyService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- Build mode: builds apps on GitHub, keeps going when Arin is closed. -->
+        <service
+            android:name=".builder.BuildService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Results of commands run in Termux. -->
+        <receiver
+            android:name=".terminal.TermuxResultReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".widget.ArinWidget"

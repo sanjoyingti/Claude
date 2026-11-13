@@ -2,6 +2,7 @@ package com.arin.chat
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -88,7 +89,14 @@ fun UserMessage(message: Message, onEdit: (() -> Unit)?) {
 
 /** Arin's reply: full width under the Arin mark, with Copy and (for the last reply) Retry. */
 @Composable
-fun ArinMessage(message: Message, showThinking: Boolean, isLast: Boolean, onRetry: () -> Unit) {
+fun ArinMessage(
+    message: Message,
+    showThinking: Boolean,
+    isLast: Boolean,
+    onRetry: () -> Unit,
+    onSummary: (() -> Unit)? = null,
+    onConfirmBuild: ((BuildTarget) -> Unit)? = null,
+) {
     val clipboard = LocalClipboardManager.current
     Row(Modifier.fillMaxWidth()) {
         ArinMark(size = 22.dp, modifier = Modifier.padding(top = 2.dp))
@@ -98,6 +106,7 @@ fun ArinMessage(message: Message, showThinking: Boolean, isLast: Boolean, onRetr
                 ThinkingPanel(message.thinking, message.thoughtSeconds, live = false)
                 Spacer(Modifier.size(8.dp))
             }
+            message.commands.forEach { CommandCard(it) }
             if (message.failed) {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
@@ -106,19 +115,112 @@ fun ArinMessage(message: Message, showThinking: Boolean, isLast: Boolean, onRetr
                 ) {
                     Text(message.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
                 }
+            } else if (onSummary != null && com.arin.builder.BuildRunner.running && !message.text.contains("— steps**")) {
+                // A build in progress: one line with the current step; tap it for the full Summary.
+                BuildNowLine(onSummary)
             } else {
                 SelectionContainer { MarkdownText(message.text) }
                 val artifacts = remember(message.text) { Artifacts.find(message.text) }
                 var open by remember { mutableStateOf<Artifact?>(null) }
                 artifacts.forEach { art -> ArtifactCard(art) { open = art } }
                 open?.let { ArtifactViewer(it) { open = null } }
+                if (message.media.isNotEmpty()) {
+                    Spacer(Modifier.size(8.dp))
+                    com.arin.media.MediaRow(message.media)
+                }
                 if (message.sources.isNotEmpty()) Sources(message.sources)
             }
+            if (onConfirmBuild != null && message.pendingBuild.isNotBlank()) {
+                if (message.pendingBuild.startsWith("update\u0000")) {
+                    androidx.compose.material3.Button(onClick = { onConfirmBuild(BuildTarget.CHAT) }, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("Update Arin now")
+                    }
+                } else {
+                    BuildWhere(onConfirmBuild)
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (onSummary != null) TextButton(onClick = onSummary) { Text("Summary") }
                 if (!message.failed) {
+                    val context = LocalContext.current
                     TextButton(onClick = { clipboard.setText(AnnotatedString(message.text)) }) { Text("Copy") }
+                    TextButton(onClick = { com.arin.voice.ReadAloud.toggle(context, message.id, message.text) }) {
+                        Text(if (com.arin.voice.ReadAloud.speakingId == message.id) "Stop" else "Listen")
+                    }
+                    TextButton(onClick = {
+                        runCatching {
+                            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, message.text)
+                            context.startActivity(Intent.createChooser(send, "Share reply").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }) { Text("Share") }
                 }
                 if (isLast) TextButton(onClick = onRetry) { Text("Retry") }
+            }
+        }
+    }
+}
+
+/** A terminal command and its output, folded to one line until tapped. */
+@Composable
+fun CommandCard(run: com.arin.data.CommandRun) {
+    if (run.kind == "steer") {
+        // A message the person sent while Arin was working, shown where Arin picked it up.
+        Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.Top) {
+            Text("↪ ", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+            Text(
+                "You: " + run.command,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+        return
+    }
+    var open by remember { mutableStateOf(false) }
+    val failed = run.ran && run.exitCode != 0
+    Column(
+        Modifier.fillMaxWidth()
+            .padding(bottom = 6.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.medium)
+            .clickable { open = !open }
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .animateContentSize(),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                when {
+                    !run.ran -> "⊘"
+                    failed -> "✗"
+                    else -> "✓"
+                },
+                color = when {
+                    !run.ran -> MaterialTheme.colorScheme.onSurfaceVariant
+                    failed -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "$ " + run.command.lineSequence().first(),
+                style = MaterialTheme.typography.labelLarge.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                maxLines = if (open) Int.MAX_VALUE else 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(if (open) " ▴" else " ▾", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (open) {
+            Spacer(Modifier.size(6.dp))
+            if (run.command.contains('\n')) {
+                Text(run.command, style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace))
+                Spacer(Modifier.size(6.dp))
+            }
+            SelectionContainer {
+                Text(
+                    run.output.take(20_000) + if (run.ran) "\n[exit code ${run.exitCode ?: "?"}]" else "",
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -147,7 +249,13 @@ private fun Sources(sources: List<Source>) {
 
 /** The reply as it streams in. */
 @Composable
-fun LiveReply(text: String, thinking: String, showThinking: Boolean, status: String?) {
+fun LiveReply(
+    text: String,
+    thinking: String,
+    showThinking: Boolean,
+    status: String?,
+    commands: List<com.arin.data.CommandRun> = emptyList(),
+) {
     Row(Modifier.fillMaxWidth()) {
         ArinMark(size = 22.dp, modifier = Modifier.padding(top = 2.dp))
         Spacer(Modifier.width(10.dp))
@@ -156,6 +264,7 @@ fun LiveReply(text: String, thinking: String, showThinking: Boolean, status: Str
                 ThinkingPanel(thinking, 0, live = text.isEmpty())
                 Spacer(Modifier.size(8.dp))
             }
+            commands.forEach { CommandCard(it) }
             when {
                 status != null -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
@@ -222,6 +331,14 @@ fun FileChip(file: Attachment, onRemove: (() -> Unit)?) {
             when (file.kind) {
                 Attachment.IMAGE -> ImageThumb(file.path, 36.dp)
                 Attachment.PDF -> Text("📕", style = MaterialTheme.typography.titleMedium)
+                Attachment.FILE -> Text(
+                    when {
+                        file.mime.startsWith("audio/") -> "🎵"
+                        file.mime.startsWith("video/") -> "🎬"
+                        else -> "📦"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 else -> Text("📄", style = MaterialTheme.typography.titleMedium)
             }
             Spacer(Modifier.width(8.dp))
@@ -230,14 +347,78 @@ fun FileChip(file: Attachment, onRemove: (() -> Unit)?) {
                 Text(
                     when (file.kind) {
                         Attachment.IMAGE -> "Photo"
-                        Attachment.PDF -> "PDF · ${file.pages} page${if (file.pages == 1) "" else "s"}"
-                        else -> "${file.text.length / 1000 + 1}k characters"
+                        Attachment.PDF -> "PDF · ${file.pages} page${if (file.pages == 1) "" else "s"}" +
+                            if (file.size > 0) " · ${com.arin.data.Attachments.readableSize(file.size)}" else ""
+                        Attachment.FILE -> listOf(file.mime.substringBefore('/').ifBlank { "File" }.replaceFirstChar { it.uppercase() },
+                            com.arin.data.Attachments.readableSize(file.size)).joinToString(" · ")
+                        else -> listOfNotNull(
+                            file.name.substringAfterLast('.', "").uppercase().takeIf { it.isNotBlank() && it.length <= 5 },
+                            if (file.size > 0) com.arin.data.Attachments.readableSize(file.size)
+                            else "${(maxOf(file.chars, file.text.length.toLong())) / 1000 + 1}k characters",
+                        ).joinToString(" · ")
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (onRemove != null) TextButton(onClick = onRemove) { Text("✕") }
+        }
+    }
+}
+
+
+/** The build's current step on one line, with moving dots, opening the Summary when tapped. */
+@Composable
+private fun BuildNowLine(onOpen: () -> Unit) {
+    val step = (com.arin.builder.BuildRunner.timeline.lastOrNull { it is com.arin.builder.TimelineItem.Event }
+        as? com.arin.builder.TimelineItem.Event)?.event?.text?.lines()?.firstOrNull()?.take(120) ?: "Starting the build"
+    val accent = androidx.compose.ui.graphics.Color(0xFFD97757)
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "dots")
+    val phase by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 4f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable<Float>(
+            androidx.compose.animation.core.tween<Float>(1200, easing = androidx.compose.animation.core.LinearEasing),
+        ),
+        label = "phase",
+    )
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Four dots in a square; the lit one goes round.
+        androidx.compose.foundation.layout.Box(Modifier.size(18.dp)) {
+            listOf(0 to 0, 1 to 0, 1 to 1, 0 to 1).forEachIndexed { i, (cx, cy) ->
+                val on = phase.toInt() % 4 == i
+                androidx.compose.foundation.layout.Box(
+                    Modifier
+                        .padding(start = (cx * 10).dp, top = (cy * 10).dp)
+                        .size(if (on) 7.dp else 5.dp)
+                        .androidx_background(accent.copy(alpha = if (on) 1f else 0.45f)),
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(step, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f, fill = false), maxLines = 2)
+        Text("  ›", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun Modifier.androidx_background(c: androidx.compose.ui.graphics.Color) =
+    this.background(c, androidx.compose.foundation.shape.CircleShape)
+
+/** The build-location chooser shown under a prepared build: pick where to build it. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun BuildWhere(onPick: (BuildTarget) -> Unit) {
+    Column(Modifier.padding(top = 8.dp)) {
+        Text("Where should I build it?", style = MaterialTheme.typography.labelLarge)
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.Button(onClick = { onPick(BuildTarget.CHAT) }) { Text("In chat") }
+            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.BUILD_TAB) }) { Text("Build tab") }
+            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.PHONE) }) { Text("On phone") }
+            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.CODESPACE) }) { Text("Codespace") }
+            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.AUTO) }) { Text("Let Arin decide") }
         }
     }
 }

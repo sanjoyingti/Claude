@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -53,6 +55,8 @@ fun ChatsDrawer(
     onPick: () -> Unit,
     onSettings: () -> Unit,
     onProjects: () -> Unit,
+    onBuild: () -> Unit = {},
+    onLogs: () -> Unit = {},
     onProject: (com.arin.data.Project) -> Unit,
 ) {
     var renaming by remember { mutableStateOf<ChatSummary?>(null) }
@@ -67,7 +71,15 @@ fun ChatsDrawer(
             Row(Modifier.padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 ArinMark(size = 26.dp)
                 Spacer(Modifier.width(10.dp))
-                Text("Arin", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.Bottom) {
+                    Text("Arin", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "  v" + com.arin.ArinApp.versionLabel(androidx.compose.ui.platform.LocalContext.current),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 3.dp),
+                    )
+                }
             }
             TextField(
                 value = vm.query,
@@ -130,10 +142,18 @@ fun ChatsDrawer(
                             onRename = { renaming = c },
                             onMove = { moving = c },
                             onDelete = { deleting = c },
+                            onPin = { vm.togglePin(c.id, !c.pinned) },
                         )
                     }
                 }
             }
+            DrawerRow(icon = { Icon(Icons.Filled.Build, contentDescription = null) }, label = "Build an app (APK)", onClick = onBuild)
+            DrawerRow(
+                icon = { Icon(Icons.Filled.Build, contentDescription = null) },
+                label = "Reverse engineering (REA)",
+                onClick = { vm.openReverseEngineering(); onPick() },
+            )
+            DrawerRow(icon = { Icon(Icons.Filled.Info, contentDescription = null) }, label = "Logs", onClick = onLogs)
             DrawerRow(icon = { Icon(Icons.Filled.Settings, contentDescription = null) }, label = "Settings", onClick = onSettings)
         }
     }
@@ -196,7 +216,15 @@ private fun DrawerRow(icon: @Composable () -> Unit, label: String, onClick: () -
 }
 
 @Composable
-private fun ChatRow(c: ChatSummary, selected: Boolean, onOpen: () -> Unit, onRename: () -> Unit, onMove: () -> Unit, onDelete: () -> Unit) {
+private fun ChatRow(
+    c: ChatSummary,
+    selected: Boolean,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onMove: () -> Unit,
+    onDelete: () -> Unit,
+    onPin: () -> Unit = {},
+) {
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth()
@@ -209,13 +237,14 @@ private fun ChatRow(c: ChatSummary, selected: Boolean, onOpen: () -> Unit, onRen
             .padding(horizontal = 16.dp, vertical = 11.dp),
     ) {
         Text(
-            c.title,
+            (if (c.pinned) "📌 " else "") + c.title,
             style = MaterialTheme.typography.bodyLarge,
             color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text(if (c.pinned) "Unpin" else "Pin to top") }, onClick = { menu = false; onPin() })
             DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Move to project") }, onClick = { menu = false; onMove() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })

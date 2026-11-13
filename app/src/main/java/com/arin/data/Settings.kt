@@ -4,7 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.arin.llm.ApiFormat
+import com.arin.llm.CustomApi
 import com.arin.llm.Provider
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 
 enum class ThemeMode(val label: String) { System("Match phone"), Light("Light"), Dark("Dark") }
 
@@ -26,13 +30,59 @@ class Settings(context: Context) {
         context.getSharedPreferences("api_keys_fallback", Context.MODE_PRIVATE)
     }
 
+    init {
+        CustomApi.baseUrl = customBaseUrl
+        CustomApi.format = customFormat
+        CustomApi.manualModel = customModel
+    }
+
+    // ---- Saved APIs: several custom services to switch between ----
+
+    /** The person's saved APIs (name, base URL, format). Each URL keeps its own key and model. */
+    var savedApis: List<SavedApi>
+        get() = runCatching {
+            kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                .decodeFromString<List<SavedApi>>(prefs.getString("saved_apis", "[]") ?: "[]")
+        }.getOrDefault(emptyList())
+        set(value) = prefs.edit().putString("saved_apis", kotlinx.serialization.json.Json.encodeToString(value)).apply()
+
+    // ---- Custom API: your own base URL, format, key and model ----
+
+    var customBaseUrl: String
+        get() = prefs.getString("custom_base", null)?.takeIf { it.isNotBlank() } ?: CustomApi.DEFAULT_BASE
+        set(value) {
+            val clean = CustomApi.normalize(value, customFormat).ifBlank { CustomApi.DEFAULT_BASE }
+            prefs.edit().putString("custom_base", clean).apply()
+            CustomApi.baseUrl = clean
+            CustomApi.manualModel = customModel
+        }
+
+    var customFormat: ApiFormat
+        get() = prefs.getString("custom_format", null)?.let { runCatching { ApiFormat.valueOf(it) }.getOrNull() } ?: ApiFormat.OpenAI
+        set(value) {
+            prefs.edit().putString("custom_format", value.name).apply()
+            CustomApi.format = value
+        }
+
+    /** Model id typed for the current base URL. */
+    var customModel: String
+        get() = prefs.getString("custom_model@$customBaseUrl", "").orEmpty()
+        set(value) {
+            prefs.edit().putString("custom_model@$customBaseUrl", value.trim()).apply()
+            CustomApi.manualModel = value.trim()
+        }
+
+    /** Each custom base URL keeps its own key and chosen model. */
+    private fun slot(provider: Provider): String =
+        if (provider == Provider.Custom) "Custom@$customBaseUrl" else provider.name
+
     var provider: Provider
         get() = prefs.getString("provider", null)?.let { runCatching { Provider.valueOf(it) }.getOrNull() } ?: Provider.Free
         set(value) = prefs.edit().putString("provider", value.name).apply()
 
-    fun model(provider: Provider): String? = prefs.getString("model_${provider.name}", null)
+    fun model(provider: Provider): String? = prefs.getString("model_${slot(provider)}", null)
 
-    fun setModel(provider: Provider, id: String) = prefs.edit().putString("model_${provider.name}", id).apply()
+    fun setModel(provider: Provider, id: String) = prefs.edit().putString("model_${slot(provider)}", id).apply()
 
     var theme: ThemeMode
         get() = prefs.getString("theme", null)?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.System
@@ -45,6 +95,35 @@ class Settings(context: Context) {
     var webSearch: Boolean
         get() = prefs.getBoolean("web_search", true)
         set(value) = prefs.edit().putBoolean("web_search", value).apply()
+
+    /** MCP servers (JSON list), see [com.arin.mcp.Mcp]. */
+    var mcpServers: List<com.arin.mcp.McpServer>
+        get() = com.arin.mcp.Mcp.load(prefs.getString("mcp_servers", null))
+        set(value) = prefs.edit().putString("mcp_servers", com.arin.mcp.Mcp.save(value)).apply()
+
+    /** Let the model run commands in Termux. */
+    var terminalOn: Boolean
+        get() = prefs.getBoolean("terminal_on", false)
+        set(value) = prefs.edit().putBoolean("terminal_on", value).apply()
+
+    /** Ask before each command (on by default). */
+    var terminalAsk: Boolean
+        get() = prefs.getBoolean("terminal_ask", true)
+        set(value) = prefs.edit().putBoolean("terminal_ask", value).apply()
+
+    /** Custom instructions: who the person is, and how they want answers. */
+    var aboutYou: String
+        get() = prefs.getString("about_you", "") ?: ""
+        set(value) = prefs.edit().putString("about_you", value).apply()
+
+    var howToAnswer: String
+        get() = prefs.getString("how_to_answer", "") ?: ""
+        set(value) = prefs.edit().putString("how_to_answer", value).apply()
+
+    /** Normal, Concise, Detailed or Formal. */
+    var replyStyle: String
+        get() = prefs.getString("reply_style", "Normal") ?: "Normal"
+        set(value) = prefs.edit().putString("reply_style", value).apply()
 
     var memoryOn: Boolean
         get() = prefs.getBoolean("memory_on", true)
@@ -63,7 +142,27 @@ class Settings(context: Context) {
         get() = prefs.getFloat("voice_rate", 1.0f)
         set(value) = prefs.edit().putFloat("voice_rate", value).apply()
 
-    fun key(provider: Provider): String = keys.getString(provider.name, "").orEmpty()
+    /** Other secrets kept with the API keys, such as the GitHub token Build mode uses. */
+    fun secret(name: String): String = keys.getString("extra_$name", "").orEmpty()
 
-    fun setKey(provider: Provider, value: String) = keys.edit().putString(provider.name, value.trim()).apply()
+    fun setSecret(name: String, value: String) = keys.edit().putString("extra_$name", value.trim()).apply()
+
+    fun key(provider: Provider): String = keys.getString(slot(provider), "").orEmpty()
+
+    /** Key and model for a saved API's address, without switching to it. */
+    fun keyFor(baseUrl: String): String = keys.getString("Custom@$baseUrl", "").orEmpty()
+
+    fun setKeyFor(baseUrl: String, key: String) = keys.edit().putString("Custom@$baseUrl", key.trim()).apply()
+
+    fun setModelFor(baseUrl: String, model: String) = prefs.edit()
+        .putString("custom_model@$baseUrl", model.trim())
+        .apply { if (model.isNotBlank()) putString("model_Custom@$baseUrl", model.trim()) }
+        .apply()
+
+    fun setKey(provider: Provider, value: String) = keys.edit().putString(slot(provider), value.trim()).apply()
 }
+
+
+/** A custom API the person saved, to switch to with one tap. */
+@kotlinx.serialization.Serializable
+data class SavedApi(val name: String, val baseUrl: String, val format: String = "OpenAI", val model: String = "")
