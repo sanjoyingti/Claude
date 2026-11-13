@@ -1450,7 +1450,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     turns += Turn(false, "<search>$q</search>")
                     turns += Turn(true, results + "\n\nNow answer my earlier message using these results where they help.")
                 }
-                if (Prompt.clean(answer).isBlank() && ran.isEmpty()) failure = "The model sent an empty reply. Tap Retry, or pick another model."
+                // A reply that is only a build (or Arin update) request has no visible text, but it isn't empty.
+                val onlyARequest = Prompt.buildRequest(answer) != null || Prompt.selfUpdate(answer) != null
+                if (Prompt.clean(answer).isBlank() && ran.isEmpty() && !onlyARequest) failure = "The model sent an empty reply. Tap Retry, or pick another model."
             } catch (e: CancellationException) {
                 stopped = true
                 answer = liveText // Stop pressed: keep whatever arrived.
@@ -1486,14 +1488,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // Pictures and videos: found by searches, plus any the model linked in its text, plus ones it drew.
                 foundMedia += com.arin.media.MediaSearch.linked(answer).filter { l -> foundMedia.none { it.url == l.url } }
                 foundMedia += Prompt.drawings(answer).filter { d -> foundMedia.none { it.url == d.url } }
-                val shown = com.arin.media.MediaSearch.withoutImages(Prompt.clean(answer)) + buildNote
+                val visible = com.arin.media.MediaSearch.withoutImages(Prompt.clean(answer)).ifBlank {
+                    // The reply was only the build request: say so instead of showing nothing.
+                    if (buildAsked != null) "Ready to write the code for **${buildAsked.first.ifBlank { "your app" }}**." else ""
+                }
+                val shown = visible + buildNote
                 val msg = if (failure != null && shown.isBlank()) {
                     Message(fromUser = false, text = failure!!, failed = true)
                 } else {
                     if (failure != null) notice = failure
                     Message(
                         fromUser = false,
-                        text = shown.ifBlank { if (ran.isNotEmpty()) "Ran ${ran.size} command${if (ran.size == 1) "" else "s"}." else "(Stopped)" },
+                        text = shown.ifBlank {
+                            when {
+                                ran.isNotEmpty() -> "Ran ${ran.size} command${if (ran.size == 1) "" else "s"}."
+                                buildAsked != null -> "Ready to write the code for **${buildAsked.first.ifBlank { "your app" }}**." + buildNote
+                                pendingBuild.startsWith("update\u0000") -> "Ready to update Arin."
+                                else -> "(Stopped)"
+                            }
+                        },
                         thinking = thinking.toString(),
                         thoughtSeconds = seconds,
                         sources = sources,
