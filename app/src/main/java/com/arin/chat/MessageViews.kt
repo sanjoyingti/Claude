@@ -96,6 +96,8 @@ fun ArinMessage(
     onRetry: () -> Unit,
     onSummary: (() -> Unit)? = null,
     onConfirmBuild: ((BuildTarget) -> Unit)? = null,
+    /** Shows the questions asked before compiling (only on the newest such message). */
+    compileQuestions: (@Composable () -> Unit)? = null,
 ) {
     val clipboard = LocalClipboardManager.current
     Row(Modifier.fillMaxWidth()) {
@@ -136,9 +138,19 @@ fun ArinMessage(
                         Text("Update Arin now")
                     }
                 } else {
-                    BuildWhere(onConfirmBuild)
+                    // Step 1 of 3: write the code. Preview and where to compile are asked once it's written.
+                    Column(Modifier.padding(top = 8.dp)) {
+                        androidx.compose.material3.Button(onClick = { onConfirmBuild(BuildTarget.CHAT) }) { Text("Write the code") }
+                        Text(
+                            "Nothing is compiled yet. When the code is written I'll ask whether to make a preview, then where to compile it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
                 }
             }
+            compileQuestions?.invoke()
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (onSummary != null) TextButton(onClick = onSummary) { Text("Summary") }
                 if (!message.failed) {
@@ -407,18 +419,3 @@ private fun BuildNowLine(onOpen: () -> Unit) {
 private fun Modifier.androidx_background(c: androidx.compose.ui.graphics.Color) =
     this.background(c, androidx.compose.foundation.shape.CircleShape)
 
-/** The build-location chooser shown under a prepared build: pick where to build it. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun BuildWhere(onPick: (BuildTarget) -> Unit) {
-    Column(Modifier.padding(top = 8.dp)) {
-        Text("Where should I build it?", style = MaterialTheme.typography.labelLarge)
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            androidx.compose.material3.Button(onClick = { onPick(BuildTarget.CHAT) }) { Text("In chat") }
-            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.BUILD_TAB) }) { Text("Build tab") }
-            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.PHONE) }) { Text("On phone") }
-            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.CODESPACE) }) { Text("Codespace") }
-            androidx.compose.material3.OutlinedButton(onClick = { onPick(BuildTarget.AUTO) }) { Text("Let Arin decide") }
-        }
-    }
-}

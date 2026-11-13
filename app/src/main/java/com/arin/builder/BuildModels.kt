@@ -61,6 +61,8 @@ data class Project(
     val requirements: String = "",
     /** The code is written and waiting to be looked at (View app) before it's compiled. */
     val awaitingPreview: Boolean = false,
+    /** Answer to "make a preview first?" while the code waits: "" not asked yet, "made" or "skipped". */
+    val previewChoice: String = "",
     /** Checkpoint: which of [pendingPaths] are files to delete rather than upload. */
     val pendingDeletes: List<String> = emptyList(),
 )

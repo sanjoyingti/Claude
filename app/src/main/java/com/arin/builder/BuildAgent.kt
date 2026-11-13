@@ -108,6 +108,10 @@ class BuildAgent(
     private var currentRound = 0
     /** True while this run ends with the code written but not compiled (waiting for View app → Build APK). */
     private var paused = false
+    /** The project's repository hasn't been made yet: where it's compiled is chosen after the code is written. */
+    private val pendingRepo = req.project?.owner == PENDING_OWNER
+    /** This run only writes code and stops, so it needs no GitHub and makes no repository. */
+    private val writeOnly = req.previewFirst && !req.resume && !self
     /** Files of an uploaded zip that were deleted before its first upload: left out when the zip is read again. */
     private val droppedFromZip = linkedSetOf<String>()
 
@@ -171,6 +175,34 @@ class BuildAgent(
     private var localOnly = req.project?.owner == LOCAL_OWNER || (req.localOnly && !self)
 
     private fun localRepo(name: String) = GitHubClient.Repo(LOCAL_OWNER, name, "main", "")
+
+    /**
+     * Makes the repository chosen after the code was written (GitHub, or the phone only), and opens a Codespace
+     * on it when that was picked. A phone-only build needs no GitHub sign-in.
+     */
+    private suspend fun makeRepo(name: String, description: String): GitHubClient.Repo {
+        // A compile run already checked GitHub when it started; a write-only run didn't.
+        if (!localOnly && writeOnly) {
+            step(BuildEvent.Kind.STEP, "Checking your GitHub token")
+            try {
+                if (req.githubToken.isBlank()) throw ProviderException(401, "Not signed in to GitHub")
+                gh.login()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!phoneCan) throw e
+                step(BuildEvent.Kind.STEP, "GitHub isn't available (${e.message}); building on this phone only")
+                localOnly = true
+            }
+        }
+        val repo = createRepoOrLocal(name, description)
+        if (req.codespace && !localOnly) {
+            pendingFiles[DEVCONTAINER] = ProjectTemplate.devcontainer.toByteArray()
+            step(BuildEvent.Kind.STEP, "Opening a GitHub Codespace on the project")
+            codespaceUrl = gh.createCodespace(repo) ?: gh.codespaceLink(repo)
+        }
+        return repo
+    }
 
     /** Creates the repo on GitHub, or switches to a phone-only build if GitHub refuses and the phone can build. */
     private suspend fun createRepoOrLocal(name: String, description: String): GitHubClient.Repo {
@@ -249,33 +281,16 @@ class BuildAgent(
         }
         paused = true
         saveProject(repo, null)
-        // Write the preview now, as part of the build, so View app opens instantly when the build says it's ready.
-        context?.let { ctx ->
-            step(BuildEvent.Kind.STEP, "Making the working preview, so View app opens instantly")
-            val problem = try {
-                AppPreview.prepare(ctx, BuildRunner.projectId, currentProject(repo, null), req.provider, req.apiKey, req.model) {
-                    onProgress(-1f, it)
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                e.message ?: "unknown error"
-            }
-            onProgress(null, "")
-            if (problem == null) step(BuildEvent.Kind.DONE, "Preview ready")
-            else step(BuildEvent.Kind.ERROR, "Couldn't make the preview now ($problem). View app will try again when you open it")
-        }
         step(BuildEvent.Kind.DONE, "The code is ready (${files.size} file${if (files.size == 1) "" else "s"}). Nothing is compiled yet")
         return BuildResult(
             true,
-            "The code is ready, but not compiled yet. Tap View app to try it. When it works the way you want, tap Build APK; " +
-                "or ask for changes first.",
+            "The code is ready, but not compiled yet. Choose below: make a preview first, or compile it directly.",
             awaitingPreview = true,
         )
     }
 
     suspend fun run(): BuildResult {
-        if (!localOnly) {
+        if (!localOnly && !writeOnly) {
             step(BuildEvent.Kind.STEP, "Checking your GitHub token")
             try {
                 if (req.githubToken.isBlank()) throw ProviderException(401, "Not signed in to GitHub")
@@ -290,7 +305,7 @@ class BuildAgent(
         }
 
         val existing = req.project
-        val repo: GitHubClient.Repo
+        var repo: GitHubClient.Repo
         var notes: List<String>
         val neverUploaded = existing != null && existing.imported && !existing.uploaded && existing.lastApkUrl == null
         val resumeZip = existing?.takeIf { neverUploaded }?.zipPath?.takeIf { java.io.File(it).exists() }
@@ -299,7 +314,12 @@ class BuildAgent(
         var startRound = 0
         if (req.resume && existing != null && resumeZip == null) {
             // Retry: continue from the saved checkpoint instead of starting over.
-            repo = GitHubClient.Repo(existing.owner, existing.repo, existing.branch, existing.repoUrl)
+            repo = if (pendingRepo) makeRepo(existing.repo, "Built by Arin: ${existing.description.take(200)}")
+            else GitHubClient.Repo(existing.owner, existing.repo, existing.branch, existing.repoUrl)
+            if (!pendingRepo && req.codespace && !localOnly && existing.owner != LOCAL_OWNER) {
+                step(BuildEvent.Kind.STEP, "Opening a GitHub Codespace on the project")
+                codespaceUrl = gh.createCodespace(repo) ?: gh.codespaceLink(repo)
+            }
             notes = emptyList()
             startRound = existing.round
             val restored = restorePending(existing)
@@ -335,10 +355,11 @@ class BuildAgent(
             step(BuildEvent.Kind.STEP, "Found ${zip.count} files in \"${zip.name}\"" + if (zip.skipped > 0) " (skipped ${zip.skipped} build/cache files)" else "")
             val repoName = zip.name.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifEmpty { "project" }.take(40) +
                 "-" + SimpleDateFormat("yyMMdd-HHmm", Locale.US).format(Date())
-            repo = if (existing != null) {
-                GitHubClient.Repo(existing.owner, existing.repo, existing.branch, existing.repoUrl)
-            } else {
-                createRepoOrLocal(repoName, "Uploaded to Arin: ${zip.name}")
+            repo = when {
+                writeOnly && (existing == null || pendingRepo) -> GitHubClient.Repo(PENDING_OWNER, existing?.repo ?: repoName, "main", "")
+                existing != null && pendingRepo -> makeRepo(existing.repo, "Uploaded to Arin: ${zip.name}")
+                existing != null -> GitHubClient.Repo(existing.owner, existing.repo, existing.branch, existing.repoUrl)
+                else -> createRepoOrLocal(repoName, "Uploaded to Arin: ${zip.name}")
             }
             notes = emptyList()
             if (viewedFirst && existing != null) {
@@ -401,9 +422,10 @@ class BuildAgent(
                 )
             }
             val repoName = "$slug-" + SimpleDateFormat("yyMMdd-HHmm", Locale.US).format(Date())
-            repo = createRepoOrLocal(repoName, "Built by Arin: ${req.description}")
+            repo = if (writeOnly) GitHubClient.Repo(PENDING_OWNER, repoName, "main", "")
+            else createRepoOrLocal(repoName, "Built by Arin: ${req.description}")
             ProjectTemplate.files(appName, packageName, deps.toList()).forEach { (p, c) -> pendingFiles[p] = c.toByteArray() }
-            if (req.codespace && !localOnly) {
+            if (req.codespace && !localOnly && !writeOnly) {
                 // Make an opened codespace ready to build Android, and open one now (if the sign-in allows it).
                 pendingFiles[".devcontainer/devcontainer.json"] = ProjectTemplate.devcontainer.toByteArray()
                 step(BuildEvent.Kind.STEP, "Opening a GitHub Codespace on the project")
@@ -431,13 +453,18 @@ class BuildAgent(
 
         // Build on the phone first when Linux has the Android build tools: errors are found and fixed here,
         // and GitHub then only builds code that already compiles (and gives the download links).
+        // Code written: stop here and let the person choose a preview and where to compile it.
+        pauseForPreview(repo, zipKept = zipToRead != null && java.io.File(zipToRead).exists())?.let { return it }
+        if (repo.owner == PENDING_OWNER) {
+            // Couldn't stop for the questions: make the repository now, the usual way.
+            repo = makeRepo(repo.name, "Built by Arin: ${req.description.take(200)}")
+        }
         val localSlug = repo.name
-        var useLocal = localOnly || phoneCan && (existing == null || LocalBuild.hasCopy(context!!, localSlug))
-        if (useLocal && existing == null) {
+        val newCopy = existing == null || pendingRepo || !(context?.let { LocalBuild.hasCopy(it, localSlug) } ?: false)
+        var useLocal = localOnly || phoneCan && (existing == null || pendingRepo || LocalBuild.hasCopy(context!!, localSlug))
+        if (useLocal && newCopy) {
             LocalBuild.write(context!!, localSlug, files.mapValues { it.value.toByteArray() })
         }
-        // Asked to see the app before it's compiled: stop here. "Build APK" continues from this point.
-        pauseForPreview(repo, zipKept = zipToRead != null && java.io.File(zipToRead).exists())?.let { return it }
         var localRounds = 0
         var phoneApk: String? = null
 
@@ -1141,6 +1168,8 @@ class BuildAgent(
         const val SELF_TAG_PREFIX = "arin-"
         /** Owner name used for projects that live only on the phone (no GitHub). */
         const val LOCAL_OWNER = "phone"
+        /** Owner name of a project whose repository is made only once the person picks where to compile it. */
+        const val PENDING_OWNER = "pending"
         private const val MAX_WEB_STEPS = 3
         private const val MANIFEST = "app/src/main/AndroidManifest.xml"
         private const val DEVCONTAINER = ".devcontainer/devcontainer.json"

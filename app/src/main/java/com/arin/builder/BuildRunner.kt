@@ -67,10 +67,12 @@ object BuildRunner {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var loaded = false
 
-    /** Stop once the code is written, so the app can be tried (View app) before it's compiled. On unless turned off. */
-    fun previewFirst(context: Context): Boolean = prefs(context).getBoolean("preview_first", true)
-
-    fun setPreviewFirst(context: Context, on: Boolean) = prefs(context).edit().putBoolean("preview_first", on).apply()
+    /** Changes the open project between builds (e.g. the answer to "make a preview first?") and saves it. */
+    fun updateProject(context: Context, p: Project) {
+        if (running) return
+        project = p
+        save(context)
+    }
 
     private fun dir(context: Context) = File(context.filesDir, "build_projects").apply { mkdirs() }
     private fun prefs(context: Context) = context.getSharedPreferences("build_mode", Context.MODE_PRIVATE)

@@ -102,17 +102,6 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
     var openFile by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreview by rememberSaveable { mutableStateOf(false) }
     val project = vm.project
-    var problem by remember { mutableStateOf<String?>(null) }
-
-    /** Compiles the code that was waiting to be looked at. */
-    fun buildApk() {
-        val p = vm.project ?: return
-        problem = if (chat.githubToken().isBlank() && p.owner != BuildAgent.LOCAL_OWNER) "Sign in with GitHub in Settings first." else null
-        if (problem == null) {
-            resumeBuild(chat, vm, "Build the APK")
-        }
-    }
-
     BackHandler(enabled = showFiles || openFile != null || showProjects) {
         if (openFile != null) openFile = null else if (showFiles) showFiles = false else showProjects = false
     }
@@ -212,25 +201,18 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
                             onRetry = if (!item.success && isLast && !vm.running && vm.project != null) {
                                 { resumeBuild(chat, vm) }
                             } else null,
-                            onView = if (item.preview && vm.project != null) ({ showPreview = true }) else null,
-                            // Only the newest "ready to view" card can start the compile, and only while it's still waiting.
-                            onBuildApk = if (item.preview && isLast && !vm.running && vm.project?.awaitingPreview == true) ({ buildApk() }) else null,
+                            // Only the newest "code is ready" card asks: preview or not, then where to compile.
+                            questions = if (item.preview && isLast) ({
+                                CompileQuestions(chat, onPicked = { t -> if (t == com.arin.chat.BuildTarget.CHAT) onBack() })
+                            }) else null,
                         )
                     }
                 }
             }
         }
     }
-    problem?.let { p ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { problem = null },
-            text = { Text(p) },
-            confirmButton = { TextButton(onClick = { problem = null; onOpenSettings() }) { Text("Settings") } },
-            dismissButton = { TextButton(onClick = { problem = null }) { Text("Close") } },
-        )
-    }
     if (showPreview) {
-        AppPreviewDialog(chat, onClose = { showPreview = false }, onBuildApk = { buildApk() })
+        AppPreviewDialog(chat, onClose = { showPreview = false })
     }
 }
 
@@ -311,8 +293,7 @@ private fun EventRow(e: BuildEvent, active: Boolean) {
 private fun ResultCard(
     r: TimelineItem.Result,
     onRetry: (() -> Unit)? = null,
-    onView: (() -> Unit)? = null,
-    onBuildApk: (() -> Unit)? = null,
+    questions: (@Composable () -> Unit)? = null,
 ) {
     val uri = LocalUriHandler.current
     Card(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -326,12 +307,7 @@ private fun ResultCard(
             if (onRetry != null) {
                 Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("Retry from where it stopped") }
             }
-            if (onView != null) {
-                Button(onClick = onView, modifier = Modifier.fillMaxWidth()) { Text("View app") }
-            }
-            if (onBuildApk != null) {
-                OutlinedButton(onClick = onBuildApk, modifier = Modifier.fillMaxWidth()) { Text("Build APK") }
-            }
+            questions?.invoke()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 r.apkUrl?.let { url -> TextButton(onClick = { uri.openUri(url) }) { Text("Open in browser") } }
                 r.apkUrl?.let { url ->
@@ -342,7 +318,7 @@ private fun ResultCard(
             }
             if (r.preview) {
                 Text(
-                    "Ask for changes below and view it again, as many times as you like. Nothing is compiled until you tap Build APK.",
+                    "Nothing is compiled until you choose where. You can also ask for changes below first.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -366,8 +342,8 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
     var problem by rememberSaveable { mutableStateOf<String?>(null) }
     val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val context = androidx.compose.ui.platform.LocalContext.current
-    // Stop when the code is written, so the app can be tried with View before it's compiled.
-    var previewFirst by remember { mutableStateOf(BuildRunner.previewFirst(context)) }
+    // Every build stops once the code is written and asks: preview or not, then where to compile.
+    val previewFirst = true
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var unpacking by rememberSaveable { mutableStateOf(false) }
 
@@ -397,8 +373,6 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
 
     val pickZip = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        problem = ready()
-        if (problem != null) return@rememberLauncherForActivityResult
         unpacking = true
         scope.launch {
             try {
@@ -510,9 +484,8 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                 Button(onClick = {
                     val zip = attached.firstOrNull { it.isZip }
                     if (project == null && zip != null) {
-                        // An attached project zip: compile it.
-                        problem = ready()
-                        if (problem == null) {
+                        // An attached project zip: read it; where to compile it is asked afterwards.
+                        run {
                             if (android.os.Build.VERSION.SDK_INT >= 33) notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                             vm.newProject()
                             vm.start(
@@ -535,6 +508,10 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                         }
                         return@Button
                     }
+                    if (project != null && project.awaitingPreview && attached.isEmpty() && resumeWords.containsMatchIn(text)) {
+                        problem = "The code is waiting for your choice above: make a preview or skip it, then pick where to compile."
+                        return@Button
+                    }
                     if (project != null && attached.isEmpty() && resumeWords.containsMatchIn(text)) {
                         problem = ready()
                         if (problem == null) {
@@ -546,7 +523,6 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                     problem = when {
                         text.isBlank() && attached.isEmpty() -> "Describe what you want."
                         project == null && name.isBlank() -> "Give the app a name."
-                        chat.githubToken().isBlank() -> "Sign in with GitHub in Settings first."
                         chat.provider.needsKey && chat.key(chat.provider).isBlank() -> "Add your ${chat.provider.label} key in Settings."
                         chat.model.isBlank() -> "Pick a model on the chat screen first."
                         else -> null
@@ -588,15 +564,6 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                     modifier = Modifier.weight(1f),
                 )
                 Switch(checked = allowOther, onCheckedChange = { allowOther = it })
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "View the app before compiling it",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                Switch(checked = previewFirst, onCheckedChange = { previewFirst = it; BuildRunner.setPreviewFirst(context, it) })
             }
         }
     }

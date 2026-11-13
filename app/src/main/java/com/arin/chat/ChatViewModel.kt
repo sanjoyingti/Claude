@@ -483,24 +483,58 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         RegexOption.IGNORE_CASE,
     )
 
+    /** Answer 1: write a working preview of the waiting code (uses the model, so it costs tokens). */
+    fun makePreview() {
+        val p = com.arin.builder.BuildRunner.project ?: return
+        val app = getApplication<Application>()
+        com.arin.builder.BuildRunner.updateProject(app, p.copy(previewChoice = "made"))
+        com.arin.builder.AppPreview.generate(app, com.arin.builder.BuildRunner.projectId, p, provider, settings.key(provider), model)
+    }
+
+    /** Answer 1: no preview, go straight to choosing where to compile (saves tokens). */
+    fun skipPreview() {
+        val p = com.arin.builder.BuildRunner.project ?: return
+        com.arin.builder.AppPreview.cancel()
+        com.arin.builder.BuildRunner.updateProject(getApplication(), p.copy(previewChoice = "skipped"))
+    }
+
+    /** Shows the questions (preview or not, then where to compile) again in this chat. */
+    fun askCompile() {
+        val p = com.arin.builder.BuildRunner.project ?: return
+        if (!p.awaitingPreview) return
+        if (messages.lastOrNull()?.compileAsk == com.arin.builder.BuildRunner.projectId) { notice = "Choose below: preview or not, then where to compile."; return }
+        messages += Message(fromUser = false, text = "**${p.appName}** is written and waiting. Choose below:", compileAsk = com.arin.builder.BuildRunner.projectId)
+        persist()
+    }
+
     /**
-     * "Build APK" in View app: compiles the code that was waiting to be looked at. Its steps show in the chat the
-     * build was started from, or in the Build tab.
+     * Answer 2: compiles the waiting code where the person picked. Returns true when it started; otherwise the
+     * reason is shown as a notice.
      */
-    fun buildAfterPreview() {
-        val project = com.arin.builder.BuildRunner.project ?: return
+    fun compileAfterPreview(target: BuildTarget): Boolean {
+        val project = com.arin.builder.BuildRunner.project ?: return false
+        val app = getApplication<Application>()
         val token = githubToken()
+        val phoneReady = com.arin.terminal.Linux.androidBuildReady(app)
+        val phoneProject = project.owner == com.arin.builder.BuildAgent.LOCAL_OWNER
+        val onPhone = phoneProject || target == BuildTarget.PHONE || (target == BuildTarget.AUTO && phoneReady && token.isBlank())
+        val inCodespace = target == BuildTarget.CODESPACE && !phoneProject
         val problem = when {
             com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
-            token.isBlank() && project.owner != com.arin.builder.BuildAgent.LOCAL_OWNER ->
-                "To compile the app, sign in with GitHub in Settings → GitHub first."
+            target == BuildTarget.PHONE && !phoneReady && !phoneProject ->
+                "To compile on the phone, install the Android build tools in Settings → Linux first, or pick another place."
+            inCodespace && token.isBlank() -> "To use a Codespace, sign in with GitHub in Settings → GitHub first."
+            !onPhone && token.isBlank() ->
+                "To compile on GitHub, sign in with GitHub in Settings → GitHub" +
+                    (if (phoneReady) ", or pick On phone." else ", or install the Android build tools in Settings → Linux and pick On phone.")
             else -> null
         }
-        if (problem != null) { notice = problem; return }
+        if (problem != null) { notice = problem; return false }
+        com.arin.builder.AppPreview.cancel()
         com.arin.builder.BuildService.start(
-            getApplication(),
+            app,
             com.arin.builder.BuildRequest(
-                description = "Build the APK",
+                description = "Compile the app",
                 appName = project.appName,
                 provider = provider,
                 model = model,
@@ -510,13 +544,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 allowOtherSites = true,
                 project = project,
                 resume = true,
+                localOnly = onPhone,
+                codespace = inCodespace,
             ),
         )
-        if (chatBuildChat != null && chatBuildChat == chatId && chatBuildProject == com.arin.builder.BuildRunner.projectId) {
-            followBuildInChat("Compiling ${project.appName}")
-        } else {
-            openBuild = true
-        }
+        val where = when { onPhone -> " on this phone"; inCodespace -> " in a Codespace"; else -> "" }
+        if (target == BuildTarget.BUILD_TAB) openBuild = true
+        else followBuildInChat("Compiling ${project.appName}$where")
+        return true
     }
 
     /** Shows the build's steps live in this chat, like Build mode does. */
@@ -620,10 +655,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val name = project?.appName ?: "The app"
         val phoneOnly = project?.owner == com.arin.builder.BuildAgent.LOCAL_OWNER
         val text = if (result.awaitingPreview) buildString {
-            append("📱 **$name's code is ready — nothing is compiled yet.**\n\n")
-            append("- **Try it:** tap **⋮** at the top right → **View app**. It opens a working preview: tap the buttons, type, move between screens.\n")
-            append("- **Happy with it:** tap **Build APK** in the preview, or say \"build it\".\n")
-            append("- **Want changes:** tell me what to change, then view it again.")
+            append("📱 **$name's code is written — nothing is compiled yet.** Choose below:")
         } else if (result.success && phoneOnly) buildString {
             append("✅ **$name is built on this phone.**\n\n")
             result.phoneApk?.let { append("- **APK:** `$it`\n") }
@@ -659,7 +691,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 (if (result.log.isNotBlank()) " Error log:\n${result.log.take(4_000)}\n" else "") +
                 (result.runUrl?.let { " Full log: $it ." } ?: "") +
                 " When the person asks why it failed, explain from this log in plain words; to fix it, emit a <build> tag that says what to change.\n\n"
-        postToBuildChat(Message(fromUser = false, text = text), progressId, steps)
+        postToBuildChat(Message(fromUser = false, text = text, compileAsk = if (result.awaitingPreview) com.arin.builder.BuildRunner.projectId else ""), progressId, steps)
         if (result.success) result.phoneInstallPath?.let { path ->
             runCatching { com.arin.builder.ApkInstaller.install(getApplication(), java.io.File(path)) }
         }
@@ -694,10 +726,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (lastFailure.isNotEmpty()) return lastFailure
         val p = com.arin.builder.BuildRunner.project ?: return ""
         if (p.awaitingPreview) {
-            return "The code of ${p.appName} is written but NOT compiled yet: there is no APK. It is waiting for the person to try " +
-                "it with the ⋮ menu → View app (a working preview). When they say to build or compile it, reply with " +
-                "<build name=\"${p.appName}\">build it now</build>. When they ask for changes, reply with a <build> tag for the same " +
-                "app name that says what to change; they can then view it again before compiling.\n\n"
+            return "The code of ${p.appName} is written but NOT compiled yet: there is no APK. Buttons in the chat ask the person, " +
+                "in order, whether to make a working preview (it costs tokens) and then where to compile it (in chat, Build tab, " +
+                "on the phone or a Codespace). When they say to build or compile it, reply with <build name=\"${p.appName}\">build it " +
+                "now</build> and the buttons appear again. When they ask for changes, reply with a <build> tag for the same app name " +
+                "that says what to change.\n\n"
         }
         val apk = p.lastApkUrl ?: return ""
         return "Latest app built in Build mode: ${p.appName}" + (if (p.selfUpdate) " (Arin itself)" else "") +
@@ -730,13 +763,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val onPhone = target == BuildTarget.PHONE || (target == BuildTarget.AUTO && phoneReady && token.isBlank())
         val inBuildTab = target == BuildTarget.BUILD_TAB
         val inCodespace = target == BuildTarget.CODESPACE
+        // Writing the code needs no GitHub or build tools: those are checked when the person picks where to compile.
         return when {
-            target == BuildTarget.PHONE && !phoneReady ->
-                "To build on the phone, install the Android build tools in Settings → Linux first."
-            inCodespace && token.isBlank() ->
-                "To build in a Codespace, sign in with GitHub in Settings → GitHub first."
-            !onPhone && token.isBlank() && !phoneReady ->
-                "To build apps, sign in with GitHub in Settings → GitHub, or install the Android build tools in Settings → Linux to build on this phone. Then ask again."
             com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
             else -> {
@@ -751,6 +779,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // The code was written and is waiting to be looked at: "build it" compiles it as it is.
                 val compileViewed = same && current!!.awaitingPreview && description.length < 80 &&
                     (goWords.containsMatchIn(description) || retryWords.containsMatchIn(description))
+                if (compileViewed) {
+                    // Nothing new to write: ask (preview or not, then where to compile) instead of guessing.
+                    askCompile()
+                    return null
+                }
+                // Retrying a compile that failed continues it where it was; everything else writes code and stops to ask.
+                val resume = same && lastFailed && !current!!.awaitingPreview && retryWords.containsMatchIn(description.take(80))
                 if (!same) com.arin.builder.BuildRunner.newProject(app)
                 val appName = if (same) current!!.appName
                     else name.ifBlank { description.split(Regex("\\s+")).take(3).joinToString(" ").take(30) }
@@ -766,18 +801,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         githubToken = token,
                         allowOtherSites = true,
                         project = if (same) current else null,
-                        resume = compileViewed || same && lastFailed && retryWords.containsMatchIn(description.take(80)),
-                        previewFirst = !compileViewed && com.arin.builder.BuildRunner.previewFirst(app),
+                        resume = resume,
+                        previewFirst = !resume,
                         // The whole conversation goes to the builder, so nothing that was discussed gets lost.
                         requirements = buildRequirements(description),
                         requirementsComplete = true,
-                        localOnly = onPhone,
-                        codespace = inCodespace,
+                        localOnly = resume && onPhone,
+                        codespace = resume && inCodespace,
                     ),
                 )
                 if (inBuildTab) openBuild = true
-                else followBuildInChat((if (same) "Working on $appName again" else "Building $appName") +
-                    when { onPhone -> " on this phone"; inCodespace -> " in a Codespace"; else -> "" })
+                else followBuildInChat(
+                    when {
+                        resume -> "Compiling $appName again"
+                        same -> "Writing the changes to $appName"
+                        else -> "Writing the code for $appName"
+                    },
+                )
                 null
             }
         }
@@ -790,7 +830,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val problem = if (name == "update") startSelfUpdate(spec) else startBuild(name, spec, target)
         if (problem != null) { notice = problem; return }
         val i = messages.indexOfFirst { it.id == message.id }
-        if (i >= 0) messages[i] = messages[i].copy(pendingBuild = "", text = messages[i].text.substringBefore("\n\n_Where should I build"))
+        if (i >= 0) messages[i] = messages[i].copy(pendingBuild = "", text = messages[i].text.substringBefore("\n\n_Tap Write the code").substringBefore("\n\n_Where should I build"))
         persist()
     }
 
@@ -1440,8 +1480,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     // A build is prepared, but nothing starts until the person picks where to build it.
                     pendingBuild = buildAsked.first + "\u0000" + buildAsked.second
                     buildNote = if (saidAll.any { Prompt.saysBuild(it, hasChatBuild) })
-                        "\n\n_Where should I build it? Pick below — nothing builds until you choose._"
-                    else "\n\n_Where should I build it? Pick below when you're ready._"
+                        "\n\n_Tap Write the code below — nothing is written or compiled until you choose._"
+                    else "\n\n_Tap Write the code below when you're ready._"
                 }
                 // Pictures and videos: found by searches, plus any the model linked in its text, plus ones it drew.
                 foundMedia += com.arin.media.MediaSearch.linked(answer).filter { l -> foundMedia.none { it.url == l.url } }

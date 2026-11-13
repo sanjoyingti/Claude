@@ -59,6 +59,8 @@ data class Message(
     val media: List<MediaItem> = emptyList(),
     /** A build the model prepared but the person hasn't ordered yet: "name\u0000specification" (or "update\u0000change"). */
     val pendingBuild: String = "",
+    /** The Build project whose written code this message asks about (preview or not, then where to compile); "" for none. */
+    val compileAsk: String = "",
 )
 
 @Serializable

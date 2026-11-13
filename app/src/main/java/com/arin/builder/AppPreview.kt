@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -119,10 +120,7 @@ object AppPreview {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /**
-     * Gets the preview of [project] ready to show: the saved one when the code hasn't changed since, otherwise a
-     * new one is written (the old page stays on screen, marked outdated, until the new one is done).
-     */
+    /** Shows the saved preview of [project], marked outdated when the code has changed since. Writes nothing. */
     fun open(context: Context, id: String, project: Project, provider: Provider, apiKey: String, model: String) {
         val app = context.applicationContext
         if (projectId != id) {
@@ -142,7 +140,7 @@ object AppPreview {
             if (projectId != id || generating) return@launch
             html = saved
             outdated = saved != null && !fresh
-            if (!fresh) generate(app, id, project, provider, apiKey, model)
+            // A preview costs tokens: it's only written when the person asks for it (Make preview / Update).
         }
     }
 
@@ -215,61 +213,6 @@ object AppPreview {
     private fun kb(chars: Int) = if (chars < 1024) "$chars characters" else "${chars / 1024} KB"
 
     /** Asks the model for the page, and for the rest of it while the answer keeps getting cut off. */
-    /** The preview is being written by a build (it can't be stopped from the preview screen). */
-    var fromBuild by mutableStateOf(false)
-        private set
-
-    /**
-     * Writes and saves the preview while a build runs, right after the code is written, so View app opens instantly
-     * afterwards. Returns null when it's ready (or already was), else why it couldn't be made.
-     */
-    suspend fun prepare(
-        context: Context,
-        id: String,
-        project: Project,
-        provider: Provider,
-        apiKey: String,
-        model: String,
-        onStatus: (String) -> Unit = {},
-    ): String? {
-        val app = context.applicationContext
-        if (relevant(project).isEmpty()) return "no app code yet"
-        val made = mark(project)
-        val upToDate = withContext(Dispatchers.IO) {
-            runCatching { pageFile(app, id).isFile && markFile(app, id).readText() == made }.getOrDefault(false)
-        }
-        if (upToDate) return null
-        val started = withContext(Dispatchers.Main) {
-            if (generating) return@withContext false
-            if (projectId != id) { projectId = id; html = null; outdated = false }
-            error = null
-            generating = true
-            fromBuild = true
-            status = "Writing the preview…"
-            true
-        }
-        if (!started) return "a preview is already being written"
-        return try {
-            val page = withContext(Dispatchers.Default) { write(project, provider, apiKey, model, onStatus) }
-            withContext(Dispatchers.IO) {
-                pageFile(app, id).writeText(page)
-                markFile(app, id).writeText(made)
-            }
-            withContext(Dispatchers.Main) { if (projectId == id) { html = page; outdated = false } }
-            null
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            friendly(e)
-        } finally {
-            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
-                generating = false
-                fromBuild = false
-                status = ""
-            }
-        }
-    }
-
     private suspend fun write(
         project: Project,
         provider: Provider,
@@ -459,10 +402,7 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
     var menu by remember { mutableStateOf(false) }
     var web by remember { mutableStateOf<WebView?>(null) }
 
-    fun remake() {
-        val p = BuildRunner.project ?: return
-        AppPreview.generate(context, id, p, chat.provider, chat.key(chat.provider), chat.model)
-    }
+    fun remake() = chat.makePreview()
 
     LaunchedEffect(id) {
         if (project != null) AppPreview.open(context, id, project, chat.provider, chat.key(chat.provider), chat.model)
@@ -516,7 +456,7 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
                                 enabled = project != null && !AppPreview.generating,
                                 onClick = { menu = false; remake() },
                             )
-                            if (AppPreview.generating && !AppPreview.fromBuild) {
+                            if (AppPreview.generating) {
                                 DropdownMenuItem(text = { Text("Stop writing the preview") }, onClick = { menu = false; AppPreview.cancel() })
                             }
                         }
@@ -540,19 +480,24 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
                             CircularProgressIndicator()
                             Text(AppPreview.status.ifBlank { "Working…" }, textAlign = TextAlign.Center)
                             Text(
-                                if (AppPreview.fromBuild) "The build is writing the preview together with the code. It opens here as soon as it's done."
-                                else "Arin is turning the app's code into a working preview. It takes a minute or two, longer for a big " +
+                                "Arin is turning the app's code into a working preview. It takes a minute or two, longer for a big " +
                                     "app. You can close this screen; it keeps going.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                             )
-                            if (!AppPreview.fromBuild) OutlinedButton(onClick = { AppPreview.cancel() }) { Text("Stop") }
+                            OutlinedButton(onClick = { AppPreview.cancel() }) { Text("Stop") }
                         }
-                        else -> Notice(
+                        AppPreview.error != null -> Notice(
                             "Couldn't make the preview",
-                            AppPreview.error ?: "Tap Try again to write the preview.",
+                            AppPreview.error!!,
                             action = "Try again" to { remake() },
+                        )
+                        else -> Notice(
+                            "No preview yet",
+                            "A preview is a working copy of the app made from its code, so you can try it before it's compiled. " +
+                                "Making it uses your model (${chat.provider.label}), so it costs tokens.",
+                            action = "Make preview" to { remake() },
                         )
                     }
                 }
@@ -586,12 +531,12 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                "Works the way you want? Compile it. Otherwise close this and ask for changes.",
+                                "Works the way you want? Choose where to compile it. Otherwise close this and ask for changes.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f).padding(end = 12.dp),
                             )
-                            Button(onClick = { onClose(); onBuildApk() }) { Text("Build APK") }
+                            Button(onClick = { onClose(); onBuildApk() }) { Text("Compile…") }
                         }
                     }
                 }
@@ -648,4 +593,73 @@ private fun PreviewWeb(html: String, projectId: String, onReady: (WebView) -> Un
         update = { },
         onRelease = { it.destroy() },
     )
+}
+
+/**
+ * The questions asked, one after the other, once the code is written and before anything is compiled:
+ * 1. make a working preview (costs tokens) or skip it, then 2. where to compile it.
+ * Shown under the "code is ready" message in chat and on the result card in Build mode.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun CompileQuestions(chat: ChatViewModel, onPicked: (com.arin.chat.BuildTarget) -> Unit = {}) {
+    val p = BuildRunner.project ?: return
+    if (!p.awaitingPreview || BuildRunner.running) return
+    var view by remember { mutableStateOf(false) }
+    val id = BuildRunner.projectId
+    val making = AppPreview.generating && AppPreview.projectId == id
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when {
+            p.previewChoice.isBlank() -> {
+                Text("1. Make a working preview first?", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    "You can tap through the app before it's compiled. It uses your model (${chat.provider.label}), so it costs " +
+                        "tokens; skip it to save them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { chat.makePreview() }) { Text("Make preview") }
+                    OutlinedButton(onClick = { chat.skipPreview() }) { Text("Skip, compile directly") }
+                }
+            }
+            making -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.padding(end = 12.dp).size(20.dp), strokeWidth = 2.dp)
+                Text(AppPreview.status.ifBlank { "Writing the preview…" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                androidx.compose.material3.TextButton(onClick = { AppPreview.cancel() }) { Text("Stop") }
+            }
+            else -> {
+                if (p.previewChoice == "made") {
+                    if (AppPreview.error != null && AppPreview.projectId == id) {
+                        Text("Couldn't make the preview: ${AppPreview.error}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { chat.makePreview() }) { Text("Try again") }
+                            OutlinedButton(onClick = { chat.skipPreview() }) { Text("Skip the preview") }
+                        }
+                    } else {
+                        Text("Preview ready.", style = MaterialTheme.typography.labelLarge)
+                        Button(onClick = { view = true }) { Text("View app") }
+                    }
+                }
+                Text("2. Where should I compile it?", style = MaterialTheme.typography.labelLarge)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    val pick = { t: com.arin.chat.BuildTarget -> if (chat.compileAfterPreview(t)) onPicked(t) }
+                    Button(onClick = { pick(com.arin.chat.BuildTarget.CHAT) }) { Text("In chat") }
+                    OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.BUILD_TAB) }) { Text("Build tab") }
+                    OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.PHONE) }) { Text("On phone") }
+                    OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.CODESPACE) }) { Text("Codespace") }
+                    OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.AUTO) }) { Text("Let Arin decide") }
+                }
+                Text(
+                    "Or tell me what to change first; I'll ask these again afterwards.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    if (view) AppPreviewDialog(chat, onClose = { view = false })
 }

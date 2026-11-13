@@ -405,6 +405,9 @@ private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
+            // Only the newest question message, and only for the project that is waiting now.
+            val askId = vm.messages.lastOrNull { it.compileAsk.isNotEmpty() }
+                ?.takeIf { it.compileAsk == com.arin.builder.BuildRunner.projectId }?.id
             itemsIndexed(vm.messages, key = { _, m -> m.id }) { i, m ->
                 if (m.fromUser) UserMessage(m, onEdit = if (vm.streaming) null else ({ onEdit(i) }))
                 else ArinMessage(
@@ -413,6 +416,7 @@ private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
                     onSummary = if (m.text.startsWith("🛠️")) ({ summaryOpen = true }) else null,
                     // Only the newest reply can be built from, so an old plan never starts by accident.
                     onConfirmBuild = if (i == vm.messages.lastIndex && !vm.streaming) ({ t: com.arin.chat.BuildTarget -> vm.confirmBuildAt(m, t) }) else null,
+                    compileQuestions = if (m.id == askId && !vm.streaming) ({ com.arin.builder.CompileQuestions(vm) }) else null,
                 )
             }
             if (vm.streaming) {
@@ -637,7 +641,11 @@ private fun ChatMenu(vm: ChatViewModel) {
         }
     }
     if (viewApp) {
-        com.arin.builder.AppPreviewDialog(vm, onClose = { viewApp = false }, onBuildApk = { vm.buildAfterPreview() })
+        com.arin.builder.AppPreviewDialog(
+            vm,
+            onClose = { viewApp = false },
+            onBuildApk = if (com.arin.builder.BuildRunner.project?.awaitingPreview == true) ({ vm.askCompile() }) else null,
+        )
     }
     if (confirmClearAll) {
         androidx.compose.material3.AlertDialog(
