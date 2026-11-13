@@ -462,7 +462,50 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         // When a build ends, post the result in this chat with real download links.
-        com.arin.builder.BuildRunner.onFinished = { result, project -> postBuildResult(result, project) }
+        com.arin.builder.BuildRunner.onFinished = { result, project ->
+            postBuildResult(result, project)
+            // A request that came in during the build starts now (after the finished build's service has stopped).
+            if (queuedBuild != null) viewModelScope.launch { kotlinx.coroutines.delay(1_500); startQueued() }
+        }
+    }
+
+    /** A build asked for while another was running: it starts by itself when that one finishes. */
+    private data class QueuedBuild(val name: String, val description: String, val target: BuildTarget, val chatId: String?)
+
+    /** Kept for the whole app process (in the companion), so it survives this screen being rebuilt. */
+    private var queuedBuild: QueuedBuild?
+        get() = queuedBuildStore as QueuedBuild?
+        set(v) { queuedBuildStore = v }
+
+    /** Holds [description] until the running build finishes; more requests in the meantime are added to it. */
+    private fun queueBuild(name: String, description: String, target: BuildTarget) {
+        if (chatId == null) persist()
+        val q = queuedBuild
+        val combined = if (q != null && q.chatId == chatId) q.description + "\n\nAlso: " + description else description
+        queuedBuild = QueuedBuild(name.ifBlank { q?.name.orEmpty() }, combined, target, chatId)
+        messages += Message(
+            fromUser = false,
+            text = "⏳ **Queued.** A build is running right now. I'll start this " +
+                (if (q != null && q.chatId == chatId) "(together with your earlier queued request) " else "") +
+                "by itself as soon as it finishes; it's added on top of what that build makes.",
+        )
+        persist()
+    }
+
+    /** Starts the queued request, in the chat it was asked in. */
+    private fun startQueued() {
+        val q = queuedBuild ?: return
+        if (com.arin.builder.BuildRunner.running) return
+        if (q.chatId != null && q.chatId != chatId) {
+            notice = "Your queued build starts when you open the chat you asked in."
+            return
+        }
+        queuedBuild = null
+        val problem = startBuild(q.name, q.description, q.target)
+        if (problem != null) {
+            messages += Message(fromUser = false, text = "⚠️ The queued build couldn't start: $problem", failed = true)
+            persist()
+        }
     }
 
     // ---------------- Builds started from chat stay in chat ----------------
@@ -720,8 +763,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 as? com.arin.builder.TimelineItem.Event
             return "A build of ${com.arin.builder.BuildRunner.project?.appName ?: "an app"} is running now in this chat" +
                 (step?.let { " (current step: ${it.event.text.take(150)})" } ?: "") +
-                ". Its steps show in the chat and the links will be posted when it's done. Don't start another <build> " +
-                "until it finishes; answer other questions normally.\n\n"
+                ". Its steps show in the chat and the links will be posted when it's done. If the person asks to build " +
+                "something more now, send the <build> tag as usual: Arin queues it and starts it by itself when this build " +
+                "finishes, on top of what this build makes. Answer other questions normally.\n\n"
         }
         if (lastFailure.isNotEmpty()) return lastFailure
         val p = com.arin.builder.BuildRunner.project ?: return ""
@@ -765,6 +809,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val inCodespace = target == BuildTarget.CODESPACE
         // Writing the code needs no GitHub or build tools: those are checked when the person picks where to compile.
         return when {
+            // Another build is running: hold this one and start it when that finishes (a self-update is never queued).
+            com.arin.builder.BuildRunner.running && com.arin.builder.BuildRunner.project?.selfUpdate != true -> {
+                queueBuild(name, description, target)
+                null
+            }
             com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
             else -> {
@@ -1663,6 +1712,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             messages.addAll(chat.messages)
             Attachments.deleteFiles(pending.toList())
             pending.clear()
+            if (queuedBuild?.chatId == id && !com.arin.builder.BuildRunner.running) startQueued()
             editing = null
         }
     }
@@ -1955,6 +2005,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** The build waiting for the running one to finish (see queueBuild). */
+        @Volatile private var queuedBuildStore: Any? = null
         /** The single chat where REA (reverse engineering) is active. */
         const val REVERSE_ENG_TITLE = "Reverse engineering"
 
