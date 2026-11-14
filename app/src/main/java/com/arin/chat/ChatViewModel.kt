@@ -526,6 +526,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         RegexOption.IGNORE_CASE,
     )
 
+    /** "Try again" under a failed build: keep fixing it from where it stopped. */
+    fun retryFailedBuild() {
+        startBuild("", "try again")?.let { notice = it }
+    }
+
+    /** "Start over" under a failed build: write the whole app again from the same request, as a new project. */
+    fun startOverBuild() {
+        val p = com.arin.builder.BuildRunner.project ?: return
+        if (com.arin.builder.BuildRunner.running) { notice = "A build is already running."; return }
+        val what = p.requirements.ifBlank { p.description }
+        chatBuildProject = null
+        com.arin.builder.BuildRunner.newProject(getApplication())
+        startBuild(p.appName, what)?.let { notice = it }
+    }
+
     /** Answer 1: write a working preview of the waiting code (uses the model, so it costs tokens). */
     fun makePreview() {
         val p = com.arin.builder.BuildRunner.project ?: return
@@ -726,7 +741,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 result.runUrl?.let { append("\n- **Full build log:** [Open the run on GitHub]($it)\n") }
                 result.repoUrl?.let { append("- **GitHub repository:** [Open on GitHub]($it)\n") }
-                append("\nSay \"try again\" to keep fixing it, or describe what to change.")
+                append("\n**What next?** Tap a button below, or tell me what to change.")
             }
         }
         lastFailure = if (result.success) "" else
@@ -734,7 +749,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 (if (result.log.isNotBlank()) " Error log:\n${result.log.take(4_000)}\n" else "") +
                 (result.runUrl?.let { " Full log: $it ." } ?: "") +
                 " When the person asks why it failed, explain from this log in plain words; to fix it, emit a <build> tag that says what to change.\n\n"
-        postToBuildChat(Message(fromUser = false, text = text, compileAsk = if (result.awaitingPreview) com.arin.builder.BuildRunner.projectId else ""), progressId, steps)
+        postToBuildChat(
+            Message(
+                fromUser = false,
+                text = text,
+                compileAsk = if (result.awaitingPreview) com.arin.builder.BuildRunner.projectId else "",
+                failActions = if (!result.success && result.message != "Stopped.") com.arin.builder.BuildRunner.projectId else "",
+            ),
+            progressId,
+            steps,
+        )
         if (result.success) result.phoneInstallPath?.let { path ->
             runCatching { com.arin.builder.ApkInstaller.install(getApplication(), java.io.File(path)) }
         }
@@ -826,7 +850,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var openBuild by mutableStateOf(false)
 
     /** Starts building an app from chat; returns a problem to show, or null when it started. */
-    fun startBuild(name: String, description: String, target: BuildTarget = BuildTarget.CHAT): String? {
+    fun startBuild(name: String, description: String, target: BuildTarget = BuildTarget.AUTO): String? {
         val token = githubToken()
         val app = getApplication<Application>()
         val phoneReady = com.arin.terminal.Linux.androidBuildReady(app)
@@ -834,7 +858,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val onPhone = target == BuildTarget.PHONE || (target == BuildTarget.AUTO && phoneReady && token.isBlank())
         val inBuildTab = target == BuildTarget.BUILD_TAB
         val inCodespace = target == BuildTarget.CODESPACE
-        // Writing the code needs no GitHub or build tools: those are checked when the person picks where to compile.
         return when {
             // Another build is running: hold this one and start it when that finishes (a self-update is never queued).
             com.arin.builder.BuildRunner.running && com.arin.builder.BuildRunner.project?.selfUpdate != true -> {
@@ -843,6 +866,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
             com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
+            target == BuildTarget.PHONE && !phoneReady ->
+                "To build on the phone, install the Android build tools in Settings → Linux first."
+            inCodespace && token.isBlank() -> "To build in a Codespace, sign in with GitHub in Settings → GitHub first."
+            !onPhone && token.isBlank() && com.arin.builder.BuildRunner.project?.owner != com.arin.builder.BuildAgent.LOCAL_OWNER ->
+                "To build apps, sign in with GitHub in Settings → GitHub, or install the Android build tools in Settings → Linux " +
+                    "to build on this phone. Then say build again."
             else -> {
                 // A follow-up in the same chat ("try again", "add dark mode") keeps working on the same app.
                 val current = com.arin.builder.BuildRunner.project
@@ -852,16 +881,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         retryWords.containsMatchIn(description.take(80)))
                 val lastFailed = (com.arin.builder.BuildRunner.timeline.lastOrNull { it is com.arin.builder.TimelineItem.Result }
                     as? com.arin.builder.TimelineItem.Result)?.success == false
-                // The code was written and is waiting to be looked at: "build it" compiles it as it is.
-                val compileViewed = same && current!!.awaitingPreview && description.length < 80 &&
+                // Code written earlier and never compiled (older versions waited for a preview): "build it" compiles it as it is.
+                val compileWaiting = same && current!!.awaitingPreview && description.length < 80 &&
                     (goWords.containsMatchIn(description) || retryWords.containsMatchIn(description))
-                if (compileViewed) {
-                    // Nothing new to write: ask (preview or not, then where to compile) instead of guessing.
-                    askCompile()
-                    return null
-                }
-                // Retrying a compile that failed continues it where it was; everything else writes code and stops to ask.
-                val resume = same && lastFailed && !current!!.awaitingPreview && retryWords.containsMatchIn(description.take(80))
+                // Retrying a build that failed continues it where it stopped.
+                val resume = compileWaiting || same && lastFailed && retryWords.containsMatchIn(description.take(80))
                 if (!same) com.arin.builder.BuildRunner.newProject(app)
                 val appName = if (same) current!!.appName
                     else name.ifBlank { description.split(Regex("\\s+")).take(3).joinToString(" ").take(30) }
@@ -878,21 +902,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         allowOtherSites = true,
                         project = if (same) current else null,
                         resume = resume,
-                        previewFirst = !resume,
+                        // One step: write the code and compile it straight away.
+                        previewFirst = false,
                         // The whole conversation goes to the builder, so nothing that was discussed gets lost.
                         requirements = buildRequirements(description),
                         requirementsComplete = true,
-                        localOnly = resume && onPhone,
-                        codespace = resume && inCodespace,
+                        localOnly = onPhone,
+                        codespace = inCodespace,
                     ),
                 )
                 if (inBuildTab) openBuild = true
                 else followBuildInChat(
                     when {
-                        resume -> "Compiling $appName again"
-                        same -> "Writing the changes to $appName"
-                        else -> "Writing the code for $appName"
-                    },
+                        resume -> "Building $appName again"
+                        same -> "Changing $appName"
+                        else -> "Building $appName"
+                    } + when { onPhone -> " on this phone"; inCodespace -> " in a Codespace"; else -> "" },
                 )
                 null
             }
@@ -906,7 +931,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val problem = if (name == "update") startSelfUpdate(spec) else startBuild(name, spec, target)
         if (problem != null) { notice = problem; return }
         val i = messages.indexOfFirst { it.id == message.id }
-        if (i >= 0) messages[i] = messages[i].copy(pendingBuild = "", text = messages[i].text.substringBefore("\n\n_Tap Write the code").substringBefore("\n\n_Where should I build"))
+        if (i >= 0) messages[i] = messages[i].copy(pendingBuild = "", text = messages[i].text.substringBefore("\n\n_Tap Build it").substringBefore("\n\n_Tap Write the code").substringBefore("\n\n_Where should I build"))
         persist()
     }
 
@@ -1563,18 +1588,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val buildAsked = if (failure == null && !stopped) Prompt.buildRequest(answer) else null
                 var buildNote = ""
                 if (buildAsked != null) {
-                    // A build is prepared, but nothing starts until the person picks where to build it.
-                    pendingBuild = buildAsked.first + "\u0000" + buildAsked.second
-                    buildNote = if (saidAll.any { Prompt.saysBuild(it, hasChatBuild) })
-                        "\n\n_Tap Write the code below — nothing is written or compiled until you choose._"
-                    else "\n\n_Tap Write the code below when you're ready._"
+                    if (saidAll.any { Prompt.saysBuild(it, hasChatBuild) }) {
+                        // The person said "build": start right away, the model does the rest.
+                        ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            startBuild(buildAsked.first, buildAsked.second)?.let { problem ->
+                                notice = problem
+                                // Couldn't start (no sign-in, no key…): keep a button to start it once that's sorted.
+                                val i = messages.indexOfLast { !it.fromUser }
+                                if (i >= 0) messages[i] = messages[i].copy(pendingBuild = buildAsked.first + "\u0000" + buildAsked.second)
+                                persist()
+                            }
+                        }
+                    } else {
+                        // The model offered a build the person didn't ask for yet: one tap starts it.
+                        pendingBuild = buildAsked.first + "\u0000" + buildAsked.second
+                        buildNote = "\n\n_Tap Build it below, or just say build._"
+                    }
                 }
                 // Pictures and videos: found by searches, plus any the model linked in its text, plus ones it drew.
                 foundMedia += com.arin.media.MediaSearch.linked(answer).filter { l -> foundMedia.none { it.url == l.url } }
                 foundMedia += Prompt.drawings(answer).filter { d -> foundMedia.none { it.url == d.url } }
                 val visible = com.arin.media.MediaSearch.withoutImages(Prompt.clean(answer)).ifBlank {
                     // The reply was only the build request: say so instead of showing nothing.
-                    if (buildAsked != null) "Ready to write the code for **${buildAsked.first.ifBlank { "your app" }}**." else ""
+                    if (buildAsked != null) "Building **${buildAsked.first.ifBlank { "your app" }}**." else ""
                 }
                 val shown = visible + buildNote +
                     (if (stopped && visible.isNotBlank()) "\n\n_⏹️ Stopped here ($stopReason). Tap Retry for the full answer._" else "")
@@ -1587,7 +1623,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         text = shown.ifBlank {
                             when {
                                 ran.isNotEmpty() -> "Ran ${ran.size} command${if (ran.size == 1) "" else "s"}."
-                                buildAsked != null -> "Ready to write the code for **${buildAsked.first.ifBlank { "your app" }}**." + buildNote
+                                buildAsked != null -> "Building **${buildAsked.first.ifBlank { "your app" }}**." + buildNote
                                 pendingBuild.startsWith("update\u0000") -> "Ready to update Arin."
                                 stopped -> "⏹️ Stopped before an answer arrived (${stopReason.ifBlank { "the reply was cancelled" }}). Tap Retry to ask again."
                                 else -> "The model's reply had nothing to show. Tap Retry, or pick another model."

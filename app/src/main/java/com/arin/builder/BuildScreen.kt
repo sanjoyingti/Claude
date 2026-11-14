@@ -342,8 +342,8 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
     var problem by rememberSaveable { mutableStateOf<String?>(null) }
     val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     val context = androidx.compose.ui.platform.LocalContext.current
-    // Every build stops once the code is written and asks: preview or not, then where to compile.
-    val previewFirst = true
+    // One step: write the code and compile it straight away (View app in the ⋮ menu still makes a preview on request).
+    val previewFirst = false
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var unpacking by rememberSaveable { mutableStateOf(false) }
 

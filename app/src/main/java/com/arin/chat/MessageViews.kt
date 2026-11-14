@@ -98,6 +98,8 @@ fun ArinMessage(
     onConfirmBuild: ((BuildTarget) -> Unit)? = null,
     /** Shows the questions asked before compiling (only on the newest such message). */
     compileQuestions: (@Composable () -> Unit)? = null,
+    /** Buttons under a failed build (only on the newest one). */
+    failActions: (@Composable () -> Unit)? = null,
 ) {
     val clipboard = LocalClipboardManager.current
     Row(Modifier.fillMaxWidth()) {
@@ -138,19 +140,13 @@ fun ArinMessage(
                         Text("Update Arin now")
                     }
                 } else {
-                    // Step 1 of 3: write the code. Preview and where to compile are asked once it's written.
-                    Column(Modifier.padding(top = 8.dp)) {
-                        androidx.compose.material3.Button(onClick = { onConfirmBuild(BuildTarget.CHAT) }) { Text("Write the code") }
-                        Text(
-                            "Nothing is compiled yet. When the code is written I'll ask whether to make a preview, then where to compile it.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
+                    androidx.compose.material3.Button(onClick = { onConfirmBuild(BuildTarget.AUTO) }, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("Build it")
                     }
                 }
             }
             compileQuestions?.invoke()
+            failActions?.invoke()
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (onSummary != null) TextButton(onClick = onSummary) { Text("Summary") }
                 if (!message.failed) {

@@ -61,6 +61,8 @@ data class Message(
     val pendingBuild: String = "",
     /** The Build project whose written code this message asks about (preview or not, then where to compile); "" for none. */
     val compileAsk: String = "",
+    /** A failed build of this Build project: the message offers Try again / Start over. */
+    val failActions: String = "",
 )
 
 @Serializable

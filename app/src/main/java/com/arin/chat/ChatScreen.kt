@@ -406,6 +406,9 @@ private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
             modifier = Modifier.fillMaxSize(),
         ) {
             // Only the newest question message, and only for the project that is waiting now.
+            val failId = vm.messages.lastOrNull()?.takeIf {
+                it.failActions.isNotEmpty() && it.failActions == com.arin.builder.BuildRunner.projectId
+            }?.id
             val askId = vm.messages.lastOrNull { it.compileAsk.isNotEmpty() }
                 ?.takeIf { it.compileAsk == com.arin.builder.BuildRunner.projectId }?.id
             itemsIndexed(vm.messages, key = { _, m -> m.id }) { i, m ->
@@ -417,6 +420,15 @@ private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
                     // Only the newest reply can be built from, so an old plan never starts by accident.
                     onConfirmBuild = if (i == vm.messages.lastIndex && !vm.streaming) ({ t: com.arin.chat.BuildTarget -> vm.confirmBuildAt(m, t) }) else null,
                     compileQuestions = if (m.id == askId && !vm.streaming) ({ com.arin.builder.CompileQuestions(vm) }) else null,
+                    failActions = if (m.id == failId && !vm.streaming && !com.arin.builder.BuildRunner.running) ({
+                        androidx.compose.foundation.layout.Row(
+                            Modifier.padding(top = 8.dp),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                        ) {
+                            androidx.compose.material3.Button(onClick = { vm.retryFailedBuild() }) { Text("Try again") }
+                            androidx.compose.material3.OutlinedButton(onClick = { vm.startOverBuild() }) { Text("Start over") }
+                        }
+                    }) else null,
                 )
             }
             if (vm.streaming) {
