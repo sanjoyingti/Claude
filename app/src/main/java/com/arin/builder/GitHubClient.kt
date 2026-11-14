@@ -39,6 +39,10 @@ class GitHubClient(private val token: String) {
                 return block()
             } catch (e: java.io.IOException) {
                 kotlinx.coroutines.delay(w)
+            } catch (e: ProviderException) {
+                // GitHub's own hiccups (500, 502, 503, 504) usually pass in a few seconds.
+                if (e.code !in 500..504) throw e
+                kotlinx.coroutines.delay(w)
             }
         }
         return block()
@@ -169,11 +173,18 @@ class GitHubClient(private val token: String) {
             onProgress(++done, totalFiles, bytesDone, totalBytes)
             path to sha
         }
-        val allEntries = entries + diskEntries
-        val tree = call("POST", "$base/git/trees", buildJsonObject {
+        var allEntries = entries + diskEntries
+        // Deleting a file GitHub doesn't have makes it refuse the whole commit ("GitRPC::BadObjectState"):
+        // only delete files that are really there.
+        if (allEntries.any { it.second == null }) {
+            val existing = existingPaths(base, baseTree)
+            allEntries = allEntries.filter { (path, sha) -> sha != null || (existing != null && path in existing) }
+        }
+        if (allEntries.isEmpty()) return headSha
+        suspend fun makeTree(list: List<Pair<String, String?>>) = call("POST", "$base/git/trees", buildJsonObject {
             if (baseTree != null) put("base_tree", baseTree)
             putJsonArray("tree") {
-                allEntries.forEach { (path, sha) ->
+                list.forEach { (path, sha) ->
                     addJsonObject {
                         put("path", path)
                         put("mode", if (path == "gradlew" || path.endsWith("/gradlew") || path.endsWith(".sh")) "100755" else "100644")
@@ -183,6 +194,15 @@ class GitHubClient(private val token: String) {
                 }
             }
         }).str("sha")!!
+        val tree = try {
+            makeTree(allEntries)
+        } catch (e: ProviderException) {
+            // Still refused: commit the new and changed files, and leave the deletions out.
+            if (!e.message.orEmpty().contains("BadObjectState") || allEntries.none { it.second == null }) throw e
+            val kept = allEntries.filter { it.second != null }
+            if (kept.isEmpty()) return headSha
+            makeTree(kept)
+        }
         val commit = call("POST", "$base/git/commits", buildJsonObject {
             put("message", message)
             put("tree", tree)
@@ -190,6 +210,15 @@ class GitHubClient(private val token: String) {
         }).str("sha")!!
         call("PATCH", "$base/git/refs/heads/${repo.branch}", buildJsonObject { put("sha", commit) })
         return commit
+    }
+
+    /** Every file path in the tree [treeSha], or null when GitHub can't list it (too big). */
+    private suspend fun existingPaths(base: String, treeSha: String?): Set<String>? {
+        if (treeSha == null) return emptySet()
+        val t = runCatching { call("GET", "$base/git/trees/$treeSha?recursive=1") }.getOrNull() ?: return null
+        if ((t as? JsonObject)?.get("truncated")?.let { (it as? JsonPrimitive)?.contentOrNull } == "true") return null
+        return ((t as? JsonObject)?.get("tree") as? JsonArray).orEmpty()
+            .mapNotNull { e -> (e as? JsonObject)?.takeIf { it.str("type") == "blob" }?.str("path") }.toSet()
     }
 
     /** Creates a blob by streaming the file as base64 inside the JSON body (no big strings in memory). */

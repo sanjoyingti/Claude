@@ -467,6 +467,33 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // A request that came in during the build starts now (after the finished build's service has stopped).
             if (queuedBuild != null) viewModelScope.launch { kotlinx.coroutines.delay(1_500); startQueued() }
         }
+        // Sanjoyingti repaired itself and the new version is installed: carry on with the build that stopped.
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(3_000)
+            val app = getApplication<Application>()
+            com.arin.builder.BuildRunner.load(app)
+            val id = com.arin.builder.SelfRepair.takeResume(app) ?: return@launch
+            if (com.arin.builder.BuildRunner.running || !com.arin.builder.BuildRunner.open(app, id)) return@launch
+            val project = com.arin.builder.BuildRunner.project ?: return@launch
+            com.arin.builder.BuildService.start(
+                app,
+                com.arin.builder.BuildRequest(
+                    description = "try again",
+                    appName = project.appName,
+                    provider = provider,
+                    model = model,
+                    apiKey = settings.key(provider),
+                    effort = effort,
+                    githubToken = githubToken(),
+                    allowOtherSites = true,
+                    project = project,
+                    resume = true,
+                    continueFixing = true,
+                    localOnly = project.owner == com.arin.builder.BuildAgent.LOCAL_OWNER,
+                ),
+            )
+            notice = "Sanjoyingti repaired itself. Carrying on with ${project.appName} — see Build mode."
+        }
     }
 
     /** A build asked for while another was running: it starts by itself when that one finishes. */
@@ -2109,7 +2136,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         const val REVERSE_ENG_TITLE = "Reverse engineering"
 
         /** Sanjoyingti's source repository, set when this build of Sanjoyingti was made; changeable in Settings → GitHub. */
-        const val DEFAULT_SELF_REPO = "poisaingti-spec/aiapp-261110-1752"
+        const val DEFAULT_SELF_REPO = "sanjoyingti/Claude"
         const val DEFAULT_SELF_BRANCH = "arin"
 
         /** After REA is installed in the built-in Linux: have the model prove it works. */

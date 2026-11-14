@@ -90,7 +90,7 @@ class BuildService : Service() {
                 BuildResult(false, "Stopped.")
             } catch (e: Throwable) {
                 com.arin.CrashLog.record(this@BuildService, e, "build")
-                BuildResult(false, friendly(e), log = e.stackTraceToString().take(2_000))
+                BuildResult(false, friendly(e), log = e.stackTraceToString().take(2_000), internal = true)
             }
 
             // A build that fails in a way more fixing can solve keeps going by itself: the person said "build"
@@ -98,6 +98,20 @@ class BuildService : Service() {
             var current: BuildRequest = request!!
             var result = attempt(current)
             var passes = 0
+            // A crash in Sanjoyingti's own code is often a passing hiccup: try once more from where it stopped.
+            if (result.internal && !SelfRepair.needsPerson(result.message)) {
+                BuildRunner.timeline += TimelineItem.Event(
+                    BuildEvent(BuildEvent.Kind.STEP, "Hit a problem in Sanjoyingti itself (${result.message.take(160)}). Trying once more"),
+                )
+                BuildRunner.save(this@BuildService)
+                try { kotlinx.coroutines.delay(10_000) } catch (e: CancellationException) { }
+                kotlinx.coroutines.yield()
+                val project = BuildRunner.project
+                current = if (project != null) {
+                    current.copy(project = project, resume = true, continueFixing = true, previewFirst = false, zipPath = null)
+                } else current
+                result = attempt(current)
+            }
             while (passes < MAX_AUTO_PASSES) {
                 try { kotlinx.coroutines.yield() } catch (e: CancellationException) { break } // let the latest project checkpoint land first
                 val next = continuation(current, result) ?: break
@@ -112,6 +126,24 @@ class BuildService : Service() {
                 BuildRunner.save(this@BuildService)
                 current = next
                 result = attempt(current)
+            }
+            // Still a crash in Sanjoyingti itself: repair Sanjoyingti (web search + patch + new version), then carry on.
+            if (!result.success && result.internal && result.message != "Stopped.") {
+                val settings = com.arin.data.Settings(this@BuildService)
+                val repairing = SelfRepair.start(
+                    this@BuildService,
+                    current,
+                    result,
+                    settings.secret("SELF_REPO").ifBlank { com.arin.chat.ChatViewModel.DEFAULT_SELF_REPO },
+                    settings.secret("SELF_BRANCH").ifBlank { com.arin.chat.ChatViewModel.DEFAULT_SELF_BRANCH },
+                )
+                if (repairing) {
+                    result = result.copy(
+                        message = result.message + "\n\n🛠️ This error is in Sanjoyingti itself, so it's repairing itself now: " +
+                            "it looks the error up online, patches its own code and builds a new version. Install that " +
+                            "version when it's offered; this build then carries on by itself.",
+                    )
+                }
             }
             BuildRunner.timeline += TimelineItem.Result(result.success, result.message, result.apkUrl, result.repoUrl, preview = result.awaitingPreview)
             if (!result.success && result.message != "Stopped.") {

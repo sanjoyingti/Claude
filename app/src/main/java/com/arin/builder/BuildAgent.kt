@@ -71,6 +71,8 @@ data class BuildResult(
     val autoDownloadApk: Boolean = false,
     /** Nothing was compiled: the code is written and waits for "View app", then "Build APK". */
     val awaitingPreview: Boolean = false,
+    /** It stopped because of an error in Sanjoyingti's own code (a crash), not in the app being built. */
+    val internal: Boolean = false,
 )
 
 /**
