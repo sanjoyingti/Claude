@@ -57,14 +57,14 @@ object ApkInstaller {
         out
     }
 
-    /** Keeps a copy in Downloads/Arin so you can share or reinstall it later. */
+    /** Keeps a copy in Downloads/Sanjoyingti so you can share or reinstall it later. */
     private fun saveCopy(context: Context, apk: File) {
         runCatching {
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, apk.name)
                     put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
-                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Arin")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Sanjoyingti")
                 }
                 context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)?.let { uri ->
                     context.contentResolver.openOutputStream(uri)?.use { o -> apk.inputStream().use { it.copyTo(o) } }

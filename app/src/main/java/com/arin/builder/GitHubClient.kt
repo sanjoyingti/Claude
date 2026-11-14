@@ -92,7 +92,7 @@ class GitHubClient(private val token: String) {
                     e.code == 422 && (msg.contains("already exists", true) || msg.contains("name", true)) -> continue
                     e.code == 403 || e.code == 404 -> throw ProviderException(
                         e.code,
-                        "GitHub didn't let Arin create a repository ($msg). Sign out of GitHub in Settings and sign in again " +
+                        "GitHub didn't let Sanjoyingti create a repository ($msg). Sign out of GitHub in Settings and sign in again " +
                             "with \"Sign in with GitHub\" (it asks for the right permissions). A fine-grained token can't create repos; " +
                             "a classic token needs the repo and workflow scopes.",
                     )
@@ -297,7 +297,7 @@ class GitHubClient(private val token: String) {
 
     /**
      * Text files of [repo] at its branch (sources, Gradle files, resources), for editing an existing project
-     * such as Arin itself. Skips build output, binaries and files over [maxBytes].
+     * such as Sanjoyingti itself. Skips build output, binaries and files over [maxBytes].
      */
     suspend fun readTextFiles(repo: Repo, maxBytes: Long = 200_000): Map<String, String> {
         val tree = call("GET", "/repos/${repo.owner}/${repo.name}/git/trees/${repo.branch}?recursive=1")

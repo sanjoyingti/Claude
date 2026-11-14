@@ -102,7 +102,7 @@ fun ChatScreen(
     val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { vm.attach(it) }
     val pickPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { vm.attach(it) }
     val context = androidx.compose.ui.platform.LocalContext.current
-    // Camera: the photo is written to a file Arin shares with the camera app, then attached.
+    // Camera: the photo is written to a file Sanjoyingti shares with the camera app, then attached.
     var cameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         val uri = cameraUri
@@ -129,7 +129,7 @@ fun ChatScreen(
         if (has) voiceOpen = true else micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
     }
     fun send() {
-        // Ask once, at the first message, so a finished reply can notify while Arin is in the background.
+        // Ask once, at the first message, so a finished reply can notify while Sanjoyingti is in the background.
         if (android.os.Build.VERSION.SDK_INT >= 33 && !vm.settings.askedNotifications) {
             vm.settings.askedNotifications = true
             notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -183,7 +183,7 @@ fun ChatScreen(
         val clip = androidx.compose.ui.platform.LocalClipboardManager.current
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { vm.dismissCrash() },
-            title = { Text("Arin closed unexpectedly last time") },
+            title = { Text("Sanjoyingti closed unexpectedly last time") },
             text = {
                 Column(Modifier.heightIn(max = 360.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                     Text(
@@ -288,7 +288,7 @@ private fun TopBar(vm: ChatViewModel, onMenu: () -> Unit, onNew: () -> Unit, onP
                             )
                         }
                         Text(
-                            if (vm.temporary) "Temporary chat (not saved)" else vm.title.takeIf { vm.messages.isNotEmpty() } ?: "Arin",
+                            if (vm.temporary) "Temporary chat (not saved)" else vm.title.takeIf { vm.messages.isNotEmpty() } ?: "Sanjoyingti",
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -351,7 +351,7 @@ private fun Welcome(project: String?, onPick: (String) -> Unit) {
     ) {
         ArinMark(size = 56.dp)
         Spacer(Modifier.height(18.dp))
-        Text(if (project != null) project else "Hi, I'm Arin", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+        Text(if (project != null) project else "Hi, I'm Sanjoyingti", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
         Text(
             if (project != null) "New chat in this project. Its instructions and files are included."
@@ -500,7 +500,7 @@ private fun Composer(
             ) {
                 Row(Modifier.padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "↪ Arin will read this at its next step: $note",
+                        "↪ Sanjoyingti will read this at its next step: $note",
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 3,
                         modifier = Modifier.weight(1f, fill = false),
@@ -545,7 +545,7 @@ private fun Composer(
                 TextField(
                     value = text,
                     onValueChange = onText,
-                    placeholder = { Text(if (vm.streaming) "Steer Arin while it works…" else "Message Arin") },
+                    placeholder = { Text(if (vm.streaming) "Steer Sanjoyingti while it works…" else "Message Sanjoyingti") },
                     maxLines = 6,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     colors = TextFieldDefaults.colors(
@@ -619,7 +619,7 @@ private fun ChatMenu(vm: ChatViewModel) {
                     when {
                         com.arin.builder.BuildRunner.project != null -> viewApp = true
                         com.arin.builder.BuildRunner.running -> vm.notice = "The code is still being written. View app opens as soon as it's ready."
-                        else -> vm.notice = "No app to view yet. Ask Arin to build an app first, then View app shows how it works."
+                        else -> vm.notice = "No app to view yet. Ask Sanjoyingti to build an app first, then View app shows how it works."
                     }
                 },
             )

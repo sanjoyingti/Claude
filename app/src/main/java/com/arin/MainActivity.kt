@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Arin was already open. */
+    /** Sanjoyingti was already open. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Launch.handle(intent, chat)

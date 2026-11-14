@@ -7,7 +7,7 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 
-/** Something Arin has learned about the person, kept only on this phone. */
+/** Something Sanjoyingti has learned about the person, kept only on this phone. */
 @Serializable
 data class Memory(val id: String = UUID.randomUUID().toString(), val text: String, val added: Long = System.currentTimeMillis())
 

@@ -10,7 +10,7 @@ import com.arin.MainActivity
 import com.arin.R
 import com.arin.app.Launch
 
-/** Home-screen widget: "Ask Arin" opens a new chat; the mic opens voice mode. */
+/** Home-screen widget: "Ask Sanjoyingti" opens a new chat; the mic opens voice mode. */
 class ArinWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         val views = RemoteViews(context.packageName, R.layout.widget_arin).apply {

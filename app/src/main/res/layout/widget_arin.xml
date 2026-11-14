@@ -12,7 +12,7 @@
         android:id="@+id/widget_logo"
         android:layout_width="44dp"
         android:layout_height="44dp"
-        android:contentDescription="Arin"
+        android:contentDescription="Sanjoyingti"
         android:src="@drawable/ic_launcher_foreground" />
 
     <TextView
@@ -26,7 +26,7 @@
         android:gravity="center_vertical"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
-        android:text="Ask Arin"
+        android:text="Ask Sanjoyingti"
         android:textColor="#B7C2CF"
         android:textSize="16sp" />
 
@@ -35,7 +35,7 @@
         android:layout_width="44dp"
         android:layout_height="44dp"
         android:background="@drawable/widget_mic_bg"
-        android:contentDescription="Talk to Arin"
+        android:contentDescription="Talk to Sanjoyingti"
         android:padding="11dp"
         android:src="@drawable/ic_mic" />
 </LinearLayout>

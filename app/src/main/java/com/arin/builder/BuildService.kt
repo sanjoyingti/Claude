@@ -44,7 +44,7 @@ class BuildService : Service() {
         startInForeground(progressNotification("Starting…"))
         // Keep the CPU and network awake while building, even with the screen off.
         wakeLock = (getSystemService(POWER_SERVICE) as android.os.PowerManager)
-            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Arin:build")
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Sanjoyingti:build")
             .apply { acquire(60 * 60 * 1000L) }
 
         BuildRunner.running = true
@@ -197,7 +197,7 @@ class BuildService : Service() {
             )
             .setContentText(
                 when {
-                    r.awaitingPreview -> "Open Arin and tap View app to try it before it's compiled"
+                    r.awaitingPreview -> "Open Sanjoyingti and tap View app to try it before it's compiled"
                     r.success && r.apkUrl != null -> "Tap to download the APK"
                     else -> r.message
                 },

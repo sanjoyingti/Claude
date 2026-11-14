@@ -55,7 +55,7 @@ data class Project(
     val pendingPaths: List<String> = emptyList(),
     /** Checkpoint: which fix round the build had reached. */
     val round: Int = 0,
-    /** This project is Arin itself (self-update). */
+    /** This project is Sanjoyingti itself (self-update). */
     val selfUpdate: Boolean = false,
     /** Everything the app must do: the full specification, plus every change asked for since. */
     val requirements: String = "",

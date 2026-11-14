@@ -110,7 +110,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             Section("Web search") {
                 Toggle(
                     "Search the web",
-                    "Arin looks things up when an answer needs current facts, and lists its sources.",
+                    "Sanjoyingti looks things up when an answer needs current facts, and lists its sources.",
                     vm.webSearch,
                     vm::toggleWebSearch,
                 )
@@ -119,7 +119,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             FoldSection(
                 "Custom instructions",
                 if (vm.aboutYou.isNotBlank() || vm.howToAnswer.isNotBlank() || vm.replyStyle != "Normal") "On · used in every chat"
-                else "Tell Arin about you and how you want answers",
+                else "Tell Sanjoyingti about you and how you want answers",
             ) {
                 CustomInstructionsSettings(vm)
             }
@@ -127,7 +127,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             Section("Memory") {
                 Toggle(
                     "Remember things about me",
-                    "Arin saves lasting facts you share, such as your name or how you like answers, and uses them in new chats. Kept only on this phone.",
+                    "Sanjoyingti saves lasting facts you share, such as your name or how you like answers, and uses them in new chats. Kept only on this phone.",
                     vm.memoryOn,
                     vm::toggleMemory,
                 )
@@ -159,7 +159,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             Section("Notifications and voice") {
                 Toggle(
                     "Notify when a reply is ready",
-                    "If you leave Arin while it's writing, it keeps going and lets you know when it's done.",
+                    "If you leave Sanjoyingti while it's writing, it keeps going and lets you know when it's done.",
                     vm.notifyOnReply,
                     vm::toggleNotify,
                 )
@@ -179,7 +179,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 CustomApiSettings(vm)
             }
             FoldSection(
-                "Build apps and update Arin",
+                "Build apps and update Sanjoyingti",
                 if (vm.githubToken().isNotBlank()) "GitHub: ${vm.githubUser.ifBlank { "signed in" }}" else "Sign in with GitHub to build APKs",
             ) { GithubSettings(vm) }
             FoldSection(
@@ -187,7 +187,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 when {
                     vm.linuxBusy -> "Working…"
                     vm.linuxReady -> "Installed" + if (vm.devToolsReady) " · Java, Kotlin, Gradle" else ""
-                    else -> "Run tools like Node, Python and REA inside Arin"
+                    else -> "Run tools like Node, Python and REA inside Sanjoyingti"
                 },
                 startOpen = vm.linuxBusy,
             ) { LinuxSettings(vm) }
@@ -204,7 +204,7 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
 
             Text(
-                "Arin version ${com.arin.ArinApp.versionLabel(androidx.compose.ui.platform.LocalContext.current)}",
+                "Sanjoyingti version ${com.arin.ArinApp.versionLabel(androidx.compose.ui.platform.LocalContext.current)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 12.dp),
@@ -310,14 +310,14 @@ private fun GithubSettings(vm: ChatViewModel) {
     }
     vm.githubLoginError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
-    // Arin updating itself.
+    // Sanjoyingti updating itself.
     var selfRepo by remember { mutableStateOf(vm.selfRepo()) }
     var selfBranch by remember { mutableStateOf(vm.selfBranch()) }
     var change by remember { mutableStateOf("") }
     var updateNote by remember { mutableStateOf<String?>(null) }
-    Text("Update Arin itself", style = MaterialTheme.typography.bodyLarge)
+    Text("Update Sanjoyingti itself", style = MaterialTheme.typography.bodyLarge)
     Text(
-        "Describe a change and Arin edits its own code on GitHub (downloading anything it needs), builds a new version " +
+        "Describe a change and Sanjoyingti edits its own code on GitHub (downloading anything it needs), builds a new version " +
             "and offers to install it. You can also just ask for a new feature in chat.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -325,19 +325,19 @@ private fun GithubSettings(vm: ChatViewModel) {
     OutlinedTextField(
         value = change,
         onValueChange = { change = it; updateNote = null },
-        label = { Text("What should Arin change or add?") },
+        label = { Text("What should Sanjoyingti change or add?") },
         modifier = Modifier.fillMaxWidth(),
     )
     androidx.compose.material3.Button(
         enabled = change.isNotBlank() && vm.githubToken().isNotBlank(),
         onClick = { updateNote = vm.startSelfUpdate(change) ?: "Started. Follow it in Build mode." },
-    ) { Text("Update Arin") }
+    ) { Text("Update Sanjoyingti") }
     updateNote?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
             value = selfRepo,
             onValueChange = { selfRepo = it },
-            label = { Text("Arin's source (owner/repo)") },
+            label = { Text("Sanjoyingti's source (owner/repo)") },
             singleLine = true,
             modifier = Modifier.weight(2f),
         )
@@ -383,13 +383,13 @@ private fun GithubSettings(vm: ChatViewModel) {
     }
 }
 
-/** Install, check and remove Arin's own Ubuntu Linux. */
+/** Install, check and remove Sanjoyingti's own Ubuntu Linux. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun LinuxSettings(vm: ChatViewModel) {
     var confirmRemove by remember { mutableStateOf(false) }
     Text(
-        "Install Ubuntu Linux inside Arin, no root or other apps needed. Arin then runs commands, Node.js, npm, " +
+        "Install Ubuntu Linux inside Sanjoyingti, no root or other apps needed. Sanjoyingti then runs commands, Node.js, npm, " +
             "Python, git and tools like REA in it, like Claude Code on a computer. Needs about 1 GB of space and " +
             "a few minutes on Wi-Fi.",
         style = MaterialTheme.typography.bodySmall,
@@ -466,8 +466,8 @@ private fun TerminalSettings(vm: ChatViewModel) {
     ) { refresh++ }
 
     Toggle(
-        "Let Arin run commands",
-        "Arin can install and run tools (Node, npm, Python, git, REA…) and read the results, like Claude Code. " +
+        "Let Sanjoyingti run commands",
+        "Sanjoyingti can install and run tools (Node, npm, Python, git, REA…) and read the results, like Claude Code. " +
             "Uses the built-in Linux when it's installed, otherwise Termux.",
         vm.terminalOn,
         vm::toggleTerminal,
@@ -485,7 +485,7 @@ private fun TerminalSettings(vm: ChatViewModel) {
     )
     if (!installed) OutlinedButton(onClick = { uri.openUri(com.arin.terminal.Termux.DOWNLOAD_URL) }) { Text("Get Termux") }
     Text(
-        "2. Open Termux, paste this and press Enter. It lets Arin send commands and installs Node, Python and git:",
+        "2. Open Termux, paste this and press Enter. It lets Sanjoyingti send commands and installs Node, Python and git:",
         style = MaterialTheme.typography.bodySmall,
     )
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.small) {
@@ -500,11 +500,11 @@ private fun TerminalSettings(vm: ChatViewModel) {
         vm.notice = "Setup command copied"
     }) { Text("Copy setup command") }
     Text(
-        (if (permitted) "✓ " else "3. ") + "Allow Arin to send commands to Termux.",
+        (if (permitted) "✓ " else "3. ") + "Allow Sanjoyingti to send commands to Termux.",
         style = MaterialTheme.typography.bodySmall,
     )
     if (installed && !permitted) {
-        OutlinedButton(onClick = { askPermission.launch(com.arin.terminal.Termux.PERMISSION) }) { Text("Allow Arin to use Termux") }
+        OutlinedButton(onClick = { askPermission.launch(com.arin.terminal.Termux.PERMISSION) }) { Text("Allow Sanjoyingti to use Termux") }
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedButton(enabled = vm.linuxInstalled || (installed && permitted), onClick = {
@@ -534,7 +534,7 @@ private fun ToolsSettings(vm: ChatViewModel) {
     if (vm.mcpServers.none { it.name == com.arin.mcp.Mcp.REA.name }) {
         androidx.compose.material3.Button(onClick = { vm.setUpRea() }) { Text("Set up REA (Reverse Engineer Anything)") }
         Text(
-            "Turns on the terminal and starts a chat where Arin installs REA in Termux, connects it and checks it works.",
+            "Turns on the terminal and starts a chat where Sanjoyingti installs REA in Termux, connects it and checks it works.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -573,7 +573,7 @@ private fun ToolsSettings(vm: ChatViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "For a local stdio server, wrap it with Arin's bridge: (nohup node ~/.arin/mcp-bridge.mjs --port PORT -- COMMAND > ~/.arin/NAME.log 2>&1 &); sleep 5",
+            "For a local stdio server, wrap it with Sanjoyingti's bridge: (nohup node ~/.arin/mcp-bridge.mjs --port PORT -- COMMAND > ~/.arin/NAME.log 2>&1 &); sleep 5",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -696,7 +696,7 @@ private fun ApiForm(vm: ChatViewModel, old: com.arin.data.SavedApi?, onClose: ()
     }
 }
 
-/** Reply style, plus two notes Arin reads before every answer. */
+/** Reply style, plus two notes Sanjoyingti reads before every answer. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CustomInstructionsSettings(vm: ChatViewModel) {
@@ -720,7 +720,7 @@ private fun CustomInstructionsSettings(vm: ChatViewModel) {
     OutlinedTextField(
         value = how,
         onValueChange = { how = it.take(1500) },
-        label = { Text("How Arin should answer") },
+        label = { Text("How Sanjoyingti should answer") },
         placeholder = { Text("Simple words, short answers, always give steps…") },
         minLines = 2,
         maxLines = 6,
@@ -837,7 +837,7 @@ private fun CustomApiSettings(vm: ChatViewModel) {
         modelNote?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
     }
     Text(
-        "Arin loads the service's model list on its own. Type an id only if the list is missing or doesn't show the one you want.",
+        "Sanjoyingti loads the service's model list on its own. Type an id only if the list is missing or doesn't show the one you want.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )

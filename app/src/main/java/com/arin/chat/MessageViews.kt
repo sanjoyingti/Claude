@@ -87,7 +87,7 @@ fun UserMessage(message: Message, onEdit: (() -> Unit)?) {
     viewing?.let { ImageViewer(it) { viewing = null } }
 }
 
-/** Arin's reply: full width under the Arin mark, with Copy and (for the last reply) Retry. */
+/** Sanjoyingti's reply: full width under the Sanjoyingti mark, with Copy and (for the last reply) Retry. */
 @Composable
 fun ArinMessage(
     message: Message,
@@ -137,7 +137,7 @@ fun ArinMessage(
             if (onConfirmBuild != null && message.pendingBuild.isNotBlank()) {
                 if (message.pendingBuild.startsWith("update\u0000")) {
                     androidx.compose.material3.Button(onClick = { onConfirmBuild(BuildTarget.CHAT) }, modifier = Modifier.padding(top = 8.dp)) {
-                        Text("Update Arin now")
+                        Text("Update Sanjoyingti now")
                     }
                 } else {
                     androidx.compose.material3.Button(onClick = { onConfirmBuild(BuildTarget.AUTO) }, modifier = Modifier.padding(top = 8.dp)) {
@@ -172,7 +172,7 @@ fun ArinMessage(
 @Composable
 fun CommandCard(run: com.arin.data.CommandRun) {
     if (run.kind == "steer") {
-        // A message the person sent while Arin was working, shown where Arin picked it up.
+        // A message the person sent while Sanjoyingti was working, shown where Sanjoyingti picked it up.
         Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.Top) {
             Text("↪ ", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
             Text(
@@ -283,7 +283,7 @@ fun LiveReply(
                 thinking.isEmpty() || !showThinking -> Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(10.dp))
-                    Text("Arin is thinking…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Sanjoyingti is thinking…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

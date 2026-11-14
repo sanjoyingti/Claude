@@ -144,7 +144,7 @@ fun ProjectScreen(vm: ChatViewModel, projectId: String, onBack: () -> Unit, onOp
             item {
                 Card("Instructions") {
                     Text(
-                        "How Arin should behave in this project: its role, tone, what to focus on.",
+                        "How Sanjoyingti should behave in this project: its role, tone, what to focus on.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

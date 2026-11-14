@@ -714,7 +714,7 @@ private fun ApkDownload(url: String) {
     androidx.compose.runtime.LaunchedEffect(url) { size = ApkInstaller.check(url) }
 
     fun install(f: java.io.File) {
-        // Android asks once to allow installing apps from Arin.
+        // Android asks once to allow installing apps from Sanjoyingti.
         if (android.os.Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
             runCatching {
                 context.startActivity(
@@ -724,7 +724,7 @@ private fun ApkDownload(url: String) {
                     ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
             }
-            error = "Allow \"Install unknown apps\" for Arin, come back, and tap Install."
+            error = "Allow \"Install unknown apps\" for Sanjoyingti, come back, and tap Install."
             return
         }
         runCatching { ApkInstaller.install(context, f) }.onFailure { error = it.message }
@@ -735,7 +735,7 @@ private fun ApkDownload(url: String) {
         val p = progress
         when {
             f != null -> {
-                Text("✓ Downloaded ${f.name} — also saved to Downloads/Arin", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                Text("✓ Downloaded ${f.name} — also saved to Downloads/Sanjoyingti", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 Button(onClick = { install(f) }, modifier = Modifier.fillMaxWidth()) { Text("Install app") }
             }
             p != null -> UploadBar("Downloading APK…", p)

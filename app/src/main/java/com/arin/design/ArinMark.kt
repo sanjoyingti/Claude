@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** Arin's logo: a rising peak with an orbiting dot. Same shape as the app icon. */
+/** Sanjoyingti's logo: a rising peak with an orbiting dot. Same shape as the app icon. */
 @Composable
 fun ArinMark(size: Dp = 28.dp, peak: Color = ArinColors.Teal, dot: Color = ArinColors.Violet, modifier: Modifier = Modifier) {
     Canvas(modifier.size(size)) {

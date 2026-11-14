@@ -24,7 +24,7 @@ object WebTools {
     val videosTag = Regex("<videos>([\\s\\S]{1,200}?)</videos>", RegexOption.IGNORE_CASE)
     val downloadTag = Regex("<download>\\s*(https?://\\S{1,500}?)\\s*</download>", RegexOption.IGNORE_CASE)
 
-    /** Saves downloads to Downloads/Arin. Set once at startup. */
+    /** Saves downloads to Downloads/Sanjoyingti. Set once at startup. */
     var downloader: (suspend (String) -> String)? = null
 
     fun instructions(today: String) = "\n\n" + """

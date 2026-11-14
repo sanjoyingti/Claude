@@ -286,7 +286,7 @@ object AppPreview {
         return n
     }
 
-    /** The HTML document inside the model's answer, with Arin's small helper script added; null when there's none. */
+    /** The HTML document inside the model's answer, with Sanjoyingti's small helper script added; null when there's none. */
     private fun extract(answer: String): String? {
         val text = answer.substringAfterLast("\u0000RESTART")
         val start = START.find(text)?.range?.first ?: return null
@@ -480,7 +480,7 @@ fun AppPreviewDialog(chat: ChatViewModel, onClose: () -> Unit, onBuildApk: (() -
                             CircularProgressIndicator()
                             Text(AppPreview.status.ifBlank { "Working…" }, textAlign = TextAlign.Center)
                             Text(
-                                "Arin is turning the app's code into a working preview. It takes a minute or two, longer for a big " +
+                                "Sanjoyingti is turning the app's code into a working preview. It takes a minute or two, longer for a big " +
                                     "app. You can close this screen; it keeps going.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -651,7 +651,7 @@ fun CompileQuestions(chat: ChatViewModel, onPicked: (com.arin.chat.BuildTarget) 
                     OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.BUILD_TAB) }) { Text("Build tab") }
                     OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.PHONE) }) { Text("On phone") }
                     OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.CODESPACE) }) { Text("Codespace") }
-                    OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.AUTO) }) { Text("Let Arin decide") }
+                    OutlinedButton(onClick = { pick(com.arin.chat.BuildTarget.AUTO) }) { Text("Let Sanjoyingti decide") }
                 }
                 Text(
                     "Or tell me what to change first; I'll ask these again afterwards.",

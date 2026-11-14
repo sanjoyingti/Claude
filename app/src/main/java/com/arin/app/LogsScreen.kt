@@ -55,7 +55,7 @@ fun LogsScreen(onBack: () -> Unit) {
 
     fun share(text: String) {
         runCatching {
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, "Arin log").putExtra(Intent.EXTRA_TEXT, text)
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT, "Sanjoyingti log").putExtra(Intent.EXTRA_TEXT, text)
             context.startActivity(Intent.createChooser(send, "Share log").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }

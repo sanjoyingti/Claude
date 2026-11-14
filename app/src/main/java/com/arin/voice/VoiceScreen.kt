@@ -53,7 +53,7 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * Full-screen voice conversation. Speak, and Arin answers aloud; tap the rings to interrupt
+ * Full-screen voice conversation. Speak, and Sanjoyingti answers aloud; tap the rings to interrupt
  * or to start listening again. Everything said is saved in the current chat.
  */
 @Composable
@@ -162,7 +162,7 @@ fun VoiceMode(vm: ChatViewModel, onClose: () -> Unit) {
     }
 }
 
-/** Arin's voice visual: three soft rings that breathe while thinking and swell with sound. */
+/** Sanjoyingti's voice visual: three soft rings that breathe while thinking and swell with sound. */
 @Composable
 private fun Rings(state: VoiceState, level: Float, modifier: Modifier) {
     val t = rememberInfiniteTransition(label = "rings")

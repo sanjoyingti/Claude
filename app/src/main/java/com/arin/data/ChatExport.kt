@@ -30,12 +30,12 @@ object ChatExport {
         val date = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.ENGLISH).format(at)
         return buildString {
             append("# ").append(title.ifBlank { "Conversation" }).append("\n\n")
-            append("_Exported from Arin, ").append(date).append(" · ")
+            append("_Exported from Sanjoyingti, ").append(date).append(" · ")
             append(s.messages).append(" messages · ").append(s.words).append(" words · about ")
             append(s.readingMinutes).append(" min read_\n\n")
             messages.filterNot { it.failed }.forEach { m ->
                 append("---\n\n")
-                append("**").append(if (m.fromUser) "You" else "Arin").append("**\n\n")
+                append("**").append(if (m.fromUser) "You" else "Sanjoyingti").append("**\n\n")
                 if (m.attachments.isNotEmpty()) {
                     append("_Attached: ").append(m.attachments.joinToString { it.name }).append("_\n\n")
                 }
@@ -52,7 +52,7 @@ object ChatExport {
     fun toPlainText(title: String, messages: List<Message>): String = buildString {
         append(title.ifBlank { "Conversation" }).append("\n\n")
         messages.filterNot { it.failed }.forEach { m ->
-            append(if (m.fromUser) "You" else "Arin").append(":\n")
+            append(if (m.fromUser) "You" else "Sanjoyingti").append(":\n")
             append(m.text.trim()).append("\n\n")
         }
     }

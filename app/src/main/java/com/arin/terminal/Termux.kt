@@ -16,12 +16,12 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Runs shell commands in Termux (a Linux terminal app for Android) and returns their output.
- * This is how Arin installs and runs tools such as npm packages, Python scripts or git.
+ * This is how Sanjoyingti installs and runs tools such as npm packages, Python scripts or git.
  *
  * One-time setup, done by the person:
  * 1. Install Termux from F-Droid or GitHub (the Play Store version is outdated).
  * 2. In Termux, allow other apps to run commands: see [SETUP_COMMAND].
- * 3. In Arin, grant the "Run commands in Termux environment" permission.
+ * 3. In Sanjoyingti, grant the "Run commands in Termux environment" permission.
  *
  * Uses Termux's RunCommandService: https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent
  */
@@ -31,11 +31,11 @@ object Termux {
     const val HOME = "/data/data/com.termux/files/home"
     private const val BASH = "/data/data/com.termux/files/usr/bin/bash"
 
-    /** Pasted into Termux once, so it accepts commands from Arin. */
+    /** Pasted into Termux once, so it accepts commands from Sanjoyingti. */
     const val SETUP_COMMAND =
         "mkdir -p ~/.termux && grep -qs '^allow-external-apps' ~/.termux/termux.properties || " +
             "echo 'allow-external-apps=true' >> ~/.termux/termux.properties; termux-reload-settings; " +
-            "pkg update -y && pkg install -y nodejs-lts python git procps; echo 'Arin setup done'"
+            "pkg update -y && pkg install -y nodejs-lts python git procps; echo 'Sanjoyingti setup done'"
 
     const val DOWNLOAD_URL = "https://f-droid.org/packages/com.termux/"
 
@@ -73,8 +73,8 @@ object Termux {
 
     /** Why commands can't run right now, or null when everything is set up. */
     fun problem(context: Context): String? = when {
-        !installed(context) -> "Termux isn't installed. Install it from F-Droid ($DOWNLOAD_URL), then set it up in Arin's Settings → Terminal."
-        !permitted(context) -> "Arin doesn't have permission to use Termux yet. Open Settings → Terminal and tap \"Allow Arin to use Termux\"."
+        !installed(context) -> "Termux isn't installed. Install it from F-Droid ($DOWNLOAD_URL), then set it up in Sanjoyingti's Settings → Terminal."
+        !permitted(context) -> "Sanjoyingti doesn't have permission to use Termux yet. Open Settings → Terminal and tap \"Allow Sanjoyingti to use Termux\"."
         else -> null
     }
 
@@ -97,7 +97,7 @@ object Termux {
                 putExtra("com.termux.RUN_COMMAND_ARGUMENTS", arrayOf("-lc", command))
                 putExtra("com.termux.RUN_COMMAND_WORKDIR", workdir)
                 putExtra("com.termux.RUN_COMMAND_BACKGROUND", true)
-                putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "Arin: " + command.take(60))
+                putExtra("com.termux.RUN_COMMAND_COMMAND_LABEL", "Sanjoyingti: " + command.take(60))
                 putExtra("com.termux.RUN_COMMAND_PENDING_INTENT", pending)
             }
             try {
@@ -105,7 +105,7 @@ object Termux {
             } catch (e: Exception) {
                 return Result(
                     "", "", null,
-                    "Couldn't reach Termux (${e.message ?: e.javaClass.simpleName}). Open Termux once, keep Arin open, and try again.",
+                    "Couldn't reach Termux (${e.message ?: e.javaClass.simpleName}). Open Termux once, keep Sanjoyingti open, and try again.",
                 )
             }
             return try {

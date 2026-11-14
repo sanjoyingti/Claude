@@ -14,7 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.arin.data.ThemeMode
 
-/** Arin's palette: deep night blue, teal for action, violet for accents. */
+/** Sanjoyingti's palette: deep night blue, teal for action, violet for accents. */
 object ArinColors {
     val Teal = Color(0xFF2EC4B6)
     val TealDeep = Color(0xFF0E9F92)

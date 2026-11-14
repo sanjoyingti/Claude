@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 
 /*
- * Connects the app builder (ported from AI App) to Arin's own model code.
+ * Connects the app builder (ported from AI App) to Sanjoyingti's own model code.
  */
 
 /** How hard the builder works: more fix rounds at higher levels. */
@@ -34,7 +34,7 @@ const val BUILD_MAX_TOKENS = 32_000
 const val THOUGHT = "\u0001"
 
 /**
- * Streams a reply from [provider] through Arin's [Llm]: answer text as-is, reasoning prefixed with [THOUGHT].
+ * Streams a reply from [provider] through Sanjoyingti's [Llm]: answer text as-is, reasoning prefixed with [THOUGHT].
  * Photos and PDFs attached to the messages go to the model like in chat.
  */
 fun streamModel(

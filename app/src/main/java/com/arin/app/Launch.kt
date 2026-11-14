@@ -9,7 +9,7 @@ import androidx.compose.runtime.setValue
 import com.arin.chat.ChatViewModel
 
 /**
- * Handles how Arin was opened from outside: another app's Share button, the home-screen
+ * Handles how Sanjoyingti was opened from outside: another app's Share button, the home-screen
  * widget, or a "reply finished" notification.
  */
 object Launch {

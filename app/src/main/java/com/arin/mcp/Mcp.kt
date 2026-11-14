@@ -29,8 +29,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * An MCP server Arin can use: reached over HTTP (Streamable HTTP). Local stdio servers such as REA
- * run in Termux behind Arin's small bridge ([BRIDGE_ASSET]), which [startCommand] starts.
+ * An MCP server Sanjoyingti can use: reached over HTTP (Streamable HTTP). Local stdio servers such as REA
+ * run in Termux behind Sanjoyingti's small bridge ([BRIDGE_ASSET]), which [startCommand] starts.
  */
 @Serializable
 data class McpServer(
@@ -199,7 +199,7 @@ object Mcp {
     const val NOT_INSTALLED = "ARIN_SERVER_NOT_INSTALLED"
     private const val BRIDGE_PATH = "~/.arin/mcp-bridge.mjs"
 
-    /** REA (Reverse Engineer Anything), run in Termux behind Arin's bridge. */
+    /** REA (Reverse Engineer Anything), run in Termux behind Sanjoyingti's bridge. */
     val REA = McpServer(
         name = "rea",
         url = "http://127.0.0.1:8765/mcp",
@@ -219,7 +219,7 @@ object Mcp {
 
     fun save(servers: List<McpServer>): String = json.encodeToString(servers)
 
-    /** Writes Arin's bridge script into Termux, so start commands can use it. */
+    /** Writes Sanjoyingti's bridge script into Termux, so start commands can use it. */
     suspend fun installBridge(context: Context): Termux.Result {
         val script = context.assets.open(BRIDGE_ASSET).bufferedReader().use { it.readText() }
         return Shell.run(
@@ -333,7 +333,7 @@ object Mcp {
             append("If you don't know a tool's parameters, first call <tool name=\"find_tools\">a few keywords</tool>, which returns ")
             append("matching tools with their descriptions and parameters. One tool call at a time; read each result before the next. ")
             append("Tools run in the same Linux as your terminal commands; attached files are at the paths given in the messages. ")
-            append("Arin itself is the MCP client and already connected these servers: never run `rea setup` or other agent setup ")
+            append("Sanjoyingti itself is the MCP client and already connected these servers: never run `rea setup` or other agent setup ")
             append("wizards, and don't create or edit Claude Code, Cursor or other agents' MCP configs (.claude.json, mcp.json). ")
             append("Base claims on what the tools return.\n")
             list.forEach { c ->

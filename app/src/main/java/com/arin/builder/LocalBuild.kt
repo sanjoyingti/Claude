@@ -17,7 +17,7 @@ import java.io.File
 object LocalBuild {
 
     sealed class Outcome {
-        /** Compiled. [apkPath] is a copy in the phone's Download/Arin folder (or app storage). */
+        /** Compiled. [apkPath] is a copy in the phone's Download/Sanjoyingti folder (or app storage). */
         data class Ok(val apkPath: String, val size: Long, val installFile: File? = null) : Outcome()
         /** The code didn't compile; [log] holds the errors. */
         data class Errors(val log: String) : Outcome()
@@ -80,7 +80,7 @@ object LocalBuild {
         }
     }
 
-    /** Zips the project's source (without build output) into Download/Arin. Returns where it went. */
+    /** Zips the project's source (without build output) into Download/Sanjoyingti. Returns where it went. */
     suspend fun saveSourceZip(context: Context, slug: String, appName: String): String? = withContext(Dispatchers.IO) {
         runCatching {
             val root = dir(context, slug)
@@ -108,12 +108,12 @@ object LocalBuild {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
-                put(MediaStore.Downloads.RELATIVE_PATH, "Download/Arin")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/Sanjoyingti")
             }
             val uri = runCatching { context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) }.getOrNull()
             if (uri != null) {
                 context.contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
-                return "/storage/emulated/0/Download/Arin/$name"
+                return "/storage/emulated/0/Download/Sanjoyingti/$name"
             }
         }
         val f = File(context.getExternalFilesDir(null), name)
@@ -121,21 +121,21 @@ object LocalBuild {
         return f.absolutePath
     }
 
-    /** Copies the APK to Download/Arin so it can be installed and shared. */
+    /** Copies the APK to Download/Sanjoyingti so it can be installed and shared. */
     private fun save(context: Context, apk: File, appName: String): Outcome {
         val name = safeName(appName) + "-phone-build.apk"
-        // A private copy Android's installer can open (shared through Arin's file provider).
+        // A private copy Android's installer can open (shared through Sanjoyingti's file provider).
         val installFile = runCatching { File(File(context.cacheDir, "apks").apply { mkdirs() }, name).also { apk.copyTo(it, overwrite = true) } }.getOrNull()
         if (Build.VERSION.SDK_INT >= 29) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
-                put(MediaStore.Downloads.RELATIVE_PATH, "Download/Arin")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/Sanjoyingti")
             }
             val uri = runCatching { context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) }.getOrNull()
             if (uri != null) {
                 context.contentResolver.openOutputStream(uri)?.use { out -> apk.inputStream().use { it.copyTo(out) } }
-                return Outcome.Ok("/storage/emulated/0/Download/Arin/$name", apk.length(), installFile)
+                return Outcome.Ok("/storage/emulated/0/Download/Sanjoyingti/$name", apk.length(), installFile)
             }
         }
         val f = File(context.getExternalFilesDir(null), name)

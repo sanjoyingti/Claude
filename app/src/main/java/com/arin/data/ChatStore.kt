@@ -24,7 +24,7 @@ data class Attachment(
     val textPath: String = "",
     /** Length of the full text, in characters. */
     val chars: Long = 0,
-    /** A copy in Download/Arin that terminal tools (Termux, REA) can open; empty if none. */
+    /** A copy in Download/Sanjoyingti that terminal tools (Termux, REA) can open; empty if none. */
     val sharedPath: String = "",
 ) {
     val isMedia: Boolean get() = kind == IMAGE || kind == PDF
@@ -78,7 +78,7 @@ data class MediaItem(
     val source: String = "",
 )
 
-/** A command Arin ran in the terminal while writing a reply, with what it printed. */
+/** A command Sanjoyingti ran in the terminal while writing a reply, with what it printed. */
 @Serializable
 data class CommandRun(
     val command: String,
@@ -197,7 +197,7 @@ class ChatStore(private val context: Context) {
                 .filter { it in msgs.indices }.distinct().sorted()
             val body = picked.joinToString("\n") { i ->
                 val m = msgs[i]
-                (if (m.fromUser) "Person: " else "Arin: ") + m.text.replace(Regex("\\s+"), " ").take(700)
+                (if (m.fromUser) "Person: " else "Sanjoyingti: ") + m.text.replace(Regex("\\s+"), " ").take(700)
             }
             hits += Hit(
                 titleScore + scored.sumOf { it.second },

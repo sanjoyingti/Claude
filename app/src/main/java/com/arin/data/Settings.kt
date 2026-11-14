@@ -133,7 +133,7 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("notify_on_reply", true)
         set(value) = prefs.edit().putBoolean("notify_on_reply", value).apply()
 
-    /** Whether Arin has already asked Android for permission to show notifications. */
+    /** Whether Sanjoyingti has already asked Android for permission to show notifications. */
     var askedNotifications: Boolean
         get() = prefs.getBoolean("asked_notifications", false)
         set(value) = prefs.edit().putBoolean("asked_notifications", value).apply()

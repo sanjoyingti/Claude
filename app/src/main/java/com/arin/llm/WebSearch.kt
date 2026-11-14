@@ -78,7 +78,7 @@ object WebSearch {
     private fun wikipedia(query: String): List<Hit> {
         val url = "https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=5&srsearch=" +
             Uri.encode(query)
-        val body = client.newCall(Request.Builder().url(url).header("User-Agent", "Arin/0.3 (Android app)").build())
+        val body = client.newCall(Request.Builder().url(url).header("User-Agent", "Sanjoyingti/0.3 (Android app)").build())
             .execute().use { it.body?.string().orEmpty() }
         val root = Http.json.parseToJsonElement(body) as? JsonObject ?: return emptyList()
         val items = ((root["query"] as? JsonObject)?.get("search") as? JsonArray).orEmpty()

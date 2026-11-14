@@ -85,7 +85,7 @@ object Attachments {
     // ---------------------------------------------------------------- reading
 
     /**
-     * Reads [uri]. With [forTerminal], the original file is also copied to Download/Arin so tools in
+     * Reads [uri]. With [forTerminal], the original file is also copied to Download/Sanjoyingti so tools in
      * Termux (REA, scripts) can open it.
      */
     suspend fun read(context: Context, uri: Uri, forTerminal: Boolean = false): Attachment = withContext(Dispatchers.IO) {
@@ -101,14 +101,14 @@ object Attachments {
         if (shared != null) a.copy(sharedPath = shared) else a
     }
 
-    /** Copies the original to Download/Arin and returns its path, or null if that isn't possible. */
+    /** Copies the original to Download/Sanjoyingti and returns its path, or null if that isn't possible. */
     private fun saveForTerminal(context: Context, uri: Uri, name: String): String? = runCatching {
         if (Build.VERSION.SDK_INT < 29) return null
         val resolver = context.contentResolver
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
             put(android.provider.MediaStore.Downloads.MIME_TYPE, resolver.getType(uri) ?: "application/octet-stream")
-            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Arin")
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Sanjoyingti")
             put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
         }
         val dest = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
@@ -120,7 +120,7 @@ object Attachments {
         resolver.update(dest, values, null, null)
         val finalName = resolver.query(dest, arrayOf(android.provider.MediaStore.Downloads.DISPLAY_NAME), null, null, null)
             ?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: name
-        "/storage/emulated/0/Download/Arin/$finalName"
+        "/storage/emulated/0/Download/Sanjoyingti/$finalName"
     }.getOrNull()
 
     private fun readOnly(context: Context, uri: Uri, name: String): Attachment {
@@ -154,7 +154,7 @@ object Attachments {
         } ?: false
     }.getOrDefault(false)
 
-    /** A file Arin can't read inside: kept by name, type and size only (not copied). */
+    /** A file Sanjoyingti can't read inside: kept by name, type and size only (not copied). */
     private fun otherFile(name: String, mime: String, size: Long) =
         Attachment(name = name, kind = Attachment.FILE, mime = mime, size = size)
 
@@ -384,7 +384,7 @@ object Attachments {
                     m.attachments.filter { it.sharedPath.isNotEmpty() }.forEach { a ->
                         add(
                             if (a.sharedPath.startsWith("/root/")) "[\"${a.name}\" is also at ${a.sharedPath} in Linux, for terminal tools.]"
-                            else "[\"${a.name}\" is also saved at ${a.sharedPath} (in Termux: ~/storage/downloads/Arin/${a.sharedPath.substringAfterLast('/')}) for terminal tools.]",
+                            else "[\"${a.name}\" is also saved at ${a.sharedPath} (in Termux: ~/storage/downloads/Sanjoyingti/${a.sharedPath.substringAfterLast('/')}) for terminal tools.]",
                         )
                     }
                     m.attachments.forEach { a ->
@@ -426,7 +426,7 @@ object Attachments {
             (if (a.mime.isNotBlank()) ", ${a.mime}" else "") +
             (if (a.size > 0) ", ${readableSize(a.size)}" else "") +
             (if (a.sharedPath.isNotEmpty()) ". You can't read it directly, but terminal tools can open it at ${a.sharedPath}.]"
-            else ". Arin can't read inside this kind of file, so only its name, type and size are known.]")
+            else ". Sanjoyingti can't read inside this kind of file, so only its name, type and size are known.]")
 
     /** Gives each file an equal share of [total]; files smaller than their share pass the rest on. */
     private fun shareBudget(files: List<Attachment>, total: Int): Map<Attachment, Int> {

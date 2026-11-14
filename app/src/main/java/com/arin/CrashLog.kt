@@ -9,7 +9,7 @@ import java.util.Locale
 
 /**
  * Keeps a log of crashes and errors on the phone (Logs in the side panel), so they can be copied and
- * sent to get them fixed. The newest crash is also shown once when Arin opens again.
+ * sent to get them fixed. The newest crash is also shown once when Sanjoyingti opens again.
  */
 object CrashLog {
     private const val MAX_ENTRIES = 40
@@ -31,7 +31,7 @@ object CrashLog {
 
     /**
      * Android 11+ remembers why the app last stopped. A freeze ("isn't responding"), running out of memory or a crash in
-     * native code leave no Java error behind, so read them here when Arin starts and add them to Logs.
+     * native code leave no Java error behind, so read them here when Sanjoyingti starts and add them to Logs.
      */
     fun checkExitReasons(context: Context) {
         if (Build.VERSION.SDK_INT < 30) return
@@ -61,7 +61,7 @@ object CrashLog {
     }
 
     private fun header(context: Context) =
-        "Arin ${ArinApp.versionLabel(context)} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.MANUFACTURER} ${Build.MODEL}"
+        "Sanjoyingti ${ArinApp.versionLabel(context)} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.MANUFACTURER} ${Build.MODEL}"
 
     /** Writes [error] down: a crash (the app closed) or an error that was caught. */
     fun record(context: Context, error: Throwable, where: String = "", crash: Boolean = false) {
@@ -108,7 +108,7 @@ object CrashLog {
     fun format(e: Entry): String =
         "${e.kind} · ${SimpleDateFormat("d MMM yyyy, HH:mm:ss", Locale.ENGLISH).format(Date(e.time))}\n${e.title}\n${e.text}"
 
-    /** The newest crash, once (for the message shown when Arin opens). It stays in Logs. */
+    /** The newest crash, once (for the message shown when Sanjoyingti opens). It stays in Logs. */
     fun takeReport(context: Context): String? = runCatching {
         val f = lastCrash(context)
         if (!f.exists()) null else f.readText().also { f.delete() }

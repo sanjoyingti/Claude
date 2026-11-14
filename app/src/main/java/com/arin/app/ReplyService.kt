@@ -18,8 +18,8 @@ import com.arin.MainActivity
 import com.arin.R
 
 /**
- * Keeps Arin's process alive while a reply is being written, so it finishes even if the
- * person switches apps. Shows a quiet "Arin is replying…" notification while it runs.
+ * Keeps Sanjoyingti's process alive while a reply is being written, so it finishes even if the
+ * person switches apps. Shows a quiet "Sanjoyingti is replying…" notification while it runs.
  */
 class ReplyService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
@@ -32,7 +32,7 @@ class ReplyService : Service() {
         }
         val n = NotificationCompat.Builder(this, ArinApp.CHANNEL_WORKING)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle("Arin is replying…")
+            .setContentTitle("Sanjoyingti is replying…")
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(openApp(this, null))
@@ -67,7 +67,7 @@ class ReplyService : Service() {
             )
         }
 
-        /** "Arin replied" with the start of the reply; tapping it opens that chat. */
+        /** "Sanjoyingti replied" with the start of the reply; tapping it opens that chat. */
         fun notifyReply(context: Context, chatId: String, title: String, text: String) {
             if (Build.VERSION.SDK_INT >= 33 &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

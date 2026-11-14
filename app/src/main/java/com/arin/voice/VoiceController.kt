@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 enum class VoiceState { Starting, Listening, Thinking, Speaking, Paused }
 
 /**
- * Talks with the person using the phone's own speech recognition and voice. Arin listens,
+ * Talks with the person using the phone's own speech recognition and voice. Sanjoyingti listens,
  * hands the words to [onHeard], then reads the reply aloud sentence by sentence as it arrives.
  * Must be used on the main thread.
  */
@@ -164,7 +164,7 @@ class VoiceController(
                 // Heard nothing: wait for a tap rather than listening forever.
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> state = VoiceState.Paused
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                    error = "Arin needs microphone permission for voice mode."
+                    error = "Sanjoyingti needs microphone permission for voice mode."
                     state = VoiceState.Paused
                 }
                 SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT, SpeechRecognizer.ERROR_SERVER -> {

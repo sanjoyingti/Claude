@@ -176,7 +176,7 @@ object ProjectTemplate {
                     run: |
                       CHANGED=""
                       if [ ! -f app/signing.keystore ]; then
-                        keytool -genkeypair -keystore app/signing.keystore -storepass android -keypass android -alias app -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Arin"
+                        keytool -genkeypair -keystore app/signing.keystore -storepass android -keypass android -alias app -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sanjoyingti"
                         git add app/signing.keystore
                         CHANGED=1
                       fi
@@ -192,7 +192,7 @@ object ProjectTemplate {
                         fi
                       fi
                       if [ -n "${'$'}CHANGED" ]; then
-                        git config user.name "Arin"
+                        git config user.name "Sanjoyingti"
                         git config user.email "arin@users.noreply.github.com"
                         git commit -m "Add signing key and Gradle wrapper"
                         git push origin HEAD:${'$'}{{ github.ref_name }} || echo "Couldn't save them; this build still works."
@@ -258,7 +258,7 @@ object ProjectTemplate {
     """.trimIndent()
 
     val importWorkflow = """
-        name: Arin build
+        name: Sanjoyingti build
         on:
           push:
           workflow_dispatch:
@@ -379,7 +379,7 @@ object ProjectTemplate {
           light and dark colours, loading / empty / error states, input validation, and data that survives restarting the app when
           it should (DataStore for settings, Room or JSON files for records). Ask for runtime permissions before using them and
           declare them in AndroidManifest.xml. Never leave TODOs, empty click handlers or fake sample data in place of a feature.
-        - Libraries you may add with a DEPENDENCY line (use "latest"): androidx.room:room-compiler (database; Arin adds room-runtime
+        - Libraries you may add with a DEPENDENCY line (use "latest"): androidx.room:room-compiler (database; Sanjoyingti adds room-runtime
           and the code generator setup for you, use @Entity/@Dao/@Database with suspend functions and Flow),
           androidx.datastore:datastore-preferences, io.coil-kt.coil3:coil-compose and io.coil-kt.coil3:coil-network-okhttp (images
           from the internet), com.squareup.retrofit2:retrofit with com.squareup.retrofit2:converter-kotlinx-serialization (web APIs),

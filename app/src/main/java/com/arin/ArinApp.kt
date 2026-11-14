@@ -11,7 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 
 /**
  * The app process. Replies run in [scope], not in a screen's scope, so they keep going
- * when Arin is in the background or its window is closed.
+ * when Sanjoyingti is in the background or its window is closed.
  */
 class ArinApp : Application() {
     override fun onCreate() {
@@ -22,12 +22,12 @@ class ArinApp : Application() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_REPLIES, "Replies", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "When Arin finishes a reply while the app is in the background"
+                description = "When Sanjoyingti finishes a reply while the app is in the background"
             },
         )
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_WORKING, "Working", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Shown while Arin is writing a reply"
+                description = "Shown while Sanjoyingti is writing a reply"
             },
         )
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
@@ -60,7 +60,7 @@ class ArinApp : Application() {
 
         private var visibleActivities = 0
 
-        /** True while any Arin screen is on screen. */
+        /** True while any Sanjoyingti screen is on screen. */
         val inForeground: Boolean get() = visibleActivities > 0
     }
 }

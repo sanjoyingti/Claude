@@ -20,7 +20,7 @@ import java.util.zip.GZIPInputStream
 import kotlin.coroutines.coroutineContext
 
 /**
- * Linux built into Arin: an Ubuntu system in the app's own storage, run with PRoot (no root needed).
+ * Linux built into Sanjoyingti: an Ubuntu system in the app's own storage, run with PRoot (no root needed).
  * Commands, Node.js, npm and tools such as REA run inside it and see an ordinary Linux system.
  *
  * PRoot binaries ship as lib*.so files in the APK (jniLibs), built by
@@ -70,7 +70,7 @@ object Linux {
     suspend fun install(context: Context, log: (String) -> Unit) = withContext(Dispatchers.IO) {
         val arch = ubuntuArch() ?: throw IllegalStateException("This phone's processor (${Build.SUPPORTED_ABIS.firstOrNull()}) isn't supported.")
         if (!proot(context).exists()) {
-            throw IllegalStateException("PRoot is missing from this build of Arin (looked in ${context.applicationInfo.nativeLibraryDir}).")
+            throw IllegalStateException("PRoot is missing from this build of Sanjoyingti (looked in ${context.applicationInfo.nativeLibraryDir}).")
         }
         if (!installed(context)) {
             log("Finding the latest Ubuntu 24.04 base image…")
@@ -223,7 +223,7 @@ object Linux {
         "java -version 2>&1 | head -1",
         "apktool --version 2>/dev/null | head -1",
         "echo \"Android tools ready: \$JADX, apktool, JAVA_HOME=\$JH\"",
-        "# REA must restart to pick up the new settings; Arin starts it again on the next tool call.",
+        "# REA must restart to pick up the new settings; Sanjoyingti starts it again on the next tool call.",
         "pkill -f mcp-bridge.mjs || true",
     ).joinToString("\n", postfix = "\n")
 
@@ -254,7 +254,7 @@ object Linux {
     }
 
     private fun get(url: String): okhttp3.Response {
-        val resp = http.newCall(Request.Builder().url(url).header("User-Agent", "Arin").build()).execute()
+        val resp = http.newCall(Request.Builder().url(url).header("User-Agent", "Sanjoyingti").build()).execute()
         if (!resp.isSuccessful) {
             resp.close()
             throw IllegalStateException("Download failed: HTTP ${resp.code} for $url")
@@ -326,7 +326,7 @@ object Linux {
         )
         File(root, "etc/profile.d").mkdirs()
         File(root, "etc/profile.d/arin.sh").writeText(
-            "# Set by Arin: PRoot can't translate io_uring or handle glibc's rseq; both can crash Node/npm.\n" +
+            "# Set by Sanjoyingti: PRoot can't translate io_uring or handle glibc's rseq; both can crash Node/npm.\n" +
                 "export UV_USE_IO_URING=0\nexport GLIBC_TUNABLES=glibc.pthread.rseq=0\n" +
                 "# No real terminal: give a size, or REA's CLI crashes (double free) when it asks for one.\n" +
                 "export COLUMNS=\${COLUMNS:-120} LINES=\${LINES:-40}\n",
@@ -364,7 +364,7 @@ object Linux {
     ): Termux.Result = withContext(Dispatchers.IO) {
         if (!installed(context)) return@withContext Termux.Result("", "", null, "Linux isn't installed. Open Settings → Linux and tap Install Linux.")
         val root = rootfs(context)
-        // Installs from older Arin versions get the newer fixes too.
+        // Installs from older Sanjoyingti versions get the newer fixes too.
         if (File(root, "etc/profile.d/arin.sh").let { !it.exists() || !it.readText().contains("COLUMNS") } ||
             !File(root, ANDROID_TOOLS_SCRIPT.removePrefix("/")).exists()
         ) runCatching { configure(context) }
@@ -469,7 +469,7 @@ object Linux {
     }.getOrNull()
 }
 
-/** Where commands run: Arin's built-in Linux when installed, otherwise Termux. */
+/** Where commands run: Sanjoyingti's built-in Linux when installed, otherwise Termux. */
 object Shell {
     fun usesLinux(context: Context): Boolean = Linux.installed(context)
 
@@ -487,7 +487,7 @@ object Shell {
     /** A line describing the environment, for the model. */
     fun describe(context: Context): String =
         if (usesLinux(context)) {
-            "Ubuntu 24.04 Linux built into the Arin app (PRoot, ${System.getProperty("os.arch")}), you are root, home is /root. " +
+            "Ubuntu 24.04 Linux built into the Sanjoyingti app (PRoot, ${System.getProperty("os.arch")}), you are root, home is /root. " +
                 "Install packages with apt-get install -y; Node.js 24, npm, git and Python 3 are installed. " +
                 "Files the person attaches are copied to ${Linux.FILES}. " +
                 (if (Linux.devToolsReady(context)) "Developer tools are installed: Java 21 (javac, java), Kotlin (kotlinc), Gradle. " else "") +

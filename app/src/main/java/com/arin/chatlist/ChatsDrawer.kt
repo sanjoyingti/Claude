@@ -72,7 +72,7 @@ fun ChatsDrawer(
                 ArinMark(size = 26.dp)
                 Spacer(Modifier.width(10.dp))
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.Bottom) {
-                    Text("Arin", style = MaterialTheme.typography.titleLarge)
+                    Text("Sanjoyingti", style = MaterialTheme.typography.titleLarge)
                     Text(
                         "  v" + com.arin.ArinApp.versionLabel(androidx.compose.ui.platform.LocalContext.current),
                         style = MaterialTheme.typography.labelMedium,

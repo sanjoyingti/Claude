@@ -6,7 +6,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Builds the instructions sent with every request, and reads Arin's tool tags out of replies. */
+/** Builds the instructions sent with every request, and reads Sanjoyingti's tool tags out of replies. */
 object Prompt {
     const val MAX_SEARCHES = 3
 
@@ -41,7 +41,7 @@ object Prompt {
     fun download(reply: String): Pair<String, String>? =
         downloadTag.find(reply)?.let { it.groupValues[1].trim() to it.groupValues[2].trim() }
 
-    /** A change to Arin itself the reply asks for. */
+    /** A change to Sanjoyingti itself the reply asks for. */
     private val retryableError = Regex(
         """(?i)incomplete|invalid response|discard|truncat|malformed|empty (response|reply)|no response|unexpected end|connection reset|reset by peer|disconnect|stream (closed|ended)|read timeout|timed out|bad gateway|502|503|504|overloaded|upstream""",
     )
@@ -60,7 +60,7 @@ object Prompt {
     /** A <build> left open at the end of a reply (the model ran out or forgot to close it). */
     private val buildTagOpen = Regex("""<build(?:\s+name\s*=\s*["']([^"']{1,60})["'])?\s*>([\s\S]{40,})$""")
 
-    /** An app the reply asks Arin to build: name (may be blank) and description. */
+    /** An app the reply asks Sanjoyingti to build: name (may be blank) and description. */
     fun buildRequest(reply: String): Pair<String, String>? = withCodeMasked(reply, { buildRequestRaw(it) }) { r, _ -> r }
 
     private fun buildRequestRaw(reply: String): Pair<String, String>? =
@@ -91,7 +91,7 @@ object Prompt {
             """with everything|everything now|for me|again))*$""",
     )
     private val strictRetry = Regex("""^((ok|okay|yes|now|please|so)\s+)*(try again|retry|rebuild|build again|try the build again|resume|continue( the)? build)(\s+(now|please|it))*$""")
-    private val strictUpdate = Regex("""^((ok|okay|yes|now|please|so|go ahead)\s+)*(update( arin| the app| yourself| it)?|apply( the)? update|install( the)? update)(\s+(now|please|it))*$""")
+    private val strictUpdate = Regex("""^((ok|okay|yes|now|please|so|go ahead)\s+)*(update( arin| sanjoyingti| the app| yourself| it)?|apply( the)? update|install( the)? update)(\s+(now|please|it))*$""")
 
     /** The person's message reduced to words: lower case, no punctuation or emoji. */
     private fun plainWords(text: String) = text.lowercase().replace(Regex("""[^a-z0-9\s]"""), " ").replace(Regex("""\s+"""), " ").trim()
@@ -111,7 +111,7 @@ object Prompt {
         return ordersBuild(text) || (hasChatBuild && w.split(' ').size <= 6 && strictRetry.matches(w))
     }
 
-    /** True for a short, plain order to update Arin itself ("update", "update arin now"), or to build. */
+    /** True for a short, plain order to update Sanjoyingti itself ("update", "update arin now"), or to build. */
     fun ordersUpdate(text: String): Boolean {
         val w = plainWords(text)
         return ordersBuild(text) || (w.split(' ').size <= 6 && strictUpdate.matches(w))
@@ -119,7 +119,7 @@ object Prompt {
 
     private val drawTag = Regex("""<draw>\s*(.{3,6000}?)\s*(?:</draw>|$)""", RegexOption.DOT_MATCHES_ALL)
 
-    /** Pictures the reply asks Arin to create (made by a free image service from the description). */
+    /** Pictures the reply asks Sanjoyingti to create (made by a free image service from the description). */
     fun drawings(reply: String): List<com.arin.data.MediaItem> = drawTag.findAll(reply).take(2).map { m ->
         // The picture service takes the description in a web address, so keep it to a sensible length.
         val prompt = m.groupValues[1].replace(Regex("\\s+"), " ").trim().let { d ->
@@ -212,9 +212,9 @@ object Prompt {
         style: String = "",
         deepResearch: Boolean = false,
     ): String = buildString {
-        append("You are Arin, a helpful, friendly assistant in an Android app. Answer clearly and concisely. ")
+        append("You are Sanjoyingti, a helpful, friendly assistant in an Android app. Answer clearly and concisely. ")
         runCatching { com.arin.ArinApp.versionLabel(com.arin.ArinApp.instance) }.getOrNull()
-            ?.let { append("This is Arin version ").append(it).append(". ") }
+            ?.let { append("This is Sanjoyingti version ").append(it).append(". ") }
         append("Use Markdown when it helps: short headings, lists, and fenced code blocks with a language.\n")
         append("Be quick: answer straight away whenever you can. Most questions need no tools, no commands and no long thinking; ")
         append("a simple question gets a direct answer in a few sentences. Use tools only when the task truly needs them.\n")
@@ -238,7 +238,7 @@ object Prompt {
         }
         append("Pictures you create: when the person asks you to draw, generate, create or imagine a picture (not find a real photo), ")
         append("write <draw>a detailed description of the picture in English: subject, setting, style, lighting, colours</draw> ")
-        append("in your reply. Arin creates the picture and shows it under your reply; add one short sentence about it. ")
+        append("in your reply. Sanjoyingti creates the picture and shows it under your reply; add one short sentence about it. ")
         append("Draw at once: when they ask for a picture, don't ask questions first and don't ask for confirmation; choose any ")
         append("missing details yourself and send the <draw> tag in that same reply (they can ask for changes after seeing it). ")
         append("Keep the description under 90 words, and always close the tag with </draw>. ")
@@ -286,7 +286,7 @@ object Prompt {
             append("a choice, something only they can do). ")
             append("Only say something is installed or working after a command's output shows it; check exit codes, and don't ")
             append("hide failures by piping into head or tail without set -o pipefail (the app sets it). ")
-            append("Arin is your MCP client: to use MCP servers such as REA, call their tools with <tool> (when listed below), ")
+            append("Sanjoyingti is your MCP client: to use MCP servers such as REA, call their tools with <tool> (when listed below), ")
             append("never by configuring Claude Code or another agent. ")
             append("Things that need a desktop (GUI apps, Ghidra, IDA, Hopper, Frida server without root) may not work on a phone: ")
             append("say so plainly rather than pretending.\n\n")
@@ -301,13 +301,13 @@ object Prompt {
         append("You can also show a picture you know the address of with ![description](https://…/image.jpg), and a video by ")
         append("putting its YouTube or .mp4 link in your reply; it plays in the chat. Up to $MAX_WEB_STEPS such steps per answer.\n\n")
 
-        append("Updating Arin itself: Arin's own source code (Kotlin, Android) is on the person's GitHub and you can change it. ")
-        append("When they ask for a feature Arin lacks, report a bug in Arin, or ask you to update or improve the app, end your ")
-        append("reply with <update_arin>exactly what to change in Arin and why, in detail</update_arin>. Arin then edits its code ")
+        append("Updating Sanjoyingti itself: Sanjoyingti's own source code (Kotlin, Android) is on the person's GitHub and you can change it. ")
+        append("When they ask for a feature Sanjoyingti lacks, report a bug in Sanjoyingti, or ask you to update or improve the app, end your ")
+        append("reply with <update_arin>exactly what to change in Sanjoyingti and why, in detail</update_arin>. Sanjoyingti then edits its code ")
         append("(searching the web and downloading files or libraries as needed), builds a new version on GitHub, fixes build ")
         append("errors, and offers to install the update. Agree on the change first if it's unclear.\n\n")
 
-        append("Building Android apps: Arin can turn a conversation into a complete Android app (Kotlin, Jetpack Compose, ")
+        append("Building Android apps: Sanjoyingti can turn a conversation into a complete Android app (Kotlin, Jetpack Compose, ")
         append("Material 3; also large apps with many screens, a database, networking, camera, media, background work), put ")
         append("the source on the person's GitHub and compile it into an APK, fixing build errors automatically.\n")
         append("RULE 1, build only on command: talking about an app is NOT a request to build it. While the person describes, ")
@@ -323,7 +323,7 @@ object Prompt {
         append("every single thing that was asked for or agreed, as a numbered list: every screen, feature, button, option, text, ")
         append("colour, behaviour, data to keep, permission and special case, including small details mentioned only once and ")
         append("corrections made later (the latest version of each point wins). Leave nothing out and don't summarise: a point ")
-        append("missing from this list is a feature missing from the app. Arin also passes the conversation itself to the builder.\n")
+        append("missing from this list is a feature missing from the app. Sanjoyingti also passes the conversation itself to the builder.\n")
         append("The build then runs right here in this chat: its steps show live, in plain English, and the APK and source zip links ")
         append("are posted here when done; the build starts as soon as you send the tag after the person said build, and the ")
         append("builder writes, compiles and fixes it by itself. A failed build shows its errors with Try again / Start over buttons. ")

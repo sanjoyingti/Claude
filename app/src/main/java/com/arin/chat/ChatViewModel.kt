@@ -73,12 +73,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var liveThinking by mutableStateOf("")
         private set
-    /** What Arin is doing right now when it isn't writing, such as "Searching the web for …". */
+    /** What Sanjoyingti is doing right now when it isn't writing, such as "Searching the web for …". */
     var status by mutableStateOf<String?>(null)
         private set
     var notice by mutableStateOf<String?>(null)
 
-    /** Details of the last crash, shown once when Arin opens again. */
+    /** Details of the last crash, shown once when Sanjoyingti opens again. */
     var crashReport by mutableStateOf(com.arin.CrashLog.takeReport(app))
 
     fun dismissCrash() { crashReport = null }
@@ -139,7 +139,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleDeepResearch(on: Boolean) {
         deepResearch = on
-        if (on) notice = "Deep research is on: Arin searches and reads many pages, then writes a report."
+        if (on) notice = "Deep research is on: Sanjoyingti searches and reads many pages, then writes a report."
     }
 
     /** A temporary chat isn't saved, doesn't use memory and doesn't appear in the list. */
@@ -232,7 +232,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Installs Ubuntu inside Arin (and REA too, with [withRea]). Keeps going if the screen closes. */
+    /** Installs Ubuntu inside Sanjoyingti (and REA too, with [withRea]). Keeps going if the screen closes. */
     fun installLinux(withRea: Boolean = false) {
         if (linuxBusy) return
         val app = getApplication<Application>()
@@ -293,7 +293,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // For APKs: JDK, JADX and apktool (REA's Android tools). Keep going if this part fails.
         val tools = com.arin.terminal.Linux.installAndroidTools(app) { logLine(it) }
         if (tools.exitCode != 0 || tools.error != null) logLine("Android tools didn't install fully; APK analysis may not work: " + (tools.error ?: tools.combined().takeLast(200)))
-        logLine("Installing Arin's MCP bridge…")
+        logLine("Installing Sanjoyingti's MCP bridge…")
         com.arin.mcp.Mcp.installBridge(app)
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             saveServer(com.arin.mcp.Mcp.REA.copy(enabled = true))
@@ -370,7 +370,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (com.arin.terminal.Linux.installed(app) || com.arin.terminal.Termux.problem(app) != null) {
             // Built-in Linux: install everything without the model, then let the model check it works.
             if (!com.arin.terminal.Linux.supported()) {
-                notice = "This phone's processor isn't supported by Arin's built-in Linux. Set up Termux instead."
+                notice = "This phone's processor isn't supported by Sanjoyingti's built-in Linux. Set up Termux instead."
                 return
             }
             if (linuxBusy) return
@@ -401,7 +401,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
         newChat()
         viewModelScope.launch {
-            // Put Arin's bridge in Termux first, so the model can start and test REA through it.
+            // Put Sanjoyingti's bridge in Termux first, so the model can start and test REA through it.
             if (com.arin.terminal.Shell.problem(app) == null) com.arin.mcp.Mcp.installBridge(app)
             send(REA_SETUP_PROMPT)
         }
@@ -510,7 +510,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- Builds started from chat stay in chat ----------------
 
-    /** Remembers which chat a build belongs to, also after Arin was closed (so "try again" continues that app). */
+    /** Remembers which chat a build belongs to, also after Sanjoyingti was closed (so "try again" continues that app). */
     private val buildLinks get() = getApplication<Application>().getSharedPreferences("chat_build", android.content.Context.MODE_PRIVATE)
 
     /** The chat a build was started from (null: none, or it was started in the Build tab). */
@@ -710,7 +710,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (chatBuildMsg == null || chatBuildProject != com.arin.builder.BuildRunner.projectId) return
         chatBuildJob?.cancel()
         val title = when {
-            project?.selfUpdate == true -> "Updating Arin"
+            project?.selfUpdate == true -> "Updating Sanjoyingti"
             else -> "Building ${project?.appName ?: "the app"}"
         }
         val steps = buildProgressText(title, done = true)
@@ -725,16 +725,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             append("✅ **$name is built on this phone.**\n\n")
             result.phoneApk?.let { append("- **APK:** `$it`\n") }
             result.phoneSourceZip?.let { append("- **Source code (zip):** `$it`\n") }
-            append("\nAndroid's install screen opens now. Both files are in your Download/Arin folder.")
+            append("\nAndroid's install screen opens now. Both files are in your Download/Sanjoyingti folder.")
         } else if (result.success && project != null) buildString {
-            append(if (project.selfUpdate) "✅ **The new version of Arin is built.**\n\n" else "✅ **$name is built.**\n\n")
+            append(if (project.selfUpdate) "✅ **The new version of Sanjoyingti is built.**\n\n" else "✅ **$name is built.**\n\n")
             result.apkUrl?.let { append("- **APK:** [Download $name APK]($it)\n  $it\n") }
             val zip = com.arin.builder.BuildRunner.sourceZipUrl(project)
             append("- **Source code (zip):** [Download source zip]($zip)\n  $zip\n")
             append("- **GitHub repository:** [Open on GitHub](${com.arin.builder.BuildRunner.repoPage(project)})\n")
             result.phoneApk?.let { append("- **Also compiled on this phone:** `$it`\n") }
             result.codespaceUrl?.let { append("- **Codespace:** [Open the Codespace]($it)\n") }
-            append(if (project.selfUpdate) "\nTap the APK link (or Install in Build mode) to update Arin." else "\nTap the APK link to download and install it.")
+            append(if (project.selfUpdate) "\nTap the APK link (or Install in Build mode) to update Sanjoyingti." else "\nTap the APK link to download and install it.")
         } else {
             buildString {
                 append("⚠️ **The build of $name failed.**\n\n**Why it failed:** ${result.message}\n")
@@ -776,7 +776,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { com.arin.builder.ApkInstaller.download(app, url) {} }
                     .onSuccess {
                         postToBuildChat(Message(fromUser = false, text =
-                            "⬇️ **$name saved to your phone** in Download/Arin (`${it.name}`). Opening the installer…"), null, "")
+                            "⬇️ **$name saved to your phone** in Download/Sanjoyingti (`${it.name}`). Opening the installer…"), null, "")
                         runCatching { com.arin.builder.ApkInstaller.install(app, it) }
                     }
                     .onFailure { notice = "Built, but couldn't auto-save the APK: ${it.message}. Tap the APK link above." }
@@ -785,7 +785,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * The last failed build, read from the saved Build history (so it's known after Arin was closed too): what went
+     * The last failed build, read from the saved Build history (so it's known after Sanjoyingti was closed too): what went
      * wrong, its error log and the steps before it. Null when the last build didn't fail.
      */
     private fun savedFailure(): String? {
@@ -797,15 +797,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val events = timeline.subList(maxOf(0, at - 25), timeline.size)
             .filterIsInstance<com.arin.builder.TimelineItem.Event>().map { it.event.text.take(600) }
         return buildString {
-            append("The last Build mode run (${p?.appName ?: "an app"}) FAILED. Arin's message: ${result.message}\n")
-            append("How Arin builds (don't ask the person about this): Arin's builder model writes the code, Arin uploads it to ")
+            append("The last Build mode run (${p?.appName ?: "an app"}) FAILED. Sanjoyingti's message: ${result.message}\n")
+            append("How Sanjoyingti builds (don't ask the person about this): Sanjoyingti's builder model writes the code, Sanjoyingti uploads it to ")
             append("GitHub (repo: ${result.repoUrl ?: p?.repoUrl ?: "none yet"}) where GitHub Actions compiles it, or compiles it in ")
             append("the phone's built-in Linux; compile errors go back to the model to fix automatically.\n")
             append("The last steps of that run, oldest first (they include the error log when there was one):\n")
             events.forEach { append("- ").append(it.replace("\n", "\n  ")).append('\n') }
             append("When the person asks why it failed, explain from these steps in plain words: say what actually happened and ")
             append("what will fix it. Never ask them for the error output (it's above), never ask technical questions, and never ")
-            append("say you'll check GitHub or the build (you can't; Arin already did and gave you the result above). ")
+            append("say you'll check GitHub or the build (you can't; Sanjoyingti already did and gave you the result above). ")
             append("When they want it fixed or leave it to you (\"fix it\", \"you choose\", \"go ahead\", \"continue\", \"do it\"), ")
             append("reply with one short sentence and <build name=\"${p?.appName ?: "the app"}\">try again: what to fix</build>, ")
             append("so the builder carries on from where it stopped.\n\n")
@@ -823,10 +823,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return "A build of ${com.arin.builder.BuildRunner.project?.appName ?: "an app"} is running now in this chat" +
                 (step?.let { " (current step: ${it.event.text.take(150)})" } ?: "") +
                 ". Its steps show in the chat and the links will be posted when it's done. If the person asks to build " +
-                "something more now, send the <build> tag as usual: Arin queues it and starts it by itself when this build " +
+                "something more now, send the <build> tag as usual: Sanjoyingti queues it and starts it by itself when this build " +
                 "finishes, on top of what this build makes. Answer other questions normally.\n\n"
         }
-        // The saved history has the error log and the steps before it, also after Arin was closed.
+        // The saved history has the error log and the steps before it, also after Sanjoyingti was closed.
         savedFailure()?.let { return it }
         if (lastFailure.isNotEmpty()) return lastFailure
         val p = com.arin.builder.BuildRunner.project ?: return ""
@@ -838,7 +838,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "that says what to change.\n\n"
         }
         val apk = p.lastApkUrl ?: return ""
-        return "Latest app built in Build mode: ${p.appName}" + (if (p.selfUpdate) " (Arin itself)" else "") +
+        return "Latest app built in Build mode: ${p.appName}" + (if (p.selfUpdate) " (Sanjoyingti itself)" else "") +
             ". APK download: $apk . Source code zip: ${com.arin.builder.BuildRunner.sourceZipUrl(p)} . " +
             "GitHub repository: ${com.arin.builder.BuildRunner.repoPage(p)} . When the person asks for the links, the APK or the " +
             "source code, give these exact links (never make links up).\n\n"
@@ -934,7 +934,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The person tapped "Build now" (or "Update Arin now") under a reply that prepared a build. */
+    /** The person tapped "Build now" (or "Update Sanjoyingti now") under a reply that prepared a build. */
     fun confirmBuildAt(message: Message, target: BuildTarget) {
         val (name, spec) = message.pendingBuild.split('\u0000', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
         if (spec.isBlank()) return
@@ -947,7 +947,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Everything the app must do, for the builder: the specification written when the person said "build", plus the
-     * conversation itself (what they asked for and what Arin proposed), so details the specification skipped still get built.
+     * conversation itself (what they asked for and what Sanjoyingti proposed), so details the specification skipped still get built.
      */
     private fun buildRequirements(spec: String): String {
         val talk = messages.filter { m ->
@@ -966,7 +966,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             appendLine("SPECIFICATION (written when the person said \"build\"):")
             appendLine(spec.trim())
             appendLine()
-            appendLine("THE CONVERSATION ABOUT THIS APP, in order. Everything the person asked for, and everything Arin proposed that the")
+            appendLine("THE CONVERSATION ABOUT THIS APP, in order. Everything the person asked for, and everything Sanjoyingti proposed that the")
             appendLine("person didn't reject, must be in the app, including details the specification above left out. Where two messages")
             appendLine("conflict, the later one wins. Ignore parts that are not about this app.")
             var n = 0
@@ -981,14 +981,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Downloads [url] for the person and for terminal tools: into the built-in Linux (/root/files) when it's
-     * installed, otherwise into Download/Arin. Returns a line for the model.
+     * installed, otherwise into Download/Sanjoyingti. Returns a line for the model.
      */
     private suspend fun downloadFile(app: Application, url: String, name: String): String =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val fileName = name.ifBlank { url.substringAfterLast('/').substringBefore('?').ifBlank { "download" } }
                 .replace(Regex("[^A-Za-z0-9._ ()-]"), "_").take(120)
             try {
-                val req = okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Android) Arin").build()
+                val req = okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Android) Sanjoyingti").build()
                 com.arin.builder.Http.client.newCall(req).execute().use { r ->
                     if (!r.isSuccessful) return@withContext "Download failed: HTTP ${r.code} for $url"
                     val body = r.body ?: return@withContext "Download failed: empty response from $url"
@@ -1000,14 +1000,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         val values = android.content.ContentValues().apply {
                             put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName)
-                            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Arin")
+                            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Sanjoyingti")
                         }
                         val dest = if (android.os.Build.VERSION.SDK_INT >= 29) {
                             app.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                         } else null
                         if (dest != null) {
                             app.contentResolver.openOutputStream(dest)?.use { out -> body.byteStream().use { it.copyTo(out, 64 * 1024) } }
-                            "Downloaded $fileName to the phone's Download/Arin folder (/storage/emulated/0/Download/Arin/$fileName)."
+                            "Downloaded $fileName to the phone's Download/Sanjoyingti folder (/storage/emulated/0/Download/Sanjoyingti/$fileName)."
                         } else {
                             val f = java.io.File(app.getExternalFilesDir(null), fileName)
                             f.outputStream().use { out -> body.byteStream().use { it.copyTo(out, 64 * 1024) } }
@@ -1020,9 +1020,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-    // ---- Arin updating itself ----
+    // ---- Sanjoyingti updating itself ----
 
-    /** Where Arin's own source lives on GitHub (owner/repo and branch). */
+    /** Where Sanjoyingti's own source lives on GitHub (owner/repo and branch). */
     fun selfRepo(): String = settings.secret("SELF_REPO").ifBlank { DEFAULT_SELF_REPO }
 
     fun selfBranch(): String = settings.secret("SELF_BRANCH").ifBlank { DEFAULT_SELF_BRANCH }
@@ -1032,13 +1032,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         settings.setSecret("SELF_BRANCH", branch.trim())
     }
 
-    /** Changes Arin's own code on GitHub, builds a new version and offers to install it. Returns a problem, or null. */
+    /** Changes Sanjoyingti's own code on GitHub, builds a new version and offers to install it. Returns a problem, or null. */
     fun startSelfUpdate(change: String): String? {
         val token = githubToken()
         val app = getApplication<Application>()
         return when {
-            change.isBlank() -> "Describe what to change in Arin."
-            token.isBlank() -> "To update Arin, sign in with GitHub in Settings → GitHub, then ask again."
+            change.isBlank() -> "Describe what to change in Sanjoyingti."
+            token.isBlank() -> "To update Sanjoyingti, sign in with GitHub in Settings → GitHub, then ask again."
             com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
             else -> {
@@ -1047,7 +1047,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     app,
                     com.arin.builder.BuildRequest(
                         description = change.trim(),
-                        appName = "Arin",
+                        appName = "Sanjoyingti",
                         provider = provider,
                         model = model,
                         apiKey = settings.key(provider),
@@ -1059,7 +1059,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         selfBranch = selfBranch(),
                     ),
                 )
-                followBuildInChat("Updating Arin")
+                followBuildInChat("Updating Sanjoyingti")
                 null
             }
         }
@@ -1133,7 +1133,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Fixing errors automatically ----
 
     /**
-     * What the model is told after a failure: Arin searches the web for the error itself, every time, and passes on what
+     * What the model is told after a failure: Sanjoyingti searches the web for the error itself, every time, and passes on what
      * it found with the instruction to apply a fix and retry, so known solutions are used straight away.
      */
     private suspend fun fixAdvice(streak: Int, errorQuery: String, sources: MutableList<Source>): String {
@@ -1302,7 +1302,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var recalls = 0
                 var searches = 0
                 while (true) {
-                    // Messages the person sent while Arin was working go in before the next step.
+                    // Messages the person sent while Sanjoyingti was working go in before the next step.
                     val notes = takeSteering()
                     if (notes.isNotEmpty()) {
                         val joined = "[While you were working, the person sent this. Follow it; it overrides earlier plans where they conflict.]\n" +
@@ -1539,7 +1539,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 true,
                                 "You said the build is starting, but your reply had no <build> tag, so nothing started. Send it now: " +
                                     "<build name=\"App name\">the full description of the app</build> (or <update_arin>…</update_arin> " +
-                                    "for a change to Arin). Only the tag and at most one short sentence.",
+                                    "for a change to Sanjoyingti). Only the tag and at most one short sentence.",
+                            )
+                            liveText = ""
+                            continue
+                        }
+                        // Promised to look something up ("Let me check if…") but stopped there: do it, or answer.
+                        if (!working && nudges < 2 && useSearch && searches < Prompt.MAX_SEARCHES && Prompt.looksUnfinished(full)) {
+                            nudges++
+                            turns += Turn(false, full)
+                            turns += Turn(
+                                true,
+                                "You said what you'd do next but stopped. Do it now: if it needs the web, reply with only " +
+                                    "<search>your query</search>; otherwise give the full answer straight away. Don't announce steps.",
                             )
                             liveText = ""
                             continue
@@ -1568,7 +1580,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     turns += Turn(false, "<search>$q</search>")
                     turns += Turn(true, results + "\n\nNow answer my earlier message using these results where they help.")
                 }
-                // A reply that is only a build (or Arin update) request has no visible text, but it isn't empty.
+                // A reply that is only a build (or Sanjoyingti update) request has no visible text, but it isn't empty.
                 val onlyARequest = Prompt.buildRequest(answer) != null || Prompt.selfUpdate(answer) != null
                 if (Prompt.clean(answer).isBlank() && ran.isEmpty() && !onlyARequest) failure = "The model sent an empty reply. Tap Retry, or pick another model."
             } catch (e: CancellationException) {
@@ -1581,8 +1593,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 val seconds = if (thinkStart > 0) ((System.currentTimeMillis() - thinkStart) / 1000).toInt() else 0
                 if (memoryFlag) Prompt.memories(answer).forEach { remember(it) }
-                // The model asked to change Arin itself: start a self-update build.
-                // Updating Arin itself: only on the person's order, otherwise offer an "Update Arin now" button.
+                // The model asked to change Sanjoyingti itself: start a self-update build.
+                // Updating Sanjoyingti itself: only on the person's order, otherwise offer an "Update Sanjoyingti now" button.
                 var pendingBuild = ""
                 if (failure == null && !stopped) Prompt.selfUpdate(answer)?.let { change ->
                     if (listOf(userSaid).any { Prompt.ordersUpdate(it) }) {
@@ -1637,7 +1649,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             when {
                                 ran.isNotEmpty() -> "Ran ${ran.size} command${if (ran.size == 1) "" else "s"}."
                                 buildAsked != null -> "Building **${buildAsked.first.ifBlank { "your app" }}**." + buildNote
-                                pendingBuild.startsWith("update\u0000") -> "Ready to update Arin."
+                                pendingBuild.startsWith("update\u0000") -> "Ready to update Sanjoyingti."
                                 stopped -> "⏹️ Stopped before an answer arrived (${stopReason.ifBlank { "the reply was cancelled" }}). Tap Retry to ask again."
                                 else -> "The model's reply had nothing to show. Tap Retry, or pick another model."
                             }
@@ -2096,33 +2108,33 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         /** The single chat where REA (reverse engineering) is active. */
         const val REVERSE_ENG_TITLE = "Reverse engineering"
 
-        /** Arin's source repository, set when this build of Arin was made; changeable in Settings → GitHub. */
+        /** Sanjoyingti's source repository, set when this build of Sanjoyingti was made; changeable in Settings → GitHub. */
         const val DEFAULT_SELF_REPO = "poisaingti-spec/aiapp-261110-1752"
         const val DEFAULT_SELF_BRANCH = "arin"
 
         /** After REA is installed in the built-in Linux: have the model prove it works. */
         val REA_CHECK_PROMPT = """
-            REA (Reverse Engineer Anything) was just installed in Arin's built-in Linux and connected as MCP tools. Check that it really works:
-            1. Run rea --version in the terminal (Arin sets COLUMNS/LINES; without a terminal size REA's CLI crashes under PRoot).
+            REA (Reverse Engineer Anything) was just installed in Sanjoyingti's built-in Linux and connected as MCP tools. Check that it really works:
+            1. Run rea --version in the terminal (Sanjoyingti sets COLUMNS/LINES; without a terminal size REA's CLI crashes under PRoot).
             2. Use find_tools to look up analyze_javascript_application, then create a tiny test app (mkdir -p /root/rea-test && echo 'export function add(a,b){return a+b}' > /root/rea-test/app.js) and call that tool on /root/rea-test.
             3. Tell me what worked, what REA can do on this phone (static JavaScript/web bundles, APKs, Flutter, archives…), and what needs a desktop (Ghidra, IDA, Hopper, live Chrome). Only claim what the outputs show.
-            Arin is the MCP client and REA is already connected: don't run rea setup and don't create or edit .claude.json or any other agent's config.
+            Sanjoyingti is the MCP client and REA is already connected: don't run rea setup and don't create or edit .claude.json or any other agent's config.
         """.trimIndent()
 
         /** What "Set up REA" asks the model to do, step by step in the terminal. */
         val REA_SETUP_PROMPT = """
-            Set up REA (Reverse Engineer Anything, npm package rea-agents from github.com/morluto/rea) on this phone in Termux and connect it to Arin, then verify it works. Steps:
+            Set up REA (Reverse Engineer Anything, npm package rea-agents from github.com/morluto/rea) on this phone in Termux and connect it to Sanjoyingti, then verify it works. Steps:
             1. Check what's installed: node -v, npm -v. REA needs Node.js ^22.23.4, ^24.22.1 or >=26.12.1. If Node is missing or too old, run pkg update -y, then pkg install -y nodejs (or nodejs-lts if that version fits better) and check again.
             2. Install REA's Linux prerequisite and REA itself: pkg install -y procps (REA needs a procps-compatible ps on PATH), then npm install --global rea-agents --omit=optional, and confirm with rea --version.
-            3. Install only what REA needs for app and website work; skip the heavy native engines (Ghidra, IDA, Hopper, Frida): use npm install --global rea-agents --omit=optional. Don't run "rea setup" or edit .claude.json or other agents' configs: Arin connects to REA itself.
-            4. Run termux-setup-storage only if ~/storage doesn't exist yet (I'll approve the prompt), so REA can read files I attach (they are saved in Download/Arin).
-            5. Start REA through Arin's bridge (already saved at ~/.arin/mcp-bridge.mjs) and check it answers:
+            3. Install only what REA needs for app and website work; skip the heavy native engines (Ghidra, IDA, Hopper, Frida): use npm install --global rea-agents --omit=optional. Don't run "rea setup" or edit .claude.json or other agents' configs: Sanjoyingti connects to REA itself.
+            4. Run termux-setup-storage only if ~/storage doesn't exist yet (I'll approve the prompt), so REA can read files I attach (they are saved in Download/Sanjoyingti).
+            5. Start REA through Sanjoyingti's bridge (already saved at ~/.arin/mcp-bridge.mjs) and check it answers:
                (nohup env REA_MCP_OUTPUT_SCHEMA_PROFILE=compact node ~/.arin/mcp-bridge.mjs --port 8765 -- rea mcp > ~/.arin/rea.log 2>&1 &); sleep 6; curl -s http://127.0.0.1:8765/health
                then list its tools: curl -s -X POST http://127.0.0.1:8765/mcp -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"1"}}}' | head -c 400; and curl -s -X POST http://127.0.0.1:8765/mcp -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | grep -o '"name":"[a-z_]*"' | wc -l
                If it fails, read ~/.arin/rea.log and fix the cause.
             6. Termux reports the platform as "android", which REA doesn't officially support; tools that launch other programs may refuse with an unsupported-host or capability_unavailable error. After the tools are listed, check one real analysis call works, for example: mkdir -p ~/rea-test && echo 'export function add(a,b){return a+b}' > ~/rea-test/app.js && rea analyze-javascript-application ~/rea-test --json | head -c 1500
             7. If REA refuses because of the host, set it up in Ubuntu inside Termux instead, where REA sees a normal Linux system: pkg install -y proot-distro && proot-distro install ubuntu, then inside it (proot-distro login ubuntu -- bash -lc '…') install Node.js 24 from NodeSource or nvm, procps and rea-agents, and start the bridge from there on the same port: proot-distro login ubuntu --bind ~/.arin:/root/.arin -- bash -lc 'nohup env REA_MCP_OUTPUT_SCHEMA_PROFILE=compact node /root/.arin/mcp-bridge.mjs --port 8765 -- rea mcp > /root/.arin/rea.log 2>&1 &'. Stop the earlier bridge first (pkill -f mcp-bridge.mjs). Then repeat the checks in steps 5 and 6.
-            8. Tell me the result, including any tools that can't work on a phone. From my next message on, Arin connects to REA automatically and you can call its tools directly.
+            8. Tell me the result, including any tools that can't work on a phone. From my next message on, Sanjoyingti connects to REA automatically and you can call its tools directly.
             Report each step's real output. Only say it works once a command shows it.
         """.trimIndent()
     }

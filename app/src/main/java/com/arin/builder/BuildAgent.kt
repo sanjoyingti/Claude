@@ -29,9 +29,9 @@ data class BuildRequest(
     val attachments: List<com.arin.data.Attachment> = emptyList(),
     /** Pick up where the last build of [project] stopped instead of starting over. */
     val resume: Boolean = false,
-    /** Change Arin itself: edit [selfRepo] on GitHub and build it with Arin's own workflow. */
+    /** Change Sanjoyingti itself: edit [selfRepo] on GitHub and build it with Sanjoyingti's own workflow. */
     val selfUpdate: Boolean = false,
-    /** Arin's source: owner/repo and branch. */
+    /** Sanjoyingti's source: owner/repo and branch. */
     val selfRepo: String = "",
     val selfBranch: String = "",
     /** Force the build to run on the phone (built-in Linux), never GitHub. */
@@ -63,7 +63,7 @@ data class BuildResult(
     val phoneApk: String? = null,
     /** The source code as a zip on the phone (for builds made only on the phone). */
     val phoneSourceZip: String? = null,
-    /** The phone-built APK in Arin's storage, ready for Android's installer. */
+    /** The phone-built APK in Sanjoyingti's storage, ready for Android's installer. */
     val phoneInstallPath: String? = null,
     /** The Codespace opened for this project, if any. */
     val codespaceUrl: String? = null,
@@ -96,7 +96,7 @@ class BuildAgent(
         ?: ("com.aibuilt." + (if (slug.first().isLetter()) slug else "a$slug"))
     private val appName get() = req.project?.appName ?: importedName ?: req.appName
 
-    /** Updating Arin itself (its own repo, workflow and signing key). */
+    /** Updating Sanjoyingti itself (its own repo, workflow and signing key). */
     private val self = req.selfUpdate || req.project?.selfUpdate == true
     private val imported = req.project?.imported == true || req.zipPath != null || self
     private val workflowFile = when {
@@ -320,7 +320,7 @@ class BuildAgent(
         var startRound = 0
         if (req.resume && existing != null && resumeZip == null) {
             // Retry: continue from the saved checkpoint instead of starting over.
-            repo = if (pendingRepo) makeRepo(existing.repo, "Built by Arin: ${existing.description.take(200)}")
+            repo = if (pendingRepo) makeRepo(existing.repo, "Built by Sanjoyingti: ${existing.description.take(200)}")
             else GitHubClient.Repo(existing.owner, existing.repo, existing.branch, existing.repoUrl)
             if (!pendingRepo && req.codespace && !localOnly && existing.owner != LOCAL_OWNER) {
                 step(BuildEvent.Kind.STEP, "Opening a GitHub Codespace on the project")
@@ -363,9 +363,9 @@ class BuildAgent(
                 "-" + SimpleDateFormat("yyMMdd-HHmm", Locale.US).format(Date())
             repo = when {
                 writeOnly && (existing == null || pendingRepo) -> GitHubClient.Repo(PENDING_OWNER, existing?.repo ?: repoName, "main", "")
-                existing != null && pendingRepo -> makeRepo(existing.repo, "Uploaded to Arin: ${zip.name}")
+                existing != null && pendingRepo -> makeRepo(existing.repo, "Uploaded to Sanjoyingti: ${zip.name}")
                 existing != null -> GitHubClient.Repo(existing.owner, existing.repo, existing.branch, existing.repoUrl)
-                else -> createRepoOrLocal(repoName, "Uploaded to Arin: ${zip.name}")
+                else -> createRepoOrLocal(repoName, "Uploaded to Sanjoyingti: ${zip.name}")
             }
             notes = emptyList()
             if (viewedFirst && existing != null) {
@@ -385,23 +385,23 @@ class BuildAgent(
                 }
             }
         } else if (self) {
-            // Arin updating itself: read its source from GitHub, change it, build it with its own workflow.
+            // Sanjoyingti updating itself: read its source from GitHub, change it, build it with its own workflow.
             val (owner, name) = req.selfRepo.split('/').let { (it.getOrNull(0) ?: "") to (it.getOrNull(1) ?: "") }
-            if (owner.isBlank() || name.isBlank()) return BuildResult(false, "Set Arin's source repository in Settings → GitHub first.")
+            if (owner.isBlank() || name.isBlank()) return BuildResult(false, "Set Sanjoyingti's source repository in Settings → GitHub first.")
             repo = GitHubClient.Repo(owner, name, req.selfBranch.ifBlank { "main" }, "https://github.com/$owner/$name/tree/${req.selfBranch}")
-            importedName = "Arin"
-            step(BuildEvent.Kind.STEP, "Reading Arin's source from ${req.selfRepo} (${repo.branch})")
+            importedName = "Sanjoyingti"
+            step(BuildEvent.Kind.STEP, "Reading Sanjoyingti's source from ${req.selfRepo} (${repo.branch})")
             onProgress(-1f, "Downloading source files…")
             files.clear()
             files.putAll(gh.readTextFiles(repo))
             onProgress(null, "")
-            if (files.isEmpty()) return BuildResult(false, "Couldn't read Arin's source from ${req.selfRepo}@${repo.branch}. Check the repository in Settings → GitHub.")
+            if (files.isEmpty()) return BuildResult(false, "Couldn't read Sanjoyingti's source from ${req.selfRepo}@${repo.branch}. Check the repository in Settings → GitHub.")
             step(BuildEvent.Kind.DONE, "Read ${files.size} source files")
-            step(BuildEvent.Kind.THINKING, "Working out the changes to Arin with ${req.provider.label}")
+            step(BuildEvent.Kind.THINKING, "Working out the changes to Sanjoyingti with ${req.provider.label}")
             val assets = addAttachedAssets()
             notes = apply(ask(changePrompt() + assets, req.attachments))
             if (pendingFiles.isEmpty() && !depsChanged) {
-                return BuildResult(false, "The model didn't change any of Arin's files. Try describing the change differently.", repo.url, log = modelReplyLog())
+                return BuildResult(false, "The model didn't change any of Sanjoyingti's files. Try describing the change differently.", repo.url, log = modelReplyLog())
             }
             uploadedOnce = true
         } else if (existing == null) {
@@ -429,7 +429,7 @@ class BuildAgent(
             }
             val repoName = "$slug-" + SimpleDateFormat("yyMMdd-HHmm", Locale.US).format(Date())
             repo = if (writeOnly) GitHubClient.Repo(PENDING_OWNER, repoName, "main", "")
-            else createRepoOrLocal(repoName, "Built by Arin: ${req.description}")
+            else createRepoOrLocal(repoName, "Built by Sanjoyingti: ${req.description}")
             ProjectTemplate.files(appName, packageName, deps.toList()).forEach { (p, c) -> pendingFiles[p] = c.toByteArray() }
             if (req.codespace && !localOnly && !writeOnly) {
                 // Make an opened codespace ready to build Android, and open one now (if the sign-in allows it).
@@ -463,7 +463,7 @@ class BuildAgent(
         pauseForPreview(repo, zipKept = zipToRead != null && java.io.File(zipToRead).exists())?.let { return it }
         if (repo.owner == PENDING_OWNER) {
             // Couldn't stop for the questions: make the repository now, the usual way.
-            repo = makeRepo(repo.name, "Built by Arin: ${req.description.take(200)}")
+            repo = makeRepo(repo.name, "Built by Sanjoyingti: ${req.description.take(200)}")
         }
         val localSlug = repo.name
         val newCopy = existing == null || pendingRepo || !(context?.let { LocalBuild.hasCopy(it, localSlug) } ?: false)
@@ -492,7 +492,7 @@ class BuildAgent(
                 pendingFiles["build.gradle.kts"] = gradle.getValue("build.gradle.kts").toByteArray()
                 depsChanged = false
             }
-            // Projects made before Arin knew it: KSP (Room) needs this setting with AGP 9, or nothing configures.
+            // Projects made before Sanjoyingti knew it: KSP (Room) needs this setting with AGP 9, or nothing configures.
             if (!self && !imported && !propsChecked) {
                 propsChecked = true
                 val props = files["gradle.properties"]
@@ -505,7 +505,7 @@ class BuildAgent(
             }
             // Make sure GitHub always has the build instructions (harmless if unchanged).
             if (self) {
-                // Arin's repo already has its workflow and signing key: leave them alone.
+                // Sanjoyingti's repo already has its workflow and signing key: leave them alone.
             } else if (imported) {
                 pendingFiles[".github/workflows/${ProjectTemplate.IMPORT_WORKFLOW_FILE}"] = ProjectTemplate.importWorkflow.toByteArray()
             } else {
@@ -580,10 +580,10 @@ class BuildAgent(
             step(BuildEvent.Kind.STEP, "Uploading $toUpload changed file${if (toUpload == 1) "" else "s"} to GitHub")
             val message = when {
                 round > 0 -> "Fix build errors (round $round)"
-                self -> "Arin: ${req.description.take(60)}"
+                self -> "Sanjoyingti: ${req.description.take(60)}"
                 existing != null -> "Change: ${req.description.take(60)}"
-                req.zipPath != null -> "Uploaded project from Arin"
-                else -> "Initial app from Arin"
+                req.zipPath != null -> "Uploaded project from Sanjoyingti"
+                else -> "Initial app from Sanjoyingti"
             }
             val total = pendingFiles.size + pendingDisk.size
             var lastPct = -1
@@ -638,7 +638,7 @@ class BuildAgent(
                 return BuildResult(
                     true,
                     when {
-                        self -> "The new version of Arin is ready. Tap Install to update."
+                        self -> "The new version of Sanjoyingti is ready. Tap Install to update."
                         existing != null -> "Your changes are built."
                         req.zipPath != null -> "Your project compiled to an APK."
                         else -> "Your app is ready."
@@ -976,7 +976,7 @@ class BuildAgent(
 
     private fun changePrompt() = buildString {
         if (self) {
-            appendLine("Here is the source of Arin itself: the Android AI assistant app you are running in (package com.arin, Kotlin + Jetpack Compose).")
+            appendLine("Here is the source of Sanjoyingti itself: the Android AI assistant app you are running in (package com.arin, Kotlin + Jetpack Compose).")
             appendLine("Its build setup, GitHub workflow and signing key already work: don't change .github/, the keystore, applicationId or targetSdk.")
             appendLine("Increase versionCode by 1 and the last number of versionName in app/build.gradle.kts, and update the version shown in Settings to match.")
             appendLine("Keep everything that works; change only what the request needs. Add new files where they fit the existing package layout.")
@@ -1074,7 +1074,7 @@ class BuildAgent(
             deps += "plugin:com.google.devtools.ksp:" + ProjectTemplate.KSP
         }
         val changed = deps.toList() != before
-        if (changed) step(BuildEvent.Kind.STEP, "Removed build tools that were added as libraries (Arin sets those up itself)")
+        if (changed) step(BuildEvent.Kind.STEP, "Removed build tools that were added as libraries (Sanjoyingti sets those up itself)")
         return changed
     }
 
@@ -1088,7 +1088,7 @@ class BuildAgent(
     private suspend fun addDependency(raw: String): String? {
             val d = raw.trim().removePrefix("ksp:").removePrefix("ksp ").removePrefix("implementation ").trim().trim('"', '(', ')')
             if (isToolchain(d)) {
-                return "Don't add $d: KSP, Kotlin and the Android Gradle plugin are set up by Arin. For Room, add only " +
+                return "Don't add $d: KSP, Kotlin and the Android Gradle plugin are set up by Sanjoyingti. For Room, add only " +
                     "androidx.room:room-runtime, androidx.room:room-ktx and ksp:androidx.room:room-compiler."
             }
             // Code generators (Room's compiler) are added through KSP, with its Gradle plugin.
@@ -1290,7 +1290,7 @@ class BuildAgent(
     companion object {
         private const val MAX_DOWNLOAD = 15L * 1024 * 1024
 
-        /** Arin's own workflow and the tag prefix of the releases it publishes. */
+        /** Sanjoyingti's own workflow and the tag prefix of the releases it publishes. */
         const val SELF_WORKFLOW = "build-apk.yml"
         const val SELF_TAG_PREFIX = "arin-"
         /** Owner name used for projects that live only on the phone (no GitHub). */
