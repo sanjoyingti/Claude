@@ -12,6 +12,11 @@ object ProjectTemplate {
      * release pages; tested with a real GitHub build). AGP 9.5 needs Gradle 9.6 or newer and supports API 37.
      */
     const val AGP = "9.5.0"
+    /**
+     * AGP 9 compiles Kotlin itself and refuses KSP's generated sources (Room) without this:
+     * "Using kotlin.sourceSets DSL to add Kotlin sources is not allowed with built-in Kotlin".
+     */
+    const val KSP_SOURCES_SETTING = "android.disallowKotlinSourceSets=false"
     const val KOTLIN = "2.4.20"
     const val COMPOSE_BOM = "2026.08.00"
     const val GRADLE = "9.9.0"
@@ -70,6 +75,7 @@ object ProjectTemplate {
             android.useAndroidX=true
             kotlin.code.style=official
             android.nonTransitiveRClass=true
+            $KSP_SOURCES_SETTING
         """.trimIndent(),
         "app/build.gradle.kts" to """
             plugins {
@@ -176,9 +182,14 @@ object ProjectTemplate {
                       fi
                       # gradlew + its jar, so the project also opens and builds in Android Studio with no setup.
                       if [ ! -f gradlew ] || [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
-                        gradle wrapper --gradle-version "$GRADLE" --distribution-type bin && chmod +x gradlew
-                        git add gradlew gradlew.bat gradle/wrapper/gradle-wrapper.jar gradle/wrapper/gradle-wrapper.properties
-                        CHANGED=1
+                        # Never fails the build: if the project can't be configured yet, the build step below shows why.
+                        if gradle wrapper --gradle-version "$GRADLE" --distribution-type bin -q; then
+                          chmod +x gradlew
+                          git add gradlew gradlew.bat gradle/wrapper/gradle-wrapper.jar gradle/wrapper/gradle-wrapper.properties
+                          CHANGED=1
+                        else
+                          echo "Couldn't add the Gradle wrapper now; building anyway."
+                        fi
                       fi
                       if [ -n "${'$'}CHANGED" ]; then
                         git config user.name "Arin"

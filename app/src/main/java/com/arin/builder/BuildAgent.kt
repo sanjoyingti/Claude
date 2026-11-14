@@ -125,6 +125,8 @@ class BuildAgent(
     /** Big uploaded files waiting to be committed straight from storage. */
     private val pendingDisk = linkedMapOf<String, java.io.File>()
     private var depsChanged = false
+    /** gradle.properties was brought up to date in this run. */
+    private var propsChecked = false
     /** Times the model-free quick fix was used in this run (it never loops for ever). */
     private var quickFixes = 0
 
@@ -482,12 +484,24 @@ class BuildAgent(
             checkSha = null
             sha = resumeSha
           } else {
+            if (!imported && cleanDeps()) depsChanged = true
             if (depsChanged) {
                 val gradle = ProjectTemplate.files(appName, packageName, deps.toList())
                 pendingFiles["app/build.gradle.kts"] = gradle.getValue("app/build.gradle.kts").toByteArray()
                 // The top-level file changes too when a code generator (KSP, for Room) is added.
                 pendingFiles["build.gradle.kts"] = gradle.getValue("build.gradle.kts").toByteArray()
                 depsChanged = false
+            }
+            // Projects made before Arin knew it: KSP (Room) needs this setting with AGP 9, or nothing configures.
+            if (!self && !imported && !propsChecked) {
+                propsChecked = true
+                val props = files["gradle.properties"]
+                val updated = when {
+                    props == null -> ProjectTemplate.files(appName, packageName, deps.toList())["gradle.properties"]
+                    !props.contains("disallowKotlinSourceSets") -> props.trimEnd() + "\n" + ProjectTemplate.KSP_SOURCES_SETTING + "\n"
+                    else -> null
+                }
+                if (updated != null) pendingFiles["gradle.properties"] = updated.toByteArray()
             }
             // Make sure GitHub always has the build instructions (harmless if unchanged).
             if (self) {
@@ -1046,8 +1060,37 @@ class BuildAgent(
     }
 
     /** Adds a library to the app's build setup; returns a note for the model when it can't be found. */
+    /**
+     * Removes libraries that are really build tools (KSP itself, the Kotlin compiler or a Gradle plugin): added as
+     * libraries they clash with the toolchain, and an old KSP version would be picked for the whole project.
+     * Returns true when something changed.
+     */
+    private fun cleanDeps(): Boolean {
+        val before = deps.toList()
+        deps.removeAll { !it.startsWith("plugin:") && isToolchain(it.removePrefix("ksp:")) }
+        val ksp = deps.firstOrNull { it.startsWith("plugin:com.google.devtools.ksp:") }
+        if (ksp != null && !ksp.substringAfterLast(':').startsWith("2.")) {
+            deps.remove(ksp)
+            deps += "plugin:com.google.devtools.ksp:" + ProjectTemplate.KSP
+        }
+        val changed = deps.toList() != before
+        if (changed) step(BuildEvent.Kind.STEP, "Removed build tools that were added as libraries (Arin sets those up itself)")
+        return changed
+    }
+
+    private fun isToolchain(coordinate: String): Boolean {
+        val c = coordinate.trim()
+        return c.startsWith("com.google.devtools.ksp:") || c.startsWith("org.jetbrains.kotlin:kotlin-compiler") ||
+            c.startsWith("org.jetbrains.kotlin:kotlin-gradle-plugin") || c.startsWith("org.jetbrains.kotlin:kotlin-build-common") ||
+            c.startsWith("com.android.tools.build:")
+    }
+
     private suspend fun addDependency(raw: String): String? {
             val d = raw.trim().removePrefix("ksp:").removePrefix("ksp ").removePrefix("implementation ").trim().trim('"', '(', ')')
+            if (isToolchain(d)) {
+                return "Don't add $d: KSP, Kotlin and the Android Gradle plugin are set up by Arin. For Room, add only " +
+                    "androidx.room:room-runtime, androidx.room:room-ktx and ksp:androidx.room:room-compiler."
+            }
             // Code generators (Room's compiler) are added through KSP, with its Gradle plugin.
             val generator = raw.trim().startsWith("ksp") || ProjectTemplate.kspArtifacts.any { d.contains(":$it") }
             val resolved = resolveDependency(d)
@@ -1063,7 +1106,7 @@ class BuildAgent(
             }
             if (generator && deps.none { it.startsWith("plugin:com.google.devtools.ksp:") }) {
                 val ksp = resolveDependency("com.google.devtools.ksp:symbol-processing-gradle-plugin:latest")?.substringAfterLast(':')
-                    ?.takeIf { v -> v.none { it.isLetter() } } // a finished release, not a beta or RC
+                    ?.takeIf { v -> v.none { it.isLetter() } && v.startsWith("2.") } // a finished KSP2 release, not a beta or RC
                 deps += "plugin:com.google.devtools.ksp:" + (ksp ?: ProjectTemplate.KSP)
                 depsChanged = true
             }
