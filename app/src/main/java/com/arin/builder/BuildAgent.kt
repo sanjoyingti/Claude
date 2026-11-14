@@ -745,6 +745,7 @@ class BuildAgent(
         val cap = if (false) 3_000 else 8_000
         val working = mutableListOf(ChatMessage(Role.USER, prompt, attachments))
         var steps = 0
+        var toldToWrite = false
         while (true) {
             val sb = StringBuilder()
             val thinking = StringBuilder()
@@ -793,9 +794,22 @@ class BuildAgent(
             }
             val reply = sb.toString()
             lastReply = reply
-            if (steps >= MAX_WEB_STEPS || reply.contains("=== FILE:")) return reply
+            if (reply.contains("=== FILE:")) return reply
             val search = WebTools.searchTag.find(reply)?.groupValues?.get(1)?.trim()
             val fetch = WebTools.fetchTag.find(reply)?.groupValues?.get(1)?.trim()
+            if (steps >= MAX_WEB_STEPS) {
+                // Out of lookups but still asking for one: tell it to write the code now (once), instead of giving up.
+                if ((search == null && fetch == null) || toldToWrite) return reply
+                toldToWrite = true
+                step(BuildEvent.Kind.STEP, "Enough reading: asking the model to write the code with what it found")
+                working += ChatMessage(Role.ASSISTANT, reply.trim())
+                working += ChatMessage(
+                    Role.USER,
+                    "No more web lookups are available. Don't <search> or <fetch> anything else. Write the files now, " +
+                        "in the required format, using what you already have.",
+                )
+                continue
+            }
             val result = when {
                 search != null -> {
                     step(BuildEvent.Kind.WEB, "Searching: $search")
@@ -1238,7 +1252,7 @@ class BuildAgent(
         const val LOCAL_OWNER = "phone"
         /** Owner name of a project whose repository is made only once the person picks where to compile it. */
         const val PENDING_OWNER = "pending"
-        private const val MAX_WEB_STEPS = 3
+        private const val MAX_WEB_STEPS = 5
         private const val MAX_QUICK_FIXES = 3
 
         /** Libraries the quick fix may add, by the package the code imports. */
