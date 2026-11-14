@@ -510,10 +510,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- Builds started from chat stay in chat ----------------
 
+    /** Remembers which chat a build belongs to, also after Arin was closed (so "try again" continues that app). */
+    private val buildLinks get() = getApplication<Application>().getSharedPreferences("chat_build", android.content.Context.MODE_PRIVATE)
+
     /** The chat a build was started from (null: none, or it was started in the Build tab). */
-    private var chatBuildChat: String? = null
+    private var chatBuildChat: String?
+        get() = buildLinks.getString("chat", null)
+        set(v) { buildLinks.edit().putString("chat", v).apply() }
     /** The Build-mode project that chat build works on. */
-    private var chatBuildProject: String? = null
+    private var chatBuildProject: String?
+        get() = buildLinks.getString("project", null)
+        set(v) { buildLinks.edit().putString("project", v).apply() }
     /** The live progress message in that chat. */
     private var chatBuildMsg: String? = null
     private var chatBuildJob: Job? = null
@@ -797,8 +804,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             append("The last steps of that run, oldest first (they include the error log when there was one):\n")
             events.forEach { append("- ").append(it.replace("\n", "\n  ")).append('\n') }
             append("When the person asks why it failed, explain from these steps in plain words: say what actually happened and ")
-            append("what will fix it; don't guess and don't ask them technical questions. To fix it, emit a <build> tag that says ")
-            append("what to change, or tell them to say \"try again\".\n\n")
+            append("what will fix it. Never ask them for the error output (it's above), never ask technical questions, and never ")
+            append("say you'll check GitHub or the build (you can't; Arin already did and gave you the result above). ")
+            append("When they want it fixed or leave it to you (\"fix it\", \"you choose\", \"go ahead\", \"continue\", \"do it\"), ")
+            append("reply with one short sentence and <build name=\"${p?.appName ?: "the app"}\">try again: what to fix</build>, ")
+            append("so the builder carries on from where it stopped.\n\n")
         }.take(7_000)
     }
 
@@ -1588,7 +1598,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val buildAsked = if (failure == null && !stopped) Prompt.buildRequest(answer) else null
                 var buildNote = ""
                 if (buildAsked != null) {
-                    if (saidAll.any { Prompt.saysBuild(it, hasChatBuild) }) {
+                    // After a failed build in this chat, any short go-ahead ("you choose", "fix it") counts as "build".
+                    val failedHere = chatBuildChat == chatId && savedFailure() != null
+                    val goAhead = failedHere && userSaid.length < 120
+                    if (goAhead || saidAll.any { Prompt.saysBuild(it, hasChatBuild) }) {
                         // The person said "build": start right away, the model does the rest.
                         ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main) {
                             startBuild(buildAsked.first, buildAsked.second)?.let { problem ->
