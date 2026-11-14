@@ -1167,7 +1167,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         reply()
     }
 
-    fun stop() {
+    /** Why the running reply was stopped, said in the stopped message. */
+    private var stopReason = ""
+
+    fun stop() = stop("you tapped Stop")
+
+    private fun stop(reason: String) {
+        if (job?.isActive == true) stopReason = reason
         job?.cancel()
     }
 
@@ -1199,6 +1205,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         status = null
         ReplyService.start(app)
         // App-wide scope: the reply finishes even if this screen goes away.
+        stopReason = ""
         job = ArinApp.scope.launch {
             val thinking = StringBuilder()
             var thinkStart = 0L
@@ -1505,6 +1512,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: CancellationException) {
                 stopped = true
                 answer = liveText // Stop pressed: keep whatever arrived.
+                if (stopReason.isBlank()) stopReason = "the reply was cancelled"
             } catch (e: Throwable) {
                 failure = e.message ?: "Something went wrong."
                 com.arin.CrashLog.note(getApplication(), "Reply failed", "${p.label} · $m: ${failure}", e.stackTraceToString().take(4_000))
@@ -1541,7 +1549,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     // The reply was only the build request: say so instead of showing nothing.
                     if (buildAsked != null) "Ready to write the code for **${buildAsked.first.ifBlank { "your app" }}**." else ""
                 }
-                val shown = visible + buildNote
+                val shown = visible + buildNote +
+                    (if (stopped && visible.isNotBlank()) "\n\n_⏹️ Stopped here ($stopReason). Tap Retry for the full answer._" else "")
                 val msg = if (failure != null && shown.isBlank()) {
                     Message(fromUser = false, text = failure!!, failed = true)
                 } else {
@@ -1553,7 +1562,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 ran.isNotEmpty() -> "Ran ${ran.size} command${if (ran.size == 1) "" else "s"}."
                                 buildAsked != null -> "Ready to write the code for **${buildAsked.first.ifBlank { "your app" }}**." + buildNote
                                 pendingBuild.startsWith("update\u0000") -> "Ready to update Arin."
-                                else -> "(Stopped)"
+                                stopped -> "⏹️ Stopped before an answer arrived (${stopReason.ifBlank { "the reply was cancelled" }}). Tap Retry to ask again."
+                                else -> "The model's reply had nothing to show. Tap Retry, or pick another model."
                             }
                         },
                         thinking = thinking.toString(),
@@ -1641,7 +1651,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Start a new chat, optionally inside [project]. */
     fun newChat(project: Project? = null, temporary: Boolean = false) {
-        if (streaming) stop()
+        if (streaming) stop("you started a new chat")
         this.temporary = temporary
         reaOn = false
         chatPinned = false
@@ -1696,7 +1706,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun open(id: String) {
         if (id == chatId) return
-        if (streaming) stop()
+        if (streaming) stop("you opened another chat")
         viewModelScope.launch {
             val chat = withContext(Dispatchers.IO) { store.load(id) } ?: run {
                 notice = "That chat couldn't be opened."
