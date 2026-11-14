@@ -753,6 +753,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * The last failed build, read from the saved Build history (so it's known after Arin was closed too): what went
+     * wrong, its error log and the steps before it. Null when the last build didn't fail.
+     */
+    private fun savedFailure(): String? {
+        val timeline = com.arin.builder.BuildRunner.timeline.toList()
+        val at = timeline.indexOfLast { it is com.arin.builder.TimelineItem.Result }
+        val result = timeline.getOrNull(at) as? com.arin.builder.TimelineItem.Result ?: return null
+        if (result.success) return null
+        val p = com.arin.builder.BuildRunner.project
+        val events = timeline.subList(maxOf(0, at - 25), timeline.size)
+            .filterIsInstance<com.arin.builder.TimelineItem.Event>().map { it.event.text.take(600) }
+        return buildString {
+            append("The last Build mode run (${p?.appName ?: "an app"}) FAILED. Arin's message: ${result.message}\n")
+            append("How Arin builds (don't ask the person about this): Arin's builder model writes the code, Arin uploads it to ")
+            append("GitHub (repo: ${result.repoUrl ?: p?.repoUrl ?: "none yet"}) where GitHub Actions compiles it, or compiles it in ")
+            append("the phone's built-in Linux; compile errors go back to the model to fix automatically.\n")
+            append("The last steps of that run, oldest first (they include the error log when there was one):\n")
+            events.forEach { append("- ").append(it.replace("\n", "\n  ")).append('\n') }
+            append("When the person asks why it failed, explain from these steps in plain words: say what actually happened and ")
+            append("what will fix it; don't guess and don't ask them technical questions. To fix it, emit a <build> tag that says ")
+            append("what to change, or tell them to say \"try again\".\n\n")
+        }.take(7_000)
+    }
+
     /** Details of the last failed build, for the model to explain or fix. */
     private var lastFailure = ""
 
@@ -767,6 +792,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "something more now, send the <build> tag as usual: Arin queues it and starts it by itself when this build " +
                 "finishes, on top of what this build makes. Answer other questions normally.\n\n"
         }
+        // The saved history has the error log and the steps before it, also after Arin was closed.
+        savedFailure()?.let { return it }
         if (lastFailure.isNotEmpty()) return lastFailure
         val p = com.arin.builder.BuildRunner.project ?: return ""
         if (p.awaitingPreview) {
