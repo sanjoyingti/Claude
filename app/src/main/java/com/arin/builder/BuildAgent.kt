@@ -46,6 +46,8 @@ data class BuildRequest(
     val requirementsComplete: Boolean = false,
     /** Stop once the code is written, so the app can be tried (View app) before it's compiled into an APK. */
     val previewFirst: Boolean = false,
+    /** A new fixing pass on a build that ran out of fix rounds: it gets a full set of rounds again. */
+    val continueFixing: Boolean = false,
 )
 
 data class BuildResult(
@@ -323,7 +325,7 @@ class BuildAgent(
                 codespaceUrl = gh.createCodespace(repo) ?: gh.codespaceLink(repo)
             }
             notes = emptyList()
-            startRound = existing.round
+            startRound = if (req.continueFixing) 0 else existing.round
             val restored = restorePending(existing)
             when {
                 restored > 0 && existing.awaitingPreview ->

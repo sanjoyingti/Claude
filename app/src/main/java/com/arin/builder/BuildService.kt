@@ -51,7 +51,7 @@ class BuildService : Service() {
         job = scope.launch {
             // The agent parses big model replies and project files: keep that work off the main thread,
             // or the screen freezes and Android closes the app ("isn't responding").
-            val result = try { kotlinx.coroutines.withContext(Dispatchers.Default) {
+            suspend fun attempt(request: BuildRequest): BuildResult = try { kotlinx.coroutines.withContext(Dispatchers.Default) {
                 BuildAgent(
                     request,
                     context = this@BuildService,
@@ -91,6 +91,27 @@ class BuildService : Service() {
             } catch (e: Throwable) {
                 com.arin.CrashLog.record(this@BuildService, e, "build")
                 BuildResult(false, friendly(e), log = e.stackTraceToString().take(2_000))
+            }
+
+            // A build that fails in a way more fixing can solve keeps going by itself: the person said "build"
+            // once and isn't asked to say "try again".
+            var current: BuildRequest = request!!
+            var result = attempt(current)
+            var passes = 0
+            while (passes < MAX_AUTO_PASSES) {
+                try { kotlinx.coroutines.yield() } catch (e: CancellationException) { break } // let the latest project checkpoint land first
+                val next = continuation(current, result) ?: break
+                passes++
+                BuildRunner.timeline += TimelineItem.Event(
+                    BuildEvent(
+                        BuildEvent.Kind.STEP,
+                        "Not working yet (${result.message.substringBefore(". ").take(120)}). Carrying on by itself " +
+                            "(extra pass $passes of $MAX_AUTO_PASSES)",
+                    ),
+                )
+                BuildRunner.save(this@BuildService)
+                current = next
+                result = attempt(current)
             }
             BuildRunner.timeline += TimelineItem.Result(result.success, result.message, result.apkUrl, result.repoUrl, preview = result.awaitingPreview)
             if (!result.success && result.message != "Stopped.") {
@@ -195,8 +216,29 @@ class BuildService : Service() {
         else -> t.message ?: "Something went wrong."
     }
 
+    /**
+     * What to run next when [result] is a failure that more work can fix; null when it's done, stopped, or needs the
+     * person (a sign-in, a key, GitHub settings, no internet).
+     */
+    private fun continuation(request: BuildRequest, result: BuildResult): BuildRequest? {
+        if (result.success || result.awaitingPreview || request.selfUpdate) return null
+        val m = result.message
+        val project = BuildRunner.project
+        return when {
+            // Ran out of fix rounds: keep fixing from where it stopped, with a fresh set of rounds.
+            (m.contains("still fails") || m.contains("fix round")) && project != null ->
+                request.copy(project = project, resume = true, continueFixing = true, previewFirst = false, zipPath = null)
+            // The model sent nothing usable: ask it again, the same way.
+            m.startsWith("The model didn't return any files") || m.startsWith("The model didn't change any files") ->
+                request
+            else -> null
+        }
+    }
+
     companion object {
         private const val CHANNEL = "builds"
+        /** Extra fixing passes after a build runs out of fix rounds, before it's handed back to the person. */
+        private const val MAX_AUTO_PASSES = 4
         private const val CHANNEL_DONE = "builds_done"
         private const val PROGRESS_ID = 41
         private const val DONE_ID = 42
