@@ -130,12 +130,15 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
+                    // This project's own API: tap to choose a different one for this project only.
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    val api = remember(BuildRunner.projectId, showApi) { ProjectApi.label(context, BuildRunner.projectId) }
+                    Column(Modifier.clickable { showApi = true }) {
                         Text(project?.appName ?: "Build app")
                         Text(
-                            "${chat.provider.label} · ${chat.models.firstOrNull { it.id == chat.model }?.label ?: chat.model} · ${chat.effort.label}",
+                            (api ?: "${chat.provider.label} · ${chat.models.firstOrNull { it.id == chat.model }?.label ?: chat.model}") + "  ▾",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.primary,
                         )
                     }
                 },
