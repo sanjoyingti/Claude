@@ -1329,6 +1329,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             var nudges = 0
             /** A working reply was asked for its final report (once). */
             var reportAsked = false
+            /** An empty reply was asked again (once). */
+            var emptyRetried = false
             var buildNudges = 0
             var stopped = false
             var failStreak = 0
@@ -1641,6 +1643,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 liveText = ""
                                 continue
                             }
+                        }
+                        // Nothing to show (only a hidden request, only reasoning, or nothing at all): ask once more for a
+                        // plain answer before calling it an empty reply.
+                        if (Prompt.clean(full).isBlank() && ran.isEmpty() && !emptyRetried &&
+                            Prompt.buildRequest(full) == null && Prompt.selfUpdate(full) == null
+                        ) {
+                            emptyRetried = true
+                            if (full.isNotBlank()) turns += Turn(false, full)
+                            turns += Turn(
+                                true,
+                                (if (searches >= Prompt.MAX_SEARCHES) "No more web searches are available for this answer. " else "") +
+                                    "Your last reply had no text for the person. Answer now in plain words, using what you " +
+                                    "already have. If you were continuing earlier work, carry on from where it stopped and end " +
+                                    "with what to do next.",
+                            )
+                            liveText = ""
+                            continue
                         }
                         answer = full
                         break
