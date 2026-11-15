@@ -606,6 +606,7 @@ private fun ChatMenu(vm: ChatViewModel) {
     var info by remember { mutableStateOf(false) }
     var confirmClearAll by remember { mutableStateOf(false) }
     var viewApp by remember { mutableStateOf(false) }
+    var projectApi by remember { mutableStateOf<String?>(null) }
     Box {
         IconButton(onClick = { open = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = "Chat options")
@@ -623,6 +624,10 @@ private fun ChatMenu(vm: ChatViewModel) {
                     }
                 },
             )
+            // The API this chat's app builds with (each project can use its own).
+            vm.buildProjectId()?.let { pid ->
+                DropdownMenuItem(text = { Text("API for this app") }, onClick = { open = false; projectApi = pid })
+            }
             androidx.compose.material3.HorizontalDivider()
             // Turn REA (reverse engineering) on or off for this chat, so its tools work only where you want them.
             DropdownMenuItem(
@@ -651,6 +656,14 @@ private fun ChatMenu(vm: ChatViewModel) {
                 onClick = { open = false; confirmClearAll = true },
             )
         }
+    }
+    projectApi?.let { pid ->
+        com.arin.builder.ProjectApiDialog(
+            projectId = pid,
+            projectName = com.arin.builder.BuildRunner.state(pid)?.project?.appName ?: "this app",
+            fallback = vm.provider to vm.model,
+            onClose = { projectApi = null },
+        )
     }
     if (viewApp) {
         com.arin.builder.AppPreviewDialog(

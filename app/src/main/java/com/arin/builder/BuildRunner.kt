@@ -30,13 +30,23 @@ data class SavedProject(
 @Serializable
 private data class OldSaved(val project: Project? = null, val timeline: List<TimelineItem> = emptyList())
 
+/** The live state of one project: its steps, its app and whether a build of it is running now. */
+class ProjectState(val id: String) {
+    val timeline = mutableStateListOf<TimelineItem>()
+    var project by mutableStateOf<Project?>(null)
+    var running by mutableStateOf(false)
+    /** Live progress of the current long step (upload/unpack): 0..1, or null when there's none. */
+    var progress by mutableStateOf<Float?>(null)
+    var progressText by mutableStateOf("")
+}
+
 /**
  * Shared Build Mode state: the open project's agent timeline. Every project is saved, so you can
  * come back to any of them later and keep asking for changes (like chats).
  */
 object BuildRunner {
     /** Called on the main thread when a build ends, so the chat can post the result and its links. */
-    var onFinished: ((BuildResult, Project?) -> Unit)? = null
+    var onFinished: ((BuildResult, Project?, ProjectState) -> Unit)? = null
 
     /** Download link for the source as a zip: the exact commit that was built, else the branch. */
     fun sourceZipUrl(p: Project): String =
@@ -46,23 +56,37 @@ object BuildRunner {
     /** The repo page on GitHub. */
     fun repoPage(p: Project): String = "https://github.com/${p.owner}/${p.repo}" + if (p.selfUpdate) "/tree/${p.branch}" else ""
 
-    val timeline = mutableStateListOf<TimelineItem>()
-    var running by mutableStateOf(false)
-        internal set
-    var project by mutableStateOf<Project?>(null)
-        internal set
-    var projectId by mutableStateOf(UUID.randomUUID().toString())
+    /** The project on screen (Build tab, chat). Builds of other projects keep running in [active]. */
+    var open by mutableStateOf(ProjectState(UUID.randomUUID().toString()))
         private set
 
-    /** Live progress of the current long step (upload/unpack): 0..1, or null when there's none. */
-    var progress by mutableStateOf<Float?>(null)
-        internal set
-    var progressText by mutableStateOf("")
-        internal set
+    /** Every project with a build running now (several can run at once); the open one may be among them. */
+    val active = androidx.compose.runtime.mutableStateMapOf<String, ProjectState>()
 
-    /** The request the service should run next. */
-    @Volatile
-    internal var pending: BuildRequest? = null
+    val timeline get() = open.timeline
+    /** A build of the open project is running. */
+    var running: Boolean
+        get() = open.running
+        internal set(v) { open.running = v }
+    var project: Project?
+        get() = open.project
+        internal set(v) { open.project = v }
+    val projectId: String get() = open.id
+    var progress: Float?
+        get() = open.progress
+        internal set(v) { open.progress = v }
+    var progressText: String
+        get() = open.progressText
+        internal set(v) { open.progressText = v }
+
+    /** Some build (of any project) is running. */
+    val anyRunning: Boolean get() = open.running || active.values.any { it.running }
+
+    /** The live state of project [id]: the open one, or one building in the background. */
+    fun state(id: String): ProjectState? = if (open.id == id) open else active[id]
+
+    /** Requests the service should start, by project. */
+    internal val pending = java.util.concurrent.ConcurrentHashMap<String, BuildRequest>()
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private var loaded = false
@@ -100,29 +124,29 @@ object BuildRunner {
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
             com.arin.CrashLog.handler { runCatching { com.arin.ArinApp.instance }.getOrNull() },
     )
-    private var pendingSave: kotlinx.coroutines.Job? = null
+    private val pendingSaves = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
     /** Saves soon (batched, off the main thread) so frequent progress updates don't make the app stutter. */
-    fun save(context: Context) {
-        if (pendingSave?.isActive == true) return
+    fun save(context: Context, st: ProjectState = open) {
+        if (pendingSaves[st.id]?.isActive == true) return
         val app = context.applicationContext
-        pendingSave = io.launch {
+        pendingSaves[st.id] = io.launch {
             kotlinx.coroutines.delay(1_500)
-            writeNow(app)
+            writeNow(app, st)
         }
     }
 
     /** Saves right away (end of a build). */
-    fun saveNow(context: Context) {
-        pendingSave?.cancel()
+    fun saveNow(context: Context, st: ProjectState = open) {
+        pendingSaves.remove(st.id)?.cancel()
         val app = context.applicationContext
-        val snapshot = SavedProject(projectId, System.currentTimeMillis(), project, timeline.toList())
+        val snapshot = SavedProject(st.id, System.currentTimeMillis(), st.project, st.timeline.toList())
         io.launch { write(app, snapshot) }
     }
 
-    private suspend fun writeNow(context: Context) {
+    private suspend fun writeNow(context: Context, st: ProjectState) {
         val snapshot = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-            SavedProject(projectId, System.currentTimeMillis(), project, timeline.toList())
+            SavedProject(st.id, System.currentTimeMillis(), st.project, st.timeline.toList())
         }
         write(context, snapshot)
     }
@@ -145,7 +169,8 @@ object BuildRunner {
             val tmp = File(dir(context), "${s.id}.tmp")
             tmp.writeText(json.encodeToString(s))
             tmp.renameTo(f)
-            prefs(context).edit().putString("current", s.id).apply()
+            // A project building in the background doesn't become the one Sanjoyingti reopens.
+            if (s.id == open.id) prefs(context).edit().putString("current", s.id).apply()
         }
     }
 
@@ -156,19 +181,34 @@ object BuildRunner {
 
     /** Opens a saved project to keep working on it. */
     fun open(context: Context, id: String): Boolean {
-        if (running) return false
+        if (id == open.id) return true
+        // Building in the background: show its live state.
+        val live = active[id]
+        if (live != null) {
+            leaveOpen(context)
+            open = live
+            prefs(context).edit().putString("current", id).apply()
+            return true
+        }
         val saved = runCatching { json.decodeFromString<SavedProject>(File(dir(context), "$id.json").readText()) }.getOrNull()
             ?: return false
-        projectId = saved.id
-        project = saved.project
-        timeline.clear()
-        timeline.addAll(saved.timeline)
+        leaveOpen(context)
+        open = ProjectState(saved.id).apply {
+            project = saved.project
+            timeline.addAll(saved.timeline)
+        }
         prefs(context).edit().putString("current", id).apply()
         return true
     }
 
+    /** Before showing another project: a running one keeps building in the background, an idle one is saved. */
+    private fun leaveOpen(context: Context) {
+        val st = open
+        if (st.running || pending.containsKey(st.id)) active[st.id] = st else saveNow(context, st)
+    }
+
     fun delete(context: Context, id: String) {
-        if (running && id == projectId) return
+        if (state(id)?.running == true) return
         File(dir(context), "$id.json").delete()
         AppPreview.forget(context, id)
         if (id == projectId) newProject(context)
@@ -176,11 +216,8 @@ object BuildRunner {
 
     /** Starts a fresh project; the current one stays saved in Projects (and its repo stays on GitHub). */
     fun newProject(context: Context) {
-        if (running) return
-        saveNow(context)
-        projectId = UUID.randomUUID().toString()
-        project = null
-        timeline.clear()
+        leaveOpen(context)
+        open = ProjectState(UUID.randomUUID().toString())
         prefs(context).edit().remove("current").apply()
     }
 }

@@ -462,8 +462,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         // When a build ends, post the result in this chat with real download links.
-        com.arin.builder.BuildRunner.onFinished = { result, project ->
-            postBuildResult(result, project)
+        com.arin.builder.BuildRunner.onFinished = { result, project, st ->
+            postBuildResult(result, project, st)
             // A request that came in during the build starts now (after the finished build's service has stopped).
             if (queuedBuild != null) viewModelScope.launch { kotlinx.coroutines.delay(1_500); startQueued() }
         }
@@ -473,7 +473,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val app = getApplication<Application>()
             com.arin.builder.BuildRunner.load(app)
             val id = com.arin.builder.SelfRepair.takeResume(app) ?: return@launch
-            if (com.arin.builder.BuildRunner.running || !com.arin.builder.BuildRunner.open(app, id)) return@launch
+            if (com.arin.builder.BuildRunner.state(id)?.running == true || !com.arin.builder.BuildRunner.open(app, id)) return@launch
             val project = com.arin.builder.BuildRunner.project ?: return@launch
             com.arin.builder.BuildService.start(
                 app,
@@ -522,7 +522,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Starts the queued request, in the chat it was asked in. */
     private fun startQueued() {
         val q = queuedBuild ?: return
-        if (com.arin.builder.BuildRunner.running) return
+        if (linkedProject()?.let { com.arin.builder.BuildRunner.state(it)?.running } == true) return
         if (q.chatId != null && q.chatId != chatId) {
             notice = "Your queued build starts when you open the chat you asked in."
             return
@@ -540,17 +540,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Remembers which chat a build belongs to, also after Sanjoyingti was closed (so "try again" continues that app). */
     private val buildLinks get() = getApplication<Application>().getSharedPreferences("chat_build", android.content.Context.MODE_PRIVATE)
 
-    /** The chat a build was started from (null: none, or it was started in the Build tab). */
-    private var chatBuildChat: String?
-        get() = buildLinks.getString("chat", null)
-        set(v) { buildLinks.edit().putString("chat", v).apply() }
-    /** The Build-mode project that chat build works on. */
-    private var chatBuildProject: String?
-        get() = buildLinks.getString("project", null)
-        set(v) { buildLinks.edit().putString("project", v).apply() }
-    /** The live progress message in that chat. */
-    private var chatBuildMsg: String? = null
-    private var chatBuildJob: Job? = null
+    /** The Build project this chat builds, for the "API for this app" menu item. */
+    fun buildProjectId(): String? = linkedProject()
+
+    /** The Build project this chat works on (each chat has its own), or null. */
+    private fun linkedProject(id: String? = chatId): String? = id?.let {
+        buildLinks.getString("p_$it", null)
+            // Saved by older versions (one chat–build link for the whole app).
+            ?: buildLinks.getString("project", null)?.takeIf { _ -> buildLinks.getString("chat", null) == it }
+    }
+
+    private fun linkProject(chat: String, project: String?) {
+        buildLinks.edit().apply { if (project == null) remove("p_$chat") else putString("p_$chat", project) }.apply()
+    }
+
+    /** A build followed live in a chat: which chat, its progress message and the job updating it. */
+    private class Follow(val chatId: String?, val msgId: String, val title: String, var job: Job? = null)
+
+    /** Builds followed in chats, by project (several can run at once). */
+    private val follows = mutableMapOf<String, Follow>()
 
     private val retryWords = Regex("""\b(try again|retry|again|continue|resume|fix( it| the)?( build| error)?s?|keep going|carry on)\b""", RegexOption.IGNORE_CASE)
 
@@ -568,9 +576,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** "Start over" under a failed build: write the whole app again from the same request, as a new project. */
     fun startOverBuild() {
         val p = com.arin.builder.BuildRunner.project ?: return
-        if (com.arin.builder.BuildRunner.running) { notice = "A build is already running."; return }
+        if (com.arin.builder.BuildRunner.running) { notice = "A build of this app is already running."; return }
         val what = p.requirements.ifBlank { p.description }
-        chatBuildProject = null
+        chatId?.let { linkProject(it, null) }
         com.arin.builder.BuildRunner.newProject(getApplication())
         startBuild(p.appName, what)?.let { notice = it }
     }
@@ -612,7 +620,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val onPhone = phoneProject || target == BuildTarget.PHONE || (target == BuildTarget.AUTO && phoneReady && token.isBlank())
         val inCodespace = target == BuildTarget.CODESPACE && !phoneProject
         val problem = when {
-            com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
+            com.arin.builder.BuildRunner.running -> "A build of this app is already running. Open Build mode to see it."
             target == BuildTarget.PHONE && !phoneReady && !phoneProject ->
                 "To compile on the phone, install the Android build tools in Settings → Linux first, or pick another place."
             inCodespace && token.isBlank() -> "To use a Codespace, sign in with GitHub in Settings → GitHub first."
@@ -649,33 +657,35 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Shows the build's steps live in this chat, like Build mode does. */
     private fun followBuildInChat(title: String) {
         if (chatId == null) persist()
-        chatBuildChat = chatId
-        chatBuildProject = com.arin.builder.BuildRunner.projectId
+        val pid = com.arin.builder.BuildRunner.projectId
+        chatId?.let { linkProject(it, pid) }
         val msg = Message(fromUser = false, text = "🛠️ **$title…**\n\nStarting.")
-        chatBuildMsg = msg.id
+        follows[pid]?.job?.cancel()
+        val f = Follow(chatId, msg.id, title)
+        follows[pid] = f
         messages += msg
         persist()
-        chatBuildJob?.cancel()
-        chatBuildJob = viewModelScope.launch {
+        f.job = viewModelScope.launch {
             var last = ""
             while (true) {
-                val text = buildProgressText(title, done = false)
+                val st = com.arin.builder.BuildRunner.state(pid) ?: break
+                val text = buildProgressText(title, done = false, st.timeline.toList())
                 if (text != last) {
                     last = text
-                    replaceBuildMessage(text, save = false)
+                    replaceBuildMessage(f, text, save = false)
                 }
-                if (!com.arin.builder.BuildRunner.running && com.arin.builder.BuildRunner.pending == null) {
+                if (!st.running && !com.arin.builder.BuildRunner.pending.containsKey(pid)) {
                     kotlinx.coroutines.delay(1_500)
-                    if (!com.arin.builder.BuildRunner.running) break
+                    if (!st.running) break
                 }
                 kotlinx.coroutines.delay(700)
             }
         }
     }
 
-    private fun buildProgressText(title: String, done: Boolean): String = buildString {
+    private fun buildProgressText(title: String, done: Boolean, timeline: List<com.arin.builder.TimelineItem>): String = buildString {
         append(if (done) "🛠️ **$title — steps**\n\n" else "🛠️ **$title…**\n\n")
-        val events = com.arin.builder.BuildRunner.timeline.toList()
+        val events = timeline
             .filterIsInstance<com.arin.builder.TimelineItem.Event>().map { it.event }
             .filter { it.kind != com.arin.builder.BuildEvent.Kind.THINKING }
         val shown = events.takeLast(if (done) 25 else 14)
@@ -701,9 +711,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Puts [text] in the chat build's progress message, in whichever chat it lives. */
-    private fun replaceBuildMessage(text: String, save: Boolean) {
-        val id = chatBuildMsg ?: return
-        val target = chatBuildChat
+    private fun replaceBuildMessage(f: Follow, text: String, save: Boolean) {
+        val id = f.msgId
+        val target = f.chatId
         if (target == chatId) {
             val i = messages.indexOfFirst { it.id == id }
             if (i >= 0) messages[i] = messages[i].copy(text = text)
@@ -716,8 +726,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Adds [msg] to the chat the build came from, even if another chat is open now. */
-    private fun postToBuildChat(msg: Message, progressId: String?, steps: String) {
-        val target = chatBuildChat
+    private fun postToBuildChat(target: String?, msg: Message, progressId: String?, steps: String) {
         if (target == null || target == chatId) {
             messages += msg
             persist()
@@ -732,18 +741,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun postBuildResult(result: com.arin.builder.BuildResult, project: com.arin.builder.Project?) {
+    private fun postBuildResult(
+        result: com.arin.builder.BuildResult,
+        project: com.arin.builder.Project?,
+        st: com.arin.builder.ProjectState,
+    ) {
         // Started in the Build tab: the result stays there.
-        if (chatBuildMsg == null || chatBuildProject != com.arin.builder.BuildRunner.projectId) return
-        chatBuildJob?.cancel()
+        val f = follows.remove(st.id) ?: return
+        f.job?.cancel()
         val title = when {
             project?.selfUpdate == true -> "Updating Sanjoyingti"
             else -> "Building ${project?.appName ?: "the app"}"
         }
-        val steps = buildProgressText(title, done = true)
-        val progressId = chatBuildMsg
-        if (chatBuildChat == chatId) replaceBuildMessage(steps, save = false)
-        chatBuildMsg = null
+        val steps = buildProgressText(title, done = true, st.timeline.toList())
+        val progressId = f.msgId
+        if (f.chatId == chatId) replaceBuildMessage(f, steps, save = false)
         val name = project?.appName ?: "The app"
         val phoneOnly = project?.owner == com.arin.builder.BuildAgent.LOCAL_OWNER
         val text = if (result.awaitingPreview) buildString {
@@ -784,11 +796,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 (result.runUrl?.let { " Full log: $it ." } ?: "") +
                 " When the person asks why it failed, explain from this log in plain words; to fix it, emit a <build> tag that says what to change.\n\n"
         postToBuildChat(
+            f.chatId,
             Message(
                 fromUser = false,
                 text = text,
-                compileAsk = if (result.awaitingPreview) com.arin.builder.BuildRunner.projectId else "",
-                failActions = if (!result.success && result.message != "Stopped.") com.arin.builder.BuildRunner.projectId else "",
+                compileAsk = if (result.awaitingPreview) st.id else "",
+                failActions = if (!result.success && result.message != "Stopped.") st.id else "",
             ),
             progressId,
             steps,
@@ -802,7 +815,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             ArinApp.scope.launch {
                 runCatching { com.arin.builder.ApkInstaller.download(app, url) {} }
                     .onSuccess {
-                        postToBuildChat(Message(fromUser = false, text =
+                        postToBuildChat(f.chatId, Message(fromUser = false, text =
                             "⬇️ **$name saved to your phone** in Download/Sanjoyingti (`${it.name}`). Opening the installer…"), null, "")
                         runCatching { com.arin.builder.ApkInstaller.install(app, it) }
                     }
@@ -843,7 +856,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var lastFailure = ""
 
     /** The latest build's links, for the model to give when asked. */
+    /** Shows this chat's own project (each chat builds its own app; several can build at once). */
+    private fun showLinkedProject() {
+        val pid = linkedProject() ?: return
+        if (pid != com.arin.builder.BuildRunner.projectId) com.arin.builder.BuildRunner.open(getApplication(), pid)
+    }
+
     private fun latestBuildInfo(): String {
+        showLinkedProject()
         if (com.arin.builder.BuildRunner.running) {
             val step = com.arin.builder.BuildRunner.timeline.lastOrNull { it is com.arin.builder.TimelineItem.Event }
                 as? com.arin.builder.TimelineItem.Event
@@ -895,13 +915,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val onPhone = target == BuildTarget.PHONE || (target == BuildTarget.AUTO && phoneReady && token.isBlank())
         val inBuildTab = target == BuildTarget.BUILD_TAB
         val inCodespace = target == BuildTarget.CODESPACE
+        showLinkedProject()
+        // This chat's app is building right now: hold the request until that build finishes. Other apps' builds
+        // don't matter: several projects build at the same time.
+        val thisAppBuilding = com.arin.builder.BuildRunner.running && linkedProject() == com.arin.builder.BuildRunner.projectId
         return when {
-            // Another build is running: hold this one and start it when that finishes (a self-update is never queued).
-            com.arin.builder.BuildRunner.running && com.arin.builder.BuildRunner.project?.selfUpdate != true -> {
+            thisAppBuilding && com.arin.builder.BuildRunner.project?.selfUpdate != true -> {
                 queueBuild(name, description, target)
                 null
             }
-            com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
+            thisAppBuilding -> "Sanjoyingti is updating itself right now. Open Build mode to see it."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
             target == BuildTarget.PHONE && !phoneReady ->
                 "To build on the phone, install the Android build tools in Settings → Linux first."
@@ -912,8 +935,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             else -> {
                 // A follow-up in the same chat ("try again", "add dark mode") keeps working on the same app.
                 val current = com.arin.builder.BuildRunner.project
-                val same = current != null && !current.selfUpdate && chatBuildChat != null && chatBuildChat == chatId &&
-                    chatBuildProject == com.arin.builder.BuildRunner.projectId &&
+                val same = current != null && !current.selfUpdate && linkedProject() == com.arin.builder.BuildRunner.projectId &&
                     (name.isBlank() || name.equals(current.appName, ignoreCase = true) ||
                         retryWords.containsMatchIn(description.take(80)))
                 val lastFailed = (com.arin.builder.BuildRunner.timeline.lastOrNull { it is com.arin.builder.TimelineItem.Result }
@@ -1066,7 +1088,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return when {
             change.isBlank() -> "Describe what to change in Sanjoyingti."
             token.isBlank() -> "To update Sanjoyingti, sign in with GitHub in Settings → GitHub, then ask again."
-            com.arin.builder.BuildRunner.running -> "A build is already running. Open Build mode to see it."
+            com.arin.builder.BuildRunner.active.values.any { it.running && it.project?.selfUpdate == true } ->
+                "Sanjoyingti is already updating itself. Open Build mode to see it."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
             else -> {
                 com.arin.builder.BuildRunner.newProject(app)
@@ -1662,7 +1685,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var buildNote = ""
                 if (buildAsked != null) {
                     // After a failed build in this chat, any short go-ahead ("you choose", "fix it") counts as "build".
-                    val failedHere = chatBuildChat == chatId && savedFailure() != null
+                    val failedHere = linkedProject() != null && savedFailure() != null
                     val goAhead = failedHere && userSaid.length < 120
                     if (goAhead || saidAll.any { Prompt.saysBuild(it, hasChatBuild) }) {
                         // The person said "build": start right away, the model does the rest.
@@ -2105,6 +2128,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun chooseModel(option: ModelOption) {
         model = option.id
         settings.setModel(provider, option.id)
+        // Picking a model in an app's chat also sets the API that app builds with (each project keeps its own).
+        linkedProject()?.let { com.arin.builder.ProjectApi.set(getApplication(), it, provider, option.id) }
     }
 
     fun saveKey(p: Provider, key: String) {

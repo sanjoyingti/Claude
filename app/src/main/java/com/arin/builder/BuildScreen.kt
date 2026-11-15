@@ -101,6 +101,7 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
     var showProjects by rememberSaveable { mutableStateOf(false) }
     var openFile by rememberSaveable { mutableStateOf<String?>(null) }
     var showPreview by rememberSaveable { mutableStateOf(false) }
+    var showApi by rememberSaveable { mutableStateOf(false) }
     val project = vm.project
     BackHandler(enabled = showFiles || openFile != null || showProjects) {
         if (openFile != null) openFile = null else if (showFiles) showFiles = false else showProjects = false
@@ -159,13 +160,19 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
                                 )
                             }
                             androidx.compose.material3.DropdownMenuItem(text = { Text("Projects") }, onClick = { more = false; showProjects = true })
+                            if (vm.project != null || vm.timeline.isNotEmpty()) {
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text("API for this project") },
+                                    onClick = { more = false; showApi = true },
+                                )
+                            }
                             if (project != null) {
                                 androidx.compose.material3.DropdownMenuItem(text = { Text("Files") }, onClick = { more = false; showFiles = true })
                             }
                             if (vm.timeline.isNotEmpty()) {
                                 androidx.compose.material3.DropdownMenuItem(
                                     text = { Text("New project") },
-                                    enabled = !vm.running,
+                                    enabled = true,
                                     onClick = { more = false; vm.newProject() },
                                 )
                             }
@@ -213,6 +220,14 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
     }
     if (showPreview) {
         AppPreviewDialog(chat, onClose = { showPreview = false })
+    }
+    if (showApi) {
+        ProjectApiDialog(
+            projectId = BuildRunner.projectId,
+            projectName = vm.project?.appName ?: "this project",
+            fallback = chat.provider to chat.model,
+            onClose = { showApi = false },
+        )
     }
 }
 
@@ -654,7 +669,7 @@ private fun ProjectList(vm: BuildViewModel, onBack: () -> Unit) {
                     TextButton(onClick = {
                         vm.newProject()
                         onBack()
-                    }, enabled = !vm.running) { Text("New project") }
+                    }) { Text("New project") }
                 },
             )
         },
@@ -668,7 +683,7 @@ private fun ProjectList(vm: BuildViewModel, onBack: () -> Unit) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = !vm.running || current) {
+                        .clickable {
                             if (vm.openProject(p.id) || current) onBack()
                         }
                         .padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
@@ -677,7 +692,7 @@ private fun ProjectList(vm: BuildViewModel, onBack: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         Text(p.title + if (current) "  (open)" else "", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                         val status = when {
-                            current && vm.running -> "Building now…"
+                            BuildRunner.state(p.id)?.running == true -> "Building now…"
                             p.lastResult?.preview == true -> "Code ready to view, not compiled yet"
                             p.lastResult?.success == true -> "APK ready"
                             p.lastResult != null -> "Last build failed"
