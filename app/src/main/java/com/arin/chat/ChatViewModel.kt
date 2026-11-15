@@ -1172,7 +1172,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         status = "Searching the web for the error: “${errorQuery.take(60)}”"
         val found = runCatching { WebSearch.searchForModel(errorQuery) }.getOrNull()
         status = null
-        found?.first?.take(4)?.forEach { h -> if (sources.none { it.url == h.url }) sources += Source(h.title, h.url) }
+        // These lookups are the app's own help for the model, not sources of the answer: they aren't listed.
         val web = found?.second?.take(7_000).orEmpty()
         return if (web.isBlank()) {
             "$base A web search for the error found nothing; search with other words (<search>) or try a different approach."
@@ -1304,6 +1304,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val foundMedia = mutableListOf<com.arin.data.MediaItem>()
             var webSteps = 0
             var nudges = 0
+            /** A working reply was asked for its final report (once). */
+            var reportAsked = false
             var buildNudges = 0
             var stopped = false
             var failStreak = 0
@@ -1594,6 +1596,28 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             )
                             liveText = ""
                             continue
+                        }
+                        // After real work (commands or tools), always finish with a report: what was done, the result,
+                        // what's left and what to do next. Also when the command limit stopped it half-way.
+                        val worked = ran.count { it.kind != "steer" }
+                        if (worked >= 2 && !reportAsked) {
+                            val limitHit = worked >= Prompt.MAX_COMMANDS
+                            val hasReport = full.length > 300 && Regex("(?i)\\bnext\\b").containsMatchIn(full.takeLast(800)) &&
+                                !Prompt.looksUnfinished(full)
+                            if (limitHit || !hasReport) {
+                                reportAsked = true
+                                turns += Turn(false, full)
+                                turns += Turn(
+                                    true,
+                                    (if (limitHit) "You've used all ${Prompt.MAX_COMMANDS} commands for this answer, so stop here. " else "") +
+                                        "Don't run anything else now. Write the final report for the person, in plain words: " +
+                                        "**Done** (what you did), **Result** (what works now and where the files are, with paths), " +
+                                        "**Not done yet** (what's left, if anything) and **Next** (exactly what they should do or say " +
+                                        "next" + (if (limitHit) ", e.g. \"say continue\" to keep going" else "") + ").",
+                                )
+                                liveText = ""
+                                continue
+                            }
                         }
                         answer = full
                         break
