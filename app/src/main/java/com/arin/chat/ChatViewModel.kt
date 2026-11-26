@@ -3219,7 +3219,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
                                     try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
-                                        maxTokens = if (bossLean) 2_000 else null, boss = bossLean).collect { d ->
+                                        boss = bossLean).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
                                         val nowMs = System.currentTimeMillis()

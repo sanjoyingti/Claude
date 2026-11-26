@@ -52,7 +52,7 @@ fun streamModel(
     // Whole apps need long answers: ask for plenty of output, and fall back to the default if the service refuses.
     var emitted = false
     try {
-        Llm.stream(provider, apiKey, model, system, turns, maxTokens = if (boss) 1_500 else BUILD_MAX_TOKENS, endpoint = endpoint, boss = boss).collect { d ->
+        Llm.stream(provider, apiKey, model, system, turns, maxTokens = BUILD_MAX_TOKENS, endpoint = endpoint, boss = boss).collect { d ->
             emitted = true
             emit(if (d is Delta.Thinking) THOUGHT + d.text else (d as Delta.Text).text)
         }

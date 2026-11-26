@@ -120,7 +120,8 @@ fun ArinMessage(
                 ) {
                     Text(message.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(12.dp))
                 }
-            } else if (onSummary != null && com.arin.builder.BuildRunner.anyRunning && !message.text.contains("— steps**")) {
+            } else if (onSummary != null && message.text.startsWith("🛠️") && com.arin.builder.BuildRunner.anyRunning && !message.text.contains("— steps**")) {
+                // Only a build's own progress message turns into the one-line step view; ordinary replies always show their text.
                 // A build in progress: one line with the current step; tap it for the full Summary.
                 BuildNowLine(onSummary, message.text)
             } else {
