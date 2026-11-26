@@ -12,7 +12,11 @@ object TaskSummary {
     const val RULE = "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
         "where you ran commands, used tools, changed files or built something), END your final reply with two short " +
         "sections in plain English:\n**Summary — what I did:** the main things done and their result (and anything that " +
-        "failed).\n**What to do next:** the next step(s) for the owner.\n"
+        "failed).\n**What to do next:** the next step(s) for the owner.\n" +
+        "AND whenever you wrote or changed code (ARIN-PROTECTED: explain-after-coding), BEFORE the summary add:\n" +
+        "**What I made — in plain English:** a detailed explanation for someone who is not a programmer: what the code " +
+        "does for the person using it, each part and feature, and how it works in simple everyday words (no jargon).\n" +
+        "**Suggestions:** 3 to 6 numbered ideas to change, improve or update it, then offer to make them or to build it.\n"
 
     private val has = Regex("(?is)(summary|what i did).{0,4000}(what to do next|next step|next:)")
 

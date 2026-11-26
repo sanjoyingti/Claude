@@ -2060,7 +2060,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (result.message.startsWith(com.arin.builder.BuildAgent.CODE_READY)) {
             val changed = result.message.removePrefix(com.arin.builder.BuildAgent.CODE_READY).split(',').filter { it.isNotBlank() }
             postToBuildChat(f.chat, Message(fromUser = false,
-                text = "✍️ **The code for ${project?.appName ?: "the app"} is written** (${changed.size} file${if (changed.size == 1) "" else "s"}).\n\n_Where should I build it?_",
+                text = "✍️ **The code for ${project?.appName ?: "the app"} is written** (${changed.size} file${if (changed.size == 1) "" else "s"}).\n\n" +
+                    (if (result.explanation.isNotBlank()) result.explanation.trim() + "\n\n" else "") + "_Where should I build it?_",
                 pendingBuild = "where\u0000$sessionId"), progressId, steps)
             return
         }
@@ -2097,7 +2098,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // Direct download links from a free file site (found after the build), when there are some.
-        val text = text0 + result.message.substringAfter("📥", "").let { if (it.isBlank()) "" else "\n\n📥" + it }
+        val text = text0 + result.message.substringAfter("📥", "").let { if (it.isBlank()) "" else "\n\n📥" + it } +
+            // ARIN-PROTECTED: explain-after-coding — the code explained in plain English, with suggestions.
+            (if (result.explanation.isNotBlank()) "\n\n" + result.explanation.trim() else "")
         lastFailure = if (result.success) "" else
             "The last Build mode run ($name) FAILED. Reason: ${result.message}" +
                 (if (result.log.isNotBlank()) " Error log (the full list is in the chat message):\n${result.log.take(4_000)}\n" else "") +

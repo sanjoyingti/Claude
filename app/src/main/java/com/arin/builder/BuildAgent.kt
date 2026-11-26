@@ -86,6 +86,8 @@ data class BuildResult(
     val testNote: String = "",
     /** Screenshot of the app's first screen on the emulator, if the test took one. */
     val testScreenshot: String? = null,
+    /** ARIN-PROTECTED: explain-after-coding — what the code does, in plain English, then suggestions (blank: no code written). */
+    val explanation: String = "",
 )
 
 /**
@@ -242,7 +244,77 @@ class BuildAgent(
         }
     }
 
+    /** Set whenever the model wrote or changed code in this run (so the owner gets it explained). */
+    private var codedThisRun = false
+
+    // ARIN-PROTECTED: explain-after-coding — the owner's strict rule for every tab (chat, Build, Arin Update and all others):
+    // after every piece of coding, the owner gets a detailed plain-English explanation of what was made or changed, then
+    // suggestions to change, improve or update it, and the offer to build. Only the owner can change this rule.
     suspend fun run(): BuildResult {
+        val result = runBuild()
+        if (!codedThisRun || result.message == "Stopped.") return result
+        val text = runCatching { explainForOwner(result) }.getOrDefault("")
+        return if (text.isBlank()) result else result.copy(explanation = text)
+    }
+
+    /**
+     * Your own model (the boss, never the worker or helper: they may not see the code) explains the code in plain
+     * English from a short list of what changed, then suggests changes, improvements and updates, and offers to build.
+     */
+    private suspend fun explainForOwner(result: BuildResult): String {
+        val changed = (lastChanged.ifEmpty { pendingFiles.keys.toList() }).distinct()
+        if (changed.isEmpty()) return ""
+        step(BuildEvent.Kind.THINKING, "${bossName()} is explaining the code in plain English")
+        val brief = buildString {
+            appendLine("WHAT THE OWNER ASKED: " + req.description.take(2_500))
+            appendLine("APP: " + (if (self) "Arin itself (an update)" else appName))
+            appendLine("FILES WRITTEN OR CHANGED:")
+            changed.take(30).forEach { p ->
+                val c = files[p].orEmpty()
+                val sig = Regex("(?m)^\\s*(?:(?:private|internal|override|suspend|data|sealed|abstract|open)\\s+)*(fun|class|object|interface)\\s+[\\w<>.,? ]+")
+                    .findAll(c).map { it.value.trim() }.take(12).joinToString("; ")
+                appendLine("- $p" + if (sig.isNotBlank()) ": $sig" else "")
+            }
+            if (lastNotes.isNotEmpty()) appendLine("NOTES FROM WRITING IT: " + lastNotes.joinToString("; ").take(1_500))
+            appendLine("STATUS: " + when {
+                result.message.startsWith(CODE_READY) -> "the code is written; NOT built yet — the owner will choose where to build"
+                result.success -> "the code is written and the app is built"
+                else -> "the code is written but the build did not finish: " + result.message.take(200)
+            })
+        }
+        val prompt = brief + "\nWrite to the OWNER, who is not a programmer. Use plain, everyday English: no jargon (if a technical " +
+            "word is unavoidable, explain it in a few words). Write exactly these sections:\n" +
+            "**What I made — in plain English:** explain in detail what the code does for the person using the app: each " +
+            "screen, button and feature, what happens when they tap things, and how it works behind the scenes in simple terms. " +
+            "Mention anything that was left out or that they should know.\n" +
+            "**Suggestions:** 3 to 6 numbered, concrete ideas to change, improve or update the app (each one short).\n" +
+            "**What next:** one line offering to make any of these changes, or to " +
+            (if (result.message.startsWith(CODE_READY)) "build it (they pick where below)." else if (result.success) "update it again." else "carry on fixing and building it.")
+        val out = StringBuilder()
+        runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(240_000) {
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
+                    "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint())
+                    .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
+            }
+        }
+        context?.let { com.arin.selffix.CreditSaver.addUsage(it, prompt.length + out.length) }
+        val text = out.toString().trim()
+        if (text.isNotBlank()) step(BuildEvent.Kind.DONE, "Explained the code in plain English, with suggestions")
+        return text.ifBlank {
+            // The model couldn't be reached: Arin's own short explanation (no AI), so the rule still holds.
+            "**What I made — in plain English:** I wrote or changed ${changed.size} part${if (changed.size == 1) "" else "s"} of " +
+                (if (self) "Arin" else appName) + " to do what you asked: " + req.description.take(300) + "\n\n" +
+                "**Suggestions:**\n1. Try it and tell me anything that doesn't look or work the way you want.\n" +
+                "2. Ask me to add a feature or change the design.\n\n**What next:** " +
+                (if (result.message.startsWith(CODE_READY)) "pick where to build it below, or ask for a change first." else "ask for any change.")
+        }
+    }
+
+    private var lastChanged = mutableListOf<String>()
+    private var lastNotes = listOf<String>()
+
+    private suspend fun runBuild(): BuildResult {
         if (!localOnly) {
             step(BuildEvent.Kind.STEP, "Checking your GitHub token")
             try {
@@ -923,18 +995,10 @@ class BuildAgent(
     private suspend fun workerTargets(): List<Target> {
         val ctx = context ?: return emptyList()
         val settings = com.arin.data.Settings(ctx)
+        // Any worker the owner picked: Claude (key or login), ChatGPT, Gemini, Free, offline or a saved API.
         val list = com.arin.selffix.CreditSaver.workers(ctx).mapNotNull { w ->
-            if (w.apiId == "offline") {
-                val f = com.arin.llm.LocalModel.lastModel(ctx) ?: return@mapNotNull null
-                if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(ctx, f) != null) return@mapNotNull null
-                Target(com.arin.llm.Provider.Custom, com.arin.llm.LocalModel.DUMMY_KEY, com.arin.llm.LocalModel.MODEL_ID,
-                    com.arin.llm.CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, com.arin.llm.ApiFormat.OpenAI), "offline model", w)
-            } else {
-                val api = settings.savedApis.firstOrNull { it.slotId == w.apiId } ?: return@mapNotNull null
-                val fmt = runCatching { com.arin.llm.ApiFormat.valueOf(api.format) }.getOrDefault(com.arin.llm.ApiFormat.OpenAI)
-                Target(com.arin.llm.Provider.Custom, settings.apiKey(api), w.model.ifBlank { api.model },
-                    com.arin.llm.CustomApi.Endpoint(api.baseUrl, fmt), w.model.ifBlank { api.model }, w)
-            }
+            val r = com.arin.selffix.Worker.resolve(ctx, w) ?: return@mapNotNull null
+            Target(r.provider, r.key, r.model, r.endpoint, if (w.apiId == "offline") "offline model" else r.model, w)
         }
         return list.sortedBy { t -> if (com.arin.selffix.CreditSaver.refused(ctx, t.w!!, helperTab)) 1 else 0 }
     }
@@ -1518,6 +1582,19 @@ class BuildAgent(
 
     /** Applies the model's output; returns notes to pass back to the model (skipped downloads etc.). */
     private suspend fun apply(output0: String): List<String> {
+        val before = files.map { it.key + "#" + it.value.hashCode() }.toSet()
+        val notes = applyFiles(output0)
+        val now = files.map { it.key + "#" + it.value.hashCode() }
+        val touched = now.filter { it !in before }.map { it.substringBeforeLast('#') }
+        if (touched.isNotEmpty()) {
+            codedThisRun = true
+            touched.forEach { if (it !in lastChanged) lastChanged += it }
+            if (notes.isNotEmpty()) lastNotes = notes
+        }
+        return notes
+    }
+
+    private suspend fun applyFiles(output0: String): List<String> {
         val notes = mutableListOf<String>()
         // Small edits ("replace these lines with these"): applied to the current file; if one doesn't match, the model is
         // asked for the whole file instead — nothing breaks to save tokens.

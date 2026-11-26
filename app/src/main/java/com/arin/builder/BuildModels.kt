@@ -23,7 +23,9 @@ sealed class TimelineItem {
     data class Plan(val text: String, val done: Boolean = true) : TimelineItem()
 
     @Serializable
-    data class Result(val success: Boolean, val message: String, val apkUrl: String? = null, val repoUrl: String? = null) : TimelineItem()
+    data class Result(val success: Boolean, val message: String, val apkUrl: String? = null, val repoUrl: String? = null,
+                      /** The owner's plain-English explanation of the code written, with suggestions (blank when no code was written). */
+                      val explanation: String = "") : TimelineItem()
 }
 
 /** The app being built, kept between requests so follow-ups edit the same project. */

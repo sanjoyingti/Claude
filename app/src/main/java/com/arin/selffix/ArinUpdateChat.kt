@@ -133,11 +133,14 @@ object ArinUpdateChat {
                 val changed = result.message.removePrefix(com.arin.builder.BuildAgent.CODE_READY).split(',').filter { it.isNotBlank() }
                 note(app, "✍️ **The code is written.** Changed ${changed.size} file${if (changed.size == 1) "" else "s"}: " +
                     changed.take(12).joinToString(", ") { it.substringAfterLast('/') } + (if (changed.size > 12) ", …" else "") +
+                    // ARIN-PROTECTED: explain-after-coding
+                    (if (result.explanation.isNotBlank()) "\n\n" + result.explanation.trim() else "") +
                     "\n\n**Where should I build it?**", "where")
             }
             result.success && result.apkUrl != null -> {
                 note(app, "✅ **The new version of Arin is built.** Tap **Install** to update — it installs over the Arin you have now " +
-                    "(chats and settings stay).$links", "install:" + result.apkUrl)
+                    "(chats and settings stay).$links" +
+                    (if (result.explanation.isNotBlank()) "\n\n" + result.explanation.trim() else ""), "install:" + result.apkUrl)
                 if (autoInstall) {
                     autoInstall = false
                     com.arin.ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main) { note(app, install(app, result.apkUrl)) }

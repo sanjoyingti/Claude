@@ -43,6 +43,8 @@ jobs:
           grep -q "ARIN-PROTECTED-RULE: task-summary" $D/selffix/TaskSummary.kt
           grep -q "ARIN-PROTECTED-RULE: tab-isolation" $D/selffix/TabIsolation.kt
           grep -q "ARIN-PROTECTED: apk-toolkit" $D/terminal/Linux.kt
+          grep -q "ARIN-PROTECTED: explain-after-coding" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: explain-after-coding" $D/selffix/TaskSummary.kt
           test -s app/src/main/assets/apk-toolkit-setup.sh
           for f in llm/Prompt.kt llm/Llm.kt chat/ChatViewModel.kt; do
             grep -q "ARIN-PROTECTED: tab-isolation" $D/$f || { echo "Tab isolation missing in $f"; exit 1; }

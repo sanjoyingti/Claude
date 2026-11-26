@@ -64,13 +64,17 @@ object Worker {
     /** The built-in services a worker (or helper) can be, besides saved Custom APIs and the offline model. */
     val BUILT_IN = listOf("claude" to "Claude (key or Claude Code login)", "chatgpt" to "ChatGPT", "gemini" to "Gemini", "free" to "Free models")
 
-    private suspend fun targets(c: Context): List<Target> {
+    /** How to reach one worker now (null when it isn't set up: no key, no login, API removed…). */
+    data class Resolved(val provider: com.arin.llm.Provider, val key: String, val model: String, val endpoint: com.arin.llm.CustomApi.Endpoint?)
+
+    suspend fun resolve(c: Context, w: CreditSaver.Worker): Resolved? = targetFor(c, w)?.let { Resolved(it.provider, it.key, it.model, it.endpoint) }
+
+    private suspend fun targetFor(c: Context, w: CreditSaver.Worker): Target? {
         val settings = com.arin.data.Settings(c)
-        return CreditSaver.workers(c).mapNotNull { w ->
-            when (w.apiId) {
+        return when (w.apiId) {
                 "offline" -> {
-                    val f = com.arin.llm.LocalModel.lastModel(c) ?: return@mapNotNull null
-                    if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(c, f) != null) return@mapNotNull null
+                    val f = com.arin.llm.LocalModel.lastModel(c) ?: return null
+                    if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(c, f) != null) return null
                     Target(com.arin.llm.LocalModel.DUMMY_KEY, com.arin.llm.LocalModel.MODEL_ID,
                         com.arin.llm.CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, com.arin.llm.ApiFormat.OpenAI), w)
                 }
@@ -87,17 +91,21 @@ object Worker {
                 }
                 "chatgpt", "gemini" -> {
                     val p = if (w.apiId == "chatgpt") com.arin.llm.Provider.ChatGPT else com.arin.llm.Provider.Gemini
-                    val key = settings.key(p).takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    val key = settings.key(p).takeIf { it.isNotBlank() } ?: return null
                     Target(key, w.model.ifBlank { com.arin.llm.DefaultModels.of(p).firstOrNull()?.id.orEmpty() }, null, w, p)
                 }
                 "free" -> Target("", w.model.ifBlank { com.arin.llm.DefaultModels.of(com.arin.llm.Provider.Free).firstOrNull()?.id.orEmpty() },
                     null, w, com.arin.llm.Provider.Free)
                 else -> {
-                    val api = settings.savedApis.firstOrNull { it.slotId == w.apiId } ?: return@mapNotNull null
+                    val api = settings.savedApis.firstOrNull { it.slotId == w.apiId } ?: return null
                     val fmt = runCatching { com.arin.llm.ApiFormat.valueOf(api.format) }.getOrDefault(com.arin.llm.ApiFormat.OpenAI)
                     Target(settings.apiKey(api), w.model.ifBlank { api.model }, com.arin.llm.CustomApi.Endpoint(api.baseUrl, fmt), w)
                 }
             }
+    }
+
+    private suspend fun targets(c: Context): List<Target> {
+        return CreditSaver.workers(c).mapNotNull { w -> targetFor(c, w) }
         }.sortedBy { if (CreditSaver.refused(c, it.w, "chat")) 1 else 0 }
     }
 

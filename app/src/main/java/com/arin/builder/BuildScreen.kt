@@ -316,6 +316,8 @@ private fun ResultCard(r: TimelineItem.Result, onRetry: (() -> Unit)? = null, on
                 color = if (r.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
             )
             r.apkUrl?.let { url -> ApkDownload(url) }
+            // ARIN-PROTECTED: explain-after-coding — the code explained in plain English, then suggestions.
+            if (r.explanation.isNotBlank()) Text(r.explanation.replace("**", "").trim(), style = MaterialTheme.typography.bodyMedium)
             // ARIN-PROTECTED: task-summary in every tab — what was done and what to do next, after every build (made by Arin, no AI).
             com.arin.selffix.TaskSummary.forBuild(r.success, r.message, r.apkUrl,
                 if (written) r.message.removePrefix(BuildAgent.CODE_READY).split(',').count { it.isNotBlank() } else null).let { (did, next) ->

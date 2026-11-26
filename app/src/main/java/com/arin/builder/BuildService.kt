@@ -238,7 +238,7 @@ class BuildService : Service() {
                     } else say("Every free file site failed right now; the GitHub link above still works.")
                 }
             }
-            session.timeline += TimelineItem.Result(result.success, result.message, result.apkUrl, result.repoUrl)
+            session.timeline += TimelineItem.Result(result.success, result.message, result.apkUrl, result.repoUrl, result.explanation)
             if (!result.success && result.message != "Stopped.") {
                 com.arin.CrashLog.note(this@BuildService, "Build failed", "$appName: ${result.message}", result.log)
             }

@@ -142,3 +142,10 @@ apksigner/d8/r8), native ARM aapt2/aidl/zipalign, arin-build, apktool, APKEditor
 bundletool, uber-apk-signer and androguard. Each install looks up the newest releases and updates older ones
 (`arin-tools update`). Every tab installs them automatically the first time a command needs them, and every model is
 told they are there.
+
+## Explain after every coding (`builder/BuildAgent.kt`, `selffix/TaskSummary.kt`)
+
+- In **every tab** (chats, Build, Arin Update and all others), after any code is written or changed, Arin explains it
+  in detail in plain English for someone who isn't a programmer: what it does, each part, and how it works.
+- Then it gives **suggestions** to change, improve or update it, and offers to make them or to build.
+- Your own model (the boss) writes the explanation; the worker and helper never see the code for it.
