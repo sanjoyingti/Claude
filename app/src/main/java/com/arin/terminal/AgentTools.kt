@@ -29,6 +29,7 @@ object AgentTools {
         val apt = if (linux) "apt-get install -y -qq --no-install-recommends" else "pkg install -y"
         val update = if (linux) "apt-get update -qq" else "pkg update -y"
         val script = buildString {
+            if (linux) appendLine(Linux.DPKG_REPAIR.trim())
             appendLine("ok=0; bad=0; updated=0")
             appendLine("try_sys(){ $apt \"$1\" >/tmp/arin-inst.log 2>&1 && return 0; if [ \$updated = 0 ]; then $update >/dev/null 2>&1; updated=1; $apt \"$1\" >/tmp/arin-inst.log 2>&1 && return 0; fi; return 1; }")
             appendLine("try_pip(){ (command -v pip3 >/dev/null || try_sys python3-pip) && pip3 install -q --break-system-packages \"$1\" >/tmp/arin-inst.log 2>&1 || pip3 install -q \"$1\" >/tmp/arin-inst.log 2>&1; }")

@@ -101,6 +101,7 @@ object Linux {
         }
         log("Installing basics with apt (this takes a few minutes)…")
         val script = """
+            [ -f $DPKG_REPAIR_SCRIPT ] && bash $DPKG_REPAIR_SCRIPT
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
@@ -138,6 +139,7 @@ object Linux {
     suspend fun installDevTools(context: Context, log: (String) -> Unit): Termux.Result {
         log("Installing Java 21, Kotlin $KOTLINC_VERSION and Gradle $GRADLE_VERSION…")
         val script = """
+            [ -f $DPKG_REPAIR_SCRIPT ] && bash $DPKG_REPAIR_SCRIPT
             set -e
             export DEBIAN_FRONTEND=noninteractive
             apt-get update
@@ -179,7 +181,7 @@ object Linux {
             .replace("@@GRADLE@@", com.arin.builder.ProjectTemplate.GRADLE)
             .replace("@@SDK@@", com.arin.builder.ProjectTemplate.SDK.toString())
         File(rootfs(context), "root/.arin/setup-android-build.sh").writeText(script)
-        val r = run(context, "bash /root/.arin/setup-android-build.sh", timeoutMs = 60 * 60_000L, onOutput = log)
+        val r = run(context, DPKG_REPAIR + "bash /root/.arin/setup-android-build.sh", timeoutMs = 60 * 60_000L, onOutput = log)
         if (r.exitCode == 0 && r.error == null && r.combined().contains("ANDROID_BUILD_READY")) {
             androidBuildMarker(context).writeText("ok")
             devMarker(context).writeText("ok")
@@ -204,7 +206,7 @@ object Linux {
         File(rootfs(context), "root/.arin/rebuild-sign.sh").writeText(rebuildSignScript)
         val script = context.assets.open("apk-toolkit-setup.sh").bufferedReader().use { it.readText() }
         File(rootfs(context), "root/.arin/setup-apk-toolkit.sh").writeText(script)
-        val r = run(context, "bash /root/.arin/setup-apk-toolkit.sh", timeoutMs = 60 * 60_000L, onOutput = log)
+        val r = run(context, DPKG_REPAIR + "bash /root/.arin/setup-apk-toolkit.sh", timeoutMs = 60 * 60_000L, onOutput = log)
         if (r.combined().contains("APK_TOOLKIT_READY")) toolkitMarker(context).writeText("ok")
         return r
     }
@@ -243,6 +245,40 @@ object Linux {
 
     /** Script (inside Linux) that installs what REA needs to analyse APKs. */
     const val ANDROID_TOOLS_SCRIPT = "/root/.arin/setup-android-tools.sh"
+
+    /** Repairs apt when a package's setup failed under PRoot (systemd, D-Bus…). Safe to run any time. */
+    const val DPKG_REPAIR_SCRIPT = "/root/.arin/dpkg-repair.sh"
+
+    /** Prefix for any command that installs with apt: finishes or repairs a stuck earlier install first. */
+    const val DPKG_REPAIR = "[ -f $DPKG_REPAIR_SCRIPT ] && bash $DPKG_REPAIR_SCRIPT; "
+
+    private val dpkgRepairScript = """
+        #!/bin/bash
+        # Written by Arin. Under PRoot there is no systemd or D-Bus, so the setup scripts of those packages
+        # (and of the desktop packages that need them) always fail, and every later apt install then fails with
+        # "Sub-process /usr/bin/dpkg returned an error code (1)". This turns just those setup scripts into
+        # no-ops and finishes the stuck install. Java, the SDK and everything else are set up normally.
+        export DEBIAN_FRONTEND=noninteractive
+        dpkg --audit 2>/dev/null | grep -q . || exit 0
+        echo "Repairing an unfinished package install (systemd/D-Bus can't run inside the phone's Linux)…"
+        stub() {
+          dpkg-query -W -f='${'$'}{db:Status-Abbrev} ${'$'}{binary:Package}\n' 2>/dev/null | awk '${'$'}1!="ii" && ${'$'}1!="rc" {print ${'$'}2}' |
+          while read -r p; do
+            case "${'$'}{p%%:*}" in
+              dbus|dbus-*|systemd|systemd-*|libpam-systemd|networkd-dispatcher|udev|polkitd|policykit-1|dconf-service|at-spi2-core)
+                for f in "/var/lib/dpkg/info/${'$'}p.postinst" "/var/lib/dpkg/info/${'$'}{p%%:*}.postinst"; do
+                  [ -f "${'$'}f" ] && printf '#!/bin/sh\nexit 0\n' > "${'$'}f"
+                done ;;
+            esac
+          done
+        }
+        stub
+        dpkg --configure -a >/dev/null 2>&1 || { stub; dpkg --configure -a; }
+        apt-get -f install -y >/dev/null 2>&1 || true
+        if dpkg --audit 2>/dev/null | grep -q .; then echo "Some packages are still not set up:"; dpkg --audit | head -20
+        else echo "Package install repaired."; fi
+        exit 0
+    """.trimIndent() + "\n"
 
     /**
      * REA analyses APKs through jadx-headless-mcp (a Java program, so it runs on ARM too) and decodes resources
@@ -347,7 +383,7 @@ object Linux {
         configure(context)
         File(rootfs(context), "root/.arin").mkdirs()
         File(rootfs(context), "root/.arin/rebuild-sign.sh").writeText(rebuildSignScript)
-        return run(context, "bash $ANDROID_TOOLS_SCRIPT", timeoutMs = 30 * 60_000L, onOutput = log)
+        return run(context, DPKG_REPAIR + "bash $ANDROID_TOOLS_SCRIPT", timeoutMs = 30 * 60_000L, onOutput = log)
     }
 
     /** Installs REA (npm package rea-agents) in Linux. */
@@ -457,6 +493,12 @@ object Linux {
         File(root, "etc/apt/apt.conf.d/01-arin").writeText(
             "APT::Sandbox::User \"root\";\nAcquire::Retries \"3\";\nDPkg::Use-Pty \"false\";\n",
         )
+        // PRoot has no systemd / D-Bus, so those packages' setup scripts always fail and leave apt stuck
+        // ("dpkg returned an error code (1)"). Never pull them in as extras, and repair a stuck apt before installs.
+        File(root, "etc/apt/apt.conf.d/02-arin-no-recommends").writeText(
+            "APT::Install-Recommends \"0\";\nAPT::Install-Suggests \"0\";\n",
+        )
+        File(root, DPKG_REPAIR_SCRIPT.removePrefix("/")).apply { parentFile?.mkdirs() }.writeText(dpkgRepairScript)
         File(root, "etc/profile.d").mkdirs()
         File(root, "etc/profile.d/arin.sh").writeText(
             "# Set by Arin: PRoot can't translate io_uring or handle glibc's rseq; both can crash Node/npm.\n" +
