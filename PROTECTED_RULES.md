@@ -158,3 +158,18 @@ told they are there.
 - Libraries always use their newest **stable** release (never alpha, beta or RC, which break builds with
   "checkDebugAarMetadata"/"compileSdk" errors); saved pre-release versions are moved to stable automatically.
 - Only the owner can change this rule.
+
+## Tested before handover (`builder/BuildAgent.kt`, `builder/ProjectTemplate.kt`)
+
+- Every app Arin builds on GitHub is installed on an Android emulator, opened, and tapped around.
+- If it crashes, closes by itself or won't install, Arin fixes it like a build error and builds and tests again.
+- The APK download link is given **only after the app opens and runs without crashing**. If the test can't run, or it
+  still crashes after the fix rounds, no link is given — say "try again" to keep going.
+- Only the owner can change this rule.
+
+## Exactly what was asked (`selffix/TaskSummary.kt`, given to every model in every tab)
+
+- Arin makes exactly the app or change the owner asked for, with every feature and detail. It never builds a different,
+  smaller or simplified app, and never drops a feature to make an error go away.
+- If something truly can't be done, it says so and asks instead of quietly changing it.
+- Only the owner can change this rule.

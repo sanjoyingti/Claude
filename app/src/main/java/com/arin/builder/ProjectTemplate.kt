@@ -211,7 +211,47 @@ object ProjectTemplate {
                       name: Build ${'$'}{{ github.run_number }}
                       files: app-*.apk
                       make_latest: true
+              # ARIN-PROTECTED: test-before-handover — the APK is installed on an Android emulator, opened and tapped
+              # around; Arin hands the download link over only when this test passes. (Its own job: a test problem
+              # never breaks the build itself.)
+              test:
+                needs: build
+                runs-on: ubuntu-latest
+                timeout-minutes: 25
+                continue-on-error: true
+                steps:
+                  - uses: actions/checkout@v5
+                  - name: Get the APK that was just built
+                    env:
+                      GH_TOKEN: ${'$'}{{ github.token }}
+                    run: gh release download "build-${'$'}{{ github.run_number }}" --pattern 'app-*.apk' --output app.apk --clobber
+                  - name: Enable KVM
+                    run: |
+                      echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+                      sudo udevadm control --reload-rules
+                      sudo udevadm trigger --name-match=kvm
+                  - name: Open the app on an Android emulator and tap around
+                    uses: reactivecircus/android-emulator-runner@v2
+                    with:
+                      api-level: 34
+                      target: google_apis
+                      arch: x86_64
+                      disable-animations: true
+                      emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+                      script: bash $TEST_SCRIPT_PATH app.apk
+                  - name: Make sure there is a report
+                    if: always()
+                    run: '[ -f arin-test-report.txt ] || echo "RESULT: NO_TEST" > arin-test-report.txt'
+                  - uses: softprops/action-gh-release@v2
+                    if: always()
+                    with:
+                      tag_name: build-${'$'}{{ github.run_number }}
+                      files: |
+                        arin-test-report.txt
+                        arin-test-screen.png
+                      fail_on_unmatched_files: false
         """.trimIndent(),
+        TEST_SCRIPT_PATH to testScript,
     )
 
     fun defaultManifest(appName: String): String = """
@@ -385,6 +425,8 @@ report PASS ""
         - Right before each file, write ONE line explaining it in plain English for someone who doesn't code (no code words), e.g.
           === ABOUT: The main screen: shows your notes in a list with a + button to add a new one ===
           When fixing errors, say what was wrong and what you changed, e.g. === ABOUT: Fixed a missing import so the list screen can show icons ===
+    
+        ${com.arin.selffix.TaskSummary.EXACT_REQUEST.trim()}
     """.trimIndent()
 
     /** Lets the model look things up before writing code. */
@@ -415,6 +457,10 @@ report PASS ""
         Rules:
         - Only write files under app/src/main/ (Kotlin sources, AndroidManifest.xml, res/ files).
         - Write every file in full. No placeholders, no "..." and no TODOs.
+        - ${com.arin.selffix.TaskSummary.EXACT_REQUEST.trim()}
+        - OWNER'S STRICT RULE (tested before handover): the app is installed and opened on an Android emulator after it
+          builds; it must open and run without crashing (no missing permissions, null values, network on the main thread,
+          missing resources or activities), so write it to work on first launch.
         - OWNER'S STRICT RULE (complete project): include EVERY file the app needs to compile into an APK in Android Studio:
           all Kotlin files, the AndroidManifest.xml entries, and every resource the code uses (each R.string / R.drawable /
           R.raw etc. must have its file or entry). Use only STABLE library versions (no alpha, beta or rc) that work with

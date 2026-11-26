@@ -9,7 +9,16 @@ package com.arin.selffix
  */
 object TaskSummary {
     /** Told to every model in every tab. */
-    const val RULE = "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
+    /**
+     * ARIN-PROTECTED: exact-request — owner's strict rule for every tab and every model (only the owner can change it):
+     * build exactly what the owner asked for, never a different, smaller or "simplified" app.
+     */
+    const val EXACT_REQUEST = "OWNER'S STRICT RULE — EXACTLY WHAT WAS ASKED (only the owner can change it): make exactly the app " +
+        "or change the owner requested, with every feature, screen and detail they asked for. Never replace it with a " +
+        "different app, never simplify, shorten, skip, rename or swap any part, and never drop a feature to make an error go " +
+        "away — fix the error another way. If something truly cannot be done, say so plainly and ask; do not quietly change it.\n"
+
+    const val RULE = EXACT_REQUEST + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
         "where you ran commands, used tools, changed files or built something), END your final reply with two short " +
         "sections in plain English:\n**Summary — what I did:** the main things done and their result (and anything that " +
         "failed).\n**What to do next:** the next step(s) for the owner.\n" +

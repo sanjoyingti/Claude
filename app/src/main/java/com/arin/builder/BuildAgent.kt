@@ -142,7 +142,10 @@ class BuildAgent(
     private val self = req.selfUpdate || req.project?.selfUpdate == true
     private val imported = req.project?.imported == true || req.zipPath != null || self
     /** Test the built app on GitHub's emulator (not for Arin itself, nor builds made only on the phone). */
-    private val testing get() = false   // app-test temporarily disabled (restoring reliable builds)
+    // ARIN-PROTECTED: test-before-handover — owner's strict rule (only the owner can change it): every app Arin builds on
+    // GitHub is installed on an Android emulator, opened and tapped around; crashes are fixed like build errors, and the
+    // APK download link is handed over only after the app opens and runs without crashing.
+    private val testing get() = !self && !imported
     private val workflowFile = when {
         self -> SELF_WORKFLOW
         imported -> ProjectTemplate.IMPORT_WORKFLOW_FILE
@@ -601,6 +604,7 @@ class BuildAgent(
                 ProjectTemplate.files(appName, packageName, deps.toList())[".github/workflows/build.yml"]?.let {
                     pendingFiles[".github/workflows/build.yml"] = it.toByteArray()
                 }
+                if (files[ProjectTemplate.TEST_SCRIPT_PATH] != ProjectTemplate.testScript) pendingFiles[ProjectTemplate.TEST_SCRIPT_PATH] = ProjectTemplate.testScript.toByteArray()
             }
             if (useLocal) {
                 val ctx = context!!
@@ -621,7 +625,8 @@ class BuildAgent(
                             step(BuildEvent.Kind.DONE, "Done")
                             return BuildResult(
                                 true,
-                                if (existing != null) "Your changes are built on this phone." else "Your app is ready (built on this phone).",
+                                (if (existing != null) "Your changes are built on this phone." else "Your app is ready (built on this phone).") +
+                                    (if (self) "" else " ⚠️ Not crash-tested: a phone build can't run an Android emulator. Say \"build on github\" to have it tested before you install it."),
                                 phoneApk = out.apkPath,
                                 phoneSourceZip = zip,
                                 phoneInstallPath = out.installFile?.absolutePath,
@@ -748,7 +753,7 @@ class BuildAgent(
                                 "NOT_RUNNING" -> "The app closed by itself right after it opened"
                                 else -> "The app crashed on the emulator"
                             } + (if (why.isNotBlank()) ": $why" else "")
-                            if (round < maxFixRounds) {
+                            if (true) { // ARIN-PROTECTED: test-before-handover — a crashing app is always fixed, never handed over
                                 crashLog = "RUNTIME PROBLEM (the app builds, but fails when it runs on an Android emulator).\n" +
                                     "ERROR: $plain\n\nTest report and crash log:\n" + report.orEmpty().take(8_000)
                                 step(BuildEvent.Kind.ERROR, "$plain. Fixing it")
@@ -758,8 +763,15 @@ class BuildAgent(
                             }
                         }
                         else -> {
-                            testNote = "The emulator test couldn't run this time, so the app wasn't checked."
-                            step(BuildEvent.Kind.STEP, testNote)
+                            // ARIN-PROTECTED: test-before-handover — not tested = not handed over.
+                            step(BuildEvent.Kind.ERROR, "The app built, but GitHub's Android emulator couldn't run the crash test this time")
+                            saveProject(repo, apk)
+                            return BuildResult(
+                                false,
+                                "The app compiled, but the crash test on GitHub's Android emulator couldn't run, so I'm not handing " +
+                                    "over the APK until it's tested. Say \"try again\" to build and test it again.",
+                                repo.url, log = report.orEmpty().take(4_000), runUrl = run.url,
+                            )
                         }
                     }
                 }
@@ -787,6 +799,15 @@ class BuildAgent(
             val errors = crashLog ?: kotlin.run {
                 step(BuildEvent.Kind.STEP, "Reading the build errors")
                 gh.failureSummary(repo, run.id)
+            }
+            if (crashLog != null && round >= maxFixRounds) {
+                // ARIN-PROTECTED: test-before-handover — still crashing: no APK link; the owner says "try again" to keep fixing.
+                return BuildResult(
+                    false,
+                    "The app builds, but it still crashes on the Android emulator after $round fix rounds, so I'm not handing over " +
+                        "the APK yet. The crash is below; say \"try again\" to keep fixing it.",
+                    repo.url, log = crashLog, runUrl = run.url,
+                )
             }
             if (crashLog == null && round >= maxFixRounds) {
                 return BuildResult(
