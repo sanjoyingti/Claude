@@ -315,25 +315,18 @@ object ArinUpdateChat {
                 var steps = 0
                 var helperAsks = 0
                 var consulted = false
-                // ARIN-PROTECTED: with the AI helper on, it guides the model from start to end: a plan first (it can read
-                // the files the owner sent and the conversation), then a solution for every error, one by one.
-                val helperFiles = messages.flatMap { filesOf[it.id].orEmpty() }.takeLast(12)
-                fun convo() = turns.takeLast(10).joinToString("\n\n") { m -> (if (m.role == Role.USER) "OWNER / TOOL RESULT:\n" else "DEVELOPER:\n") + m.text.take(3_000) }
-                suspend fun guide(kind: String): String? {
+                // ARIN-PROTECTED: helper-sees-only-the-boss — the helper never sees the owner's messages or files. When a
+                // step fails, only the error lines and the developer's (boss's) own last step go to it, and its answer comes
+                // back as a private note for the developer, who stays in charge.
+                suspend fun guide(errorText: String): String? {
                     if (!consultHelper || !ClaudeHelper.enabled(app, "arin-update")) return null
-                    val q = when (kind) {
-                        "plan" -> "An AI developer is about to answer the owner of the Arin Android app about updating Arin. Read the conversation " +
-                            "(and the owner's files, if any) and give the developer a short, concrete plan: what to check, which files, pitfalls."
-                        "error" -> "An AI developer working on the Arin app hit an ERROR. Find the real cause in the latest result and give the " +
-                            "exact solution (commands, code or settings) so it can fix it now and carry on."
-                        else -> "An AI developer working on the Arin app just got this result. Tell it exactly what to do next."
-                    } + " Write to the developer, not to the owner. Be brief.\n\nTHE CONVERSATION (latest last):\n" + convo()
-                    val a = ClaudeHelper.ask(app, q, source = "arin-update", files = if (kind == "plan") helperFiles else emptyList()) { status = it }
-                    return a.takeIf { it.isNotBlank() && !it.contains("couldn't be reached") && !it.contains("isn't connected") && !it.contains("switched off") }
-                }
-                guide("plan")?.let { g ->
-                    val i = turns.lastIndex
-                    if (i >= 0) turns[i] = ChatMessage(turns[i].role, turns[i].text + "\n\n[Guidance from the AI helper (${ClaudeHelper.helper(app).name}) — use it; you still reply to the owner yourself:]\n" + g, turns[i].attachments)
+                    val errLines = errorText.lines().filter { Regex("(?i)(FAILED|error|exception|not found|denied|couldn't|cannot|unable|exit code|warning|at )").containsMatchIn(it) }
+                        .take(40).joinToString("\n").take(4_000)
+                    val bossStep = turns.lastOrNull { it.role == Role.ASSISTANT }?.text.orEmpty().take(3_000)
+                    val q = "I (the developer model, the boss) ran this step while updating the Arin app:\n$bossStep\n\nIt failed with:\n$errLines\n\n" +
+                        "Find the real cause and give me the exact fix (commands, code or settings) so I can carry on. Be brief."
+                    val a = ClaudeHelper.ask(app, q, source = "arin-update") { status = it }
+                    return a.takeIf { it.isNotBlank() && !it.contains("NO_HELP_NEEDED") && !it.contains("couldn't be reached") && !it.contains("isn't connected") && !it.contains("switched off") }
                 }
                 var guides = 0
                 while (true) {
@@ -380,9 +373,9 @@ object ArinUpdateChat {
                         }
                         turns += ChatMessage(Role.ASSISTANT, reply.trim())
                         val isError = ask == null && Regex("(?i)(FAILED|error|exception|not found|denied|couldn't|cannot|unable|exit code: [1-9])").containsMatchIn(result.take(4_000))
-                        val g = if (ask != null) null else if (isError) guide("error") else null // only errors (and the start): saves usage
+                        val g = if (ask != null || !isError) null else guide(result) // only errors, and only the error itself
                         turns += ChatMessage(Role.USER, "[Tool result]\n$result" +
-                            (if (g != null) "\n\n[" + (if (isError) "Solution" else "Guidance") + " from the AI helper — use it; you do the work:]\n$g" else "") +
+                            (if (g != null) "\n\n[PRIVATE NOTE from your helper — a suggested fix. You are in charge and do the work; never mention this note:]\n$g" else "") +
                             "\n\nNow continue.")
                         continue
                     }
@@ -390,8 +383,8 @@ object ArinUpdateChat {
                     // Talking with the helper: the model read the whole message and drafted; now the helper helps it.
                     if (consultHelper && !consulted && ClaudeHelper.enabled(app, "arin-update")) {
                         consulted = true
-                        val help = ClaudeHelper.ask(app, "The owner wrote to an AI developer about updating the Arin app:\n\"\"\"\n${t.take(6_000)}\n\"\"\"\n\n" +
-                            "The developer (another AI model) read it and drafted this reply:\n\"\"\"\n${cleanTags(reply).take(8_000)}\n\"\"\"\n\n" +
+                        // Only the developer's (boss's) own draft goes to the helper — never the owner's message.
+                        val help = ClaudeHelper.ask(app, "I (the developer model, the boss) am updating the Arin app and drafted this reply:\n\"\"\"\n${cleanTags(reply).take(8_000)}\n\"\"\"\n\n" +
                             "Help the developer: point out mistakes, fill gaps, and give it what it needs (exact code, files, steps). " +
                             "Write to the developer, not to the owner.", source = "arin-update") { status = it }
                         status = "Finishing the reply with ${ClaudeHelper.helper(app).name}'s help"

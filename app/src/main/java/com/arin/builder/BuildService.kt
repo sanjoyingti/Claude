@@ -149,12 +149,11 @@ class BuildService : Service() {
                     com.arin.selffix.ClaudeHelper.route(this@BuildService) == null) "" else runCatching {
                     com.arin.selffix.ClaudeHelper.ask(
                         context = this@BuildService,
-                        question = "A build of an Android app failed (attempt $attempt). The building model asks you for the solution: " +
-                            "the real cause and exactly what to change.\n\nWhat it builds:\n" + request.description.take(2_000) +
-                            "\n\nError:\n" + errText.take(4_000) + "\n\nResearched on the internet:\n" + advice.take(3_000) +
+                        // Only the error and the research — never the person's request or files (helper-sees-only-the-boss).
+                        question = "A build of an Android app failed (attempt $attempt). I am the building model (the boss) and ask you for the solution: " +
+                            "the real cause and exactly what to change.\n\nError:\n" + errText.take(4_000) + "\n\nResearched on the internet:\n" + advice.take(3_000) +
                             "\n\nWrite to the model.",
                         source = request.helperTab.ifBlank { if (request.selfUpdate) "arin-update" else "build" },
-                        files = request.attachments,
                     ) { s -> session.timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.THINKING, s)) }
                 }.getOrNull().orEmpty().takeIf { !it.contains("couldn't be reached") && !it.contains("isn't connected") && !it.contains("switched off") }.orEmpty()
                 if (helperFix.isNotBlank()) session.timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.THINKING,

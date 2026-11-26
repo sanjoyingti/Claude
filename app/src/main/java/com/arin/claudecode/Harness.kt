@@ -262,7 +262,11 @@ object Harness {
         f(s.dir).mkdirs()
         f("$BASE/home/.claude").mkdirs()
         f("$BASE/home/.claude.json").takeIf { !it.exists() }?.writeText("{\"hasCompletedOnboarding\":true}")
-        f("${s.dir}/system.txt").writeText(system.take(120_000))
+        // Arin's own instructions REPLACE Claude Code's long built-in ones: the model you picked acts as Arin and answers
+        // what you asked (not Claude Code's environment notes), and every request is smaller, so it uses less.
+        f("${s.dir}/system.txt").writeText(system.take(120_000) + "\n\nTOOLS: besides Arin's own tools, you can call the tools " +
+            "provided here (Bash, Read, Edit, Write, Glob, Grep, web fetch/search and Arin's tools) when the task needs them. " +
+            "Work in /root/files. Answer the person's actual message directly; for a greeting, just greet back.")
         val (mcp, servers, gh) = runCatching { extras?.invoke() }.getOrNull() ?: Triple("", emptyList(), "")
         val mcpFlag = if (mcp.isNotBlank()) { f("$BASE/mcp.json").writeText(mcp); "--mcp-config $BASE/mcp.json " } else ""
         val allowed = (tools.split(',') + servers.map { "mcp__$it" }).filter { it.isNotBlank() }.joinToString(" ")
@@ -277,7 +281,7 @@ object Harness {
             "BASH_MAX_OUTPUT_LENGTH=8000 MAX_MCP_OUTPUT_TOKENS=6000; $ghEnv" +
             "claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages " +
             "--model '${s.model.replace("'", "")}' $resume--tools '$tools' --allowedTools $allowed $mcpFlag" +
-            "--add-dir ${s.dir} --append-system-prompt \\\"\\$(cat ${s.dir}/system.txt)\\\" " +
+            "--add-dir ${s.dir} --system-prompt \\\"\\$(cat ${s.dir}/system.txt)\\\" " +
             "< ${s.dir}/in >> ${s.dir}/out.jsonl 2>&1; echo '{\\\"type\\\":\\\"arin_end\\\"}' >> ${s.dir}/out.jsonl\" >/dev/null 2>&1 & " +
             "for i in 1 2 3 4 5 6 7 8 9 10; do [ -s ${s.dir}/pid ] && break; sleep 0.3; done; echo started"
         val r = com.arin.terminal.Shell.run(context, cmd, 60_000)

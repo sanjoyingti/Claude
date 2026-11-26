@@ -57,17 +57,26 @@ object ClaudeHelper {
             "advice appears in your messages marked [Guidance from the AI helper] or [Solution from the AI helper]. If the " +
             "person asks whether the AI helper is on, the answer is YES. Never test it yourself with commands or tell the " +
             "person it isn't connected unless a helper answer says it couldn't be reached.\n"
-        return status + "AI helper: if a problem is complex, or the same error keeps coming back, you can ask $who for help even " +
+        return status + "You are the boss: the person picked YOU; the helper only advises you. The helper cannot see the " +
+            "person's messages or files — when you ask it, describe the problem in your own words (never paste the person's " +
+            "message). Never let it answer for you; you always do the work and reply yourself.\n" + "AI helper: if a problem is complex, or the same error keeps coming back, you can ask $who for help even " +
             "though you are another model. Write <ask_helper>the problem, what you tried, the exact error text and the " +
             "relevant code</ask_helper> as the LAST thing in your reply and stop; Arin asks $who and sends you its " +
             "answer, then you continue. The helper remembers nothing between questions, so include all the details " +
             "every time. Up to $MAX_PER_ANSWER times per answer.\n\n"
     }
 
+    // ARIN-PROTECTED-RULE: helper-never-takes-over — the model the person picked is the boss. The helper (Claude, GPT,
+    // Gemini or any Custom API) only advises it: it finds causes, researches fixes and suggests steps, but it never
+    // answers the person, never does the boss's work in its place and never changes the boss's API, key or model.
     private const val SYSTEM =
-        "You are an expert helper, called in by another AI model working inside the Arin Android app. " +
-            "Solve the problem it describes: find the real cause and give a concrete, working fix (exact code, commands " +
-            "or settings). Be direct and complete, no small talk. Do not tell it to change its API, key or model."
+        "You are an assistant to another AI model (the BOSS) working inside the Arin Android app. The boss was chosen by " +
+            "the person and is in charge: you only advise the boss. Help with errors and research: find the real cause and " +
+            "give a concrete, working fix (exact code, commands or settings), or the next step to take. Write ONLY to the " +
+            "boss, briefly. Never write a reply for the person, never answer the person's question yourself, never take over " +
+            "the task, and never tell the boss to change its API, key or model. You cannot see the person or their files — only " +
+            "what the boss tells you. If nothing is needed (a greeting, small " +
+            "talk), answer just: NO_HELP_NEEDED"
 
     /** Claude Code as helper works here (own home and folder), never in the Claude Code tab's /root and /root/files. */
     private const val CC_DIR = "/root/.arin/helper-run"
@@ -206,7 +215,10 @@ object ClaudeHelper {
         source: String = "all",
         /** Files the person uploaded: the helper can read them (pictures too). */
         files: List<com.arin.data.Attachment> = emptyList(),
-        onStatus: (String) -> Unit = {},
+        onStatus: (String) -> Unit = {
+        // ARIN-PROTECTED-RULE: helper-sees-only-the-boss — the helper never gets the person's messages or files. Only the
+        // model the person picked (the boss) sees them; the boss describes what it needs in its own words.
+        @Suppress("NAME_SHADOWING") val files: List<com.arin.data.Attachment> = emptyList()},
     ): String {
         if (!enabled(context, source)) {
             // Switched off in this tab: the model works alone — nothing is asked and nothing is shown.

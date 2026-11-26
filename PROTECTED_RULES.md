@@ -81,3 +81,15 @@ missing from any screen. Only you can switch it on or off, by tapping. Changing 
   helper runs in a throwaway folder and home that are deleted afterwards, so the Claude Code tab's own conversation is
   never touched. **The tab's own model remembers everything** discussed in that tab, including the helper's answers.
 - The tab's model and your Custom API are never changed by the helper.
+
+## helper-never-takes-over
+The model the person picks for a tab is the boss. The AI helper (Claude, GPT, Gemini or any Custom API) only advises it:
+it finds causes, researches fixes and suggests next steps, as private notes to the boss. It never answers the person,
+never does the boss's work in its place, and never changes the boss's API, key or model. Only the owner can change this.
+(selffix/ClaudeHelper.kt, chat/ChatViewModel.kt, selffix/ArinUpdateChat.kt)
+
+## helper-sees-only-the-boss
+Only the model the person picked sees the person's messages and files. The AI helper never receives them: the boss
+model describes what it needs in its own words, and Arin only passes the boss's own steps, drafts, code and error
+output to the helper. Only the owner can change this. (selffix/ClaudeHelper.kt ask(), chat/ChatViewModel.kt,
+selffix/ArinUpdateChat.kt, builder/BuildAgent.kt, builder/BuildService.kt)

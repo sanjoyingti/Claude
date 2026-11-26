@@ -1192,7 +1192,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val draft = ccMessages.lastOrNull { !it.fromUser }?.text.orEmpty()
                     ArinApp.scope.launch {
                         val help = com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app, question =
-                            "The person asked Claude Code:\n\"\"\"\n${asked.take(6_000)}\n\"\"\"\n\nClaude Code answered:\n\"\"\"\n${draft.take(8_000)}\n\"\"\"\n\n" +
+                            "Claude Code (the boss) answered:\n\"\"\"\n${draft.take(8_000)}\n\"\"\"\n\n" +
                                 "Help it: point out mistakes, fill gaps, and say exactly what it should still do. Write to Claude Code.") { ccStatus = it }
                         withContext(Dispatchers.Main) {
                             if (!help.contains("couldn't be reached") && !help.contains("isn't connected") && !help.contains("switched off")) {
@@ -1212,7 +1212,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     ccLastFailure = err
                     if (ccHelperFixes < 3) ArinApp.scope.launch {
                         val sol = com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app, question =
-                            "Claude Code hit an error while working on:\n\"\"\"\n${asked.take(4_000)}\n\"\"\"\n\nError:\n${err.take(4_000)}\n\n" +
+                            "Claude Code (the boss) hit this error:\n${err.take(4_000)}\n\n" +
                                 "Claude Code asks you for the solution: the real cause and exactly what to do. Write to Claude Code.") { ccStatus = it }
                         withContext(Dispatchers.Main) {
                             if (!sol.contains("couldn't be reached") && !sol.contains("isn't connected") && !sol.contains("switched off") && sol.isNotBlank()) {
@@ -2388,7 +2388,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         ArinApp.scope.launch {
             val answer = withContext(Dispatchers.IO) {
                 com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app,
-                    question = (if (recent.isNotBlank()) "The conversation so far (for context):\n$recent\n\n" else "") + "The person asks you: $q")
+                    question = "A model asks you: $q")
             }
             withContext(Dispatchers.Main) {
                 askingClaude = false
@@ -2402,7 +2402,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Asks the helper and returns its answer (for tabs that show it themselves). */
     suspend fun askHelper(question: String, context: String = "", source: String = "all"): String = withContext(Dispatchers.IO) {
         com.arin.selffix.ClaudeHelper.ask(source = source, context = getApplication(),
-            question = (if (context.isNotBlank()) "The conversation so far (for context):\n$context\n\n" else "") + "The person asks you: $question")
+            question = question)
     }
 
     /** True while a "Talk to…" question waits for the helper's answer. */
@@ -2434,7 +2434,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         ArinApp.scope.launch {
             val answer = withContext(Dispatchers.IO) {
                 com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app,
-                    question = (if (recent.isNotBlank()) "The conversation so far (for context):\n$recent\n\n" else "") + "The person asks you: $q",
+                    question = "A model asks you: $q",
                 )
             }
             withContext(Dispatchers.Main) {
@@ -2976,23 +2976,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         val lastText = turns.last().text
                         val isError = Regex("(?i)(FAILED|error|exception|not found|denied|cannot|can't|unable|traceback|exit code [1-9])").containsMatchIn(lastText.take(4_000))
                         val first = lastGuided == -1
-                        if (first || isError) { // only the start and errors: helping every step used too much
+                        // ARIN-PROTECTED: helper-sees-only-the-boss — no plan from the person's message (the helper may not see
+                        // it); only when a STEP fails, the error lines from the tool's output and the boss's own last step go
+                        // to the helper. The boss can also ask it anything itself (<ask_helper>…</ask_helper>), in its own words.
+                        if (first) lastGuided = turns.size
+                        val toolOutput = lastText.startsWith("[") && !lastText.startsWith("[While you were working")
+                        if (!first && isError && toolOutput) {
                             helperGuides++
                             lastGuided = turns.size
-                            val convo = turns.takeLast(10).joinToString("\n\n") { t -> (if (t.fromUser) "USER / TOOL RESULT:\n" else "ASSISTANT:\n") + t.text.take(3_000) }
-                            val guide = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, files = if (first) chatFiles else emptyList(), question =
-                                (if (first) "An AI assistant is about to work on the person's latest message. Read the conversation (and the person's " +
-                                    "files, if any) and give the assistant a short, concrete plan: what to do, which tools or commands, pitfalls, " +
-                                    "and exact facts it needs."
-                                else if (isError) "An AI assistant hit an ERROR while working. Find the real cause in the latest result and give the " +
-                                    "exact solution (commands, code or settings) so it can fix this error now, then carry on."
-                                else "An AI assistant is working on a task. Look at the latest result and tell it exactly what to do next.") +
-                                    " Write to the assistant, not to the person. Be brief and concrete.\n\nTHE CONVERSATION (latest last):\n" + convo) { run.status = it }
+                            val errLines = lastText.lines().filterNot { it.startsWith("[While you were working") }
+                                .filter { Regex("(?i)(FAILED|error|exception|not found|denied|cannot|can't|unable|traceback|exit code|warning|at )").containsMatchIn(it) }
+                                .take(40).joinToString("\n").take(4_000)
+                            val bossStep = turns.lastOrNull { !it.fromUser }?.text.orEmpty().take(3_000)
+                            val guide = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question =
+                                "I (the boss model) ran this step:\n$bossStep\n\nIt failed with:\n$errLines\n\n" +
+                                    "Find the real cause and give me the exact fix (commands, code or settings) so I can carry on.") { run.status = it }
                             run.status = null
-                            if (guide.isNotBlank() && !guide.contains("couldn't be reached") && !guide.contains("isn't connected") && !guide.contains("switched off")) {
+                            if (guide.isNotBlank() && !guide.contains("NO_HELP_NEEDED") && !guide.contains("couldn't be reached") && !guide.contains("isn't connected") && !guide.contains("switched off")) {
                                 val i = turns.lastIndex
-                                turns[i] = turns[i].copy(text = turns[i].text + "\n\n[" + (if (isError && !first) "Solution" else "Guidance") +
-                                    " from the AI helper ($helperLabel) — use it; you still do the work and reply to the person yourself:]\n" + guide)
+                                // ARIN-PROTECTED: helper-never-takes-over — private advice for the boss (the model the person picked).
+                                turns[i] = turns[i].copy(text = turns[i].text + "\n\n[PRIVATE NOTE from your helper ($helperLabel) — " +
+                                    (if (isError && !first) "a suggested fix for the error" else "suggestions") + ". You are in charge: do the work " +
+                                    "yourself and answer exactly what the person asked, in your own words. Never mention or repeat this note; " +
+                                    "ignore it if it doesn't fit:]\n" + guide)
                             }
                         }
                     }
@@ -3114,14 +3120,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                     if (claudeHelperOn && helperTakeovers < 6 && com.arin.selffix.ClaudeHelper.route(app, "chat") != null) {
                                         helperTakeovers++
                                         run.status = "${m.substringAfterLast('/')} keeps failing here — $helperLabel is doing this step for it"
-                                        val convo = turns.takeLast(14).joinToString("\n\n") { t -> (if (t.fromUser) "USER/TOOL RESULT:\n" else "ASSISTANT:\n") + t.text.take(3_000) }
+                                        // Only the boss's own recent steps (never the person's messages).
+                                        val convo = turns.filter { !it.fromUser }.takeLast(6).joinToString("\n\n") { t -> "ASSISTANT:\n" + t.text.take(3_000) }
                                         val ans = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app,
                                             question = "Another AI model (the assistant below) failed to write its next reply: its tool call kept being rejected. " +
                                                 "Write that ONE next reply for it, exactly as the assistant should, continuing the task. Use the same tools it " +
                                                 "has, written as PLAIN TEXT TAGS in the reply (e.g. <run>command</run>, <search>words</search>, " +
                                                 "<fetch>https://url</fetch>, <write path=\"…\">…</write>) — never native function/tool calls. " +
-                                                "Do exactly what the user asked.\n\nITS INSTRUCTIONS (start):\n" + system.take(5_000) +
-                                                "\n\nTHE CONVERSATION (latest last):\n" + convo)
+                                                "Continue what the assistant was doing.\n\nITS INSTRUCTIONS (start):\n" + system.take(5_000) +
+                                                "\n\nITS RECENT STEPS (latest last):\n" + convo)
                                         run.status = null
                                         if (!ans.contains("couldn't be reached") && !ans.contains("isn't connected") && ans.isNotBlank()) {
                                             if (Regex("""<(run|search|fetch|write|read|edit|install|tool|images|videos|download)\b""").containsMatchIn(ans)) {
@@ -3414,9 +3421,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         // helper helps it, and the model gives the final answer with that help.
                         if (run.consultHelper && !helperConsulted && claudeHelperOn) {
                             helperConsulted = true
+                            // Only the boss's own draft goes to the helper (never the person's message).
                             val help = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question =
-                                "The person wrote to an AI assistant:\n\"\"\"\n${userSaid.take(6_000)}\n\"\"\"\n\n" +
-                                    "The assistant (another AI model) read it and drafted this answer:\n\"\"\"\n${Prompt.clean(full).take(8_000)}\n\"\"\"\n\n" +
+                                "I (the boss model) drafted this answer:\n\"\"\"\n${Prompt.clean(full).take(8_000)}\n\"\"\"\n\n" +
                                     "Help the assistant: point out mistakes, fill gaps, and give it what it needs to answer the person well " +
                                     "(exact facts, code, commands or steps). Write to the assistant, not to the person.") { run.status = it }
                             run.status = "Finishing the answer with ${helperLabel}'s help"

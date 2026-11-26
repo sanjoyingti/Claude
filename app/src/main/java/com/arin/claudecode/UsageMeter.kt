@@ -147,13 +147,25 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
     // [claudeLogin]: for the Claude Code tab, which has its own sign-in choice.
     val claude = claudeLogin ?: (vm.provider == Provider.ClaudeCode)
     val custom = claudeLogin == null && vm.provider == Provider.Custom
-    if (!claude && !custom) return
+    // The AI helper on Claude (your Claude Code login) uses your Claude limit too: its live meter shows as well.
+    val ctx0 = androidx.compose.ui.platform.LocalContext.current
+    val tab = com.arin.selffix.LocalHelperTab.current
+    vm.helperLabel // re-read when the helper changes
+    val helperAcc: String? = run {
+        if (!vm.helperOn(tab)) return@run null
+        val h = com.arin.selffix.ClaudeHelper.helper(ctx0)
+        if (h.kind != "claude") return@run null
+        val viaKey = h.model.startsWith("claude-") && com.arin.data.Settings(ctx0).key(Provider.Claude).isNotBlank()
+        if (viaKey) null else ClaudeAccounts.accountOf(h.model) ?: "main"
+    }
+    if (!claude && !custom && helperAcc == null) return
     var details by remember { mutableStateOf(false) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
     // Which Claude account this tab uses: the one in the chosen model ("sonnet@id"), or the main sign-in.
     val acc = if (claudeLogin != null) "main" else ClaudeAccounts.accountOf(vm.model) ?: "main"
     val accName = if (acc == "main") "" else ClaudeAccounts.name(ctx, acc)
     if (claude) LaunchedEffect(acc) { while (true) { UsageMeter.refreshClaude(acc); delay(5 * 60_000L) } }
+    if (helperAcc != null) LaunchedEffect(helperAcc) { while (true) { UsageMeter.refreshClaude(helperAcc); delay(5 * 60_000L) } }
     if (custom) LaunchedEffect(vm.customBaseUrl) { while (true) { UsageMeter.refreshCustom(vm.customBaseUrl, vm.customKeyForMeter()); delay(3 * 60_000L) } }
     val small = MaterialTheme.typography.labelSmall
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
@@ -172,9 +184,26 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
                 Spacer(Modifier.width(6.dp))
                 LinearProgressIndicator(progress = { (w?.used ?: 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.width(60.dp).height(4.dp))
             }
-        } else {
+        } else if (custom) {
             Text("⚡ " + (UsageMeter.customLine ?: (vm.currentSavedApi()?.name ?: "This API") + ": no balance reported by this provider"),
                 style = small, color = dim, maxLines = 1)
+        }
+    }
+    // Helper line: the same real numbers for the Claude account the helper uses (unless it's the one already shown).
+    if (helperAcc != null && !(claude && helperAcc == acc)) {
+        val hs = UsageMeter.sessionBy[helperAcc]
+        val hw = UsageMeter.weeklyBy[helperAcc]
+        Row(Modifier.fillMaxWidth().clickable { details = true }.padding(horizontal = 4.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("🟣 Helper Claude" + (if (helperAcc != "main") " · " + ClaudeAccounts.name(ctx, helperAcc) else "") +
+                (if (hs == null && hw == null) ": usage shows after it helps" else " · Session ${pct(hs)}"), style = small, color = dim)
+            if (hs != null || hw != null) {
+                Spacer(Modifier.width(6.dp))
+                LinearProgressIndicator(progress = { (hs?.used ?: 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.width(50.dp).height(4.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Week ${pct(hw)}", style = small, color = dim)
+                Spacer(Modifier.width(6.dp))
+                LinearProgressIndicator(progress = { (hw?.used ?: 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.width(50.dp).height(4.dp))
+            }
         }
     }
     if (details) AlertDialog(
@@ -189,8 +218,13 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
                     UsageMeter.lastReplyTokens?.let { Text("Last reply: ${"%,d".format(it)} tokens (cached history not counted)", style = MaterialTheme.typography.bodySmall) }
                     Text("The same numbers as the Claude app: your plan's limit is shared by the Claude app, Claude Code and Arin.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
+                } else if (custom) {
                     Text(UsageMeter.customLine ?: "This provider doesn't report a balance to apps. Check its own website for your usage.")
+                }
+                if (helperAcc != null && !(claude && helperAcc == acc)) {
+                    Text("AI helper (Claude)", style = MaterialTheme.typography.titleSmall)
+                    Block("Current session", UsageMeter.sessionBy[helperAcc])
+                    Block("Weekly limits · All models", UsageMeter.weeklyBy[helperAcc])
                 }
             }
         },

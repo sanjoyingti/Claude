@@ -762,7 +762,8 @@ class BuildAgent(
         // ARIN-PROTECTED: ai-helper during builds — with the helper on, it gives the model a plan before it writes (it can read
         // the person's files), checks the written code, and gives the solution for every error. The model does the work.
         var helperPlan = ""
-        if (!helperPlanned && helperOn() && context != null && com.arin.selffix.ClaudeHelper.route(context) != null) {
+        // ARIN-PROTECTED: helper-sees-only-the-boss — no plan from the person's request (the helper may not see it).
+        if (false && !helperPlanned && helperOn() && context != null && com.arin.selffix.ClaudeHelper.route(context) != null) {
             helperPlanned = true
             step(BuildEvent.Kind.THINKING, "Asking ${com.arin.selffix.ClaudeHelper.helper(context).name} for a plan before writing")
             val plan = com.arin.selffix.ClaudeHelper.ask(
@@ -774,7 +775,6 @@ class BuildAgent(
                     (if (req.requirements.isNotBlank()) "\n\nEverything asked so far:\n" + req.requirements.take(4_000) else "") +
                     "\n\nWrite to the model, not to the person. Be brief.",
                 source = helperTab,
-                files = req.attachments,
             ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
             if (plan.isNotBlank() && !plan.contains("couldn't be reached") && !plan.contains("isn't connected") && !plan.contains("switched off")) {
                 helperPlan = "\n\n[Plan from the AI helper — use it where right; you write the code:]\n" + plan.take(6_000)
@@ -1045,11 +1045,9 @@ class BuildAgent(
             val answer = com.arin.selffix.ClaudeHelper.ask(
                 context = context,
                 question = "An Android (Kotlin/Gradle) build failed" + (if (seen >= 2) " with the same error after $seen fix attempts" else "") +
-                    ". The building model asks you for the solution.\n\nWhat it wants to build:\n" + req.description.take(2_000) +
-                    "\n\nErrors:\n" + errors.take(6_000) + "\n\nWhat I found on the internet:\n" + web.take(4_000) +
+"; I am the building model (the boss) and ask you for the solution.\n\nErrors:\n" + errors.take(6_000) + "\n\nWhat I found on the internet:\n" + web.take(4_000) +
                     "\n\nWhat is the real cause, and exactly what should be changed (files and code) to fix it? Write to the model.",
                 source = helperTab,
-                files = req.attachments,
             ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
             if (answer.isNotBlank() && !answer.contains("couldn't be reached") && !answer.contains("isn't connected") && !answer.contains("switched off"))
                 web += "\n\nThe AI helper's solution (use it; you make the fix):\n" + answer.take(8_000)
@@ -1105,8 +1103,9 @@ class BuildAgent(
         val code = changed.joinToString("\n\n") { p -> "=== $p ===\n" + files[p].orEmpty().take(6_000) }.take(40_000)
         step(BuildEvent.Kind.THINKING, "Asking the AI helper to review the code")
         val help = com.arin.selffix.ClaudeHelper.ask(ctx,
-            "An AI model wrote this code for the request below. Review it: list real bugs, missing parts of the request and " +
-                "build errors it will hit, with exact fixes. If it's all right, say so.\n\nREQUEST:\n${requirements.take(8_000)}\n\nCODE:\n$code",
+            // Only the boss's own code — never the person's request (helper-sees-only-the-boss).
+            "I (the building model, the boss) wrote this Android code. Review it: list real bugs and build errors it will hit, " +
+                "with exact fixes. If it's all right, say so.\n\nCODE:\n$code",
             source = helperTab)
         if (help.contains("couldn't be reached") || help.contains("isn't connected") || help.contains("switched off")) return
         step(BuildEvent.Kind.THINKING, "Fixing what the AI helper found")
