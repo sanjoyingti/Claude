@@ -187,6 +187,15 @@ told they are there.
 ## Main model uses as little credit as possible (`llm/Llm.kt`, `chat/ChatViewModel.kt`)
 
 - With worker mode on, your main model goes straight to its API (never through the Claude Code harness), thinks as
-  little as the service allows (DeepSeek's paid thinking off), sees only the first and latest messages, and writes short
+  little as the service allows (DeepSeek's paid thinking off), remembers the whole chat through a running memory note (see below), and writes short
   replies (directions and checks). The worker and helper do the heavy work.
+- Only the owner can change this rule.
+
+## The main model remembers everything, cheaply (`selffix/ChatMemory.kt`)
+
+- Each message, your main model gets: the chat's first message, a running **memory** of everything older (every request,
+  requirement, decision, name, number, file, link and unfinished task), older messages that match your new message
+  **word for word**, and the latest 8 messages in full.
+- The memory is updated in batches from only the new messages (written by the offline model when you have one, free;
+  otherwise briefly by your main model). The worker and helper never see the chat. Nothing is deleted from the chat.
 - Only the owner can change this rule.

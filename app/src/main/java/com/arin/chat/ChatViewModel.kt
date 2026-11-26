@@ -3191,7 +3191,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                     else -> streamTurns
                                 }
                                 // After a broken tool call: only the recent part of the conversation (what usually triggers it).
-                                val sent = if (formatHint && sent0.size > 14) sent0.takeLast(14) else sent0
+                                val sent1 = if (formatHint && sent0.size > 14) sent0.takeLast(14) else sent0
+                                // ARIN-PROTECTED: boss-memory — worker mode: the main model reads the first message, a running memory
+                                // of the whole chat, matching older messages word for word, and the latest turns (remembers everything,
+                                // reads little). The memory is written by the offline model when there is one, else briefly by the main model.
+                                val sent = if (!bossLean) sent1 else com.arin.selffix.ChatMemory.compact(app, run.chat, sent1, userSaid) { q ->
+                                    com.arin.selffix.CreditSaver.offline(app, q, 900)?.takeIf { it.isNotBlank() } ?: kotlin.run {
+                                        val sb = StringBuilder()
+                                        Llm.stream(p, key, m, "You write short, complete memory notes.", listOf(com.arin.llm.Turn(true, q)),
+                                            maxTokens = 1_200, endpoint = endpoint, boss = true).collect { d -> if (d is com.arin.llm.Delta.Text) sb.append(d.text) }
+                                        sb.toString()
+                                    }
+                                }
                                 // Speed check: how big the request is and how long the service takes to start answering.
                                 val t0 = System.currentTimeMillis()
                                 var firstAt = 0L
@@ -3207,7 +3218,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
-                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), if (bossLean) bossTrim(sent) else sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
+                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
                                         maxTokens = if (bossLean) 2_000 else null, boss = bossLean).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
