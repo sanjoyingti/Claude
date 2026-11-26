@@ -40,6 +40,94 @@ object CreditSaver {
     fun dailyBudgetK(c: Context): Int = prefs(c).getInt("daily_k", 0)
     fun setDailyBudgetK(c: Context, k: Int) = prefs(c).edit().putInt("daily_k", k).apply()
 
+    // ---- Worker mode (experiment): the boss plans and inspects, a worker writes the code with Claude's help ----
+    // ARIN-PROTECTED: worker-mode — the person's model stays the boss: it reads the request, gives the worker its
+    // directions, inspects the worker's work and approves it before anything is built. The worker (and Claude, helping
+    // the worker) only ever see the boss's directions and the code, never the person's chat. Off = the previous method.
+
+    fun workerMode(c: Context?): Boolean = c != null && prefs(c).getBoolean("worker_mode", false)
+    fun setWorkerMode(c: Context, on: Boolean) = prefs(c).edit().putBoolean("worker_mode", on).apply()
+
+    /** One worker: a saved API (by its id) with a model id, or the phone's offline model (apiId = "offline"). */
+    data class Worker(val apiId: String, val model: String)
+
+    fun workers(c: Context): List<Worker> {
+        val raw = prefs(c).getString("workers", null)
+        if (raw != null) return raw.split('\n').mapNotNull { l -> l.split('|').takeIf { it.size == 2 && it[0].isNotBlank() }?.let { Worker(it[0], it[1]) } }
+        // First time: GPT-6 Luna, then DeepSeek V4.1 Flash, on an Experiential Labs API if one is saved.
+        val xl = runCatching { com.arin.data.Settings(c).savedApis.firstOrNull { it.baseUrl.contains("experientiallabs") } }.getOrNull()
+        return if (xl == null) emptyList() else listOf(Worker(xl.slotId, "gpt-6-luna"), Worker(xl.slotId, "deepseek-v4.1-flash-1017"))
+    }
+    fun setWorkers(c: Context, list: List<Worker>) =
+        prefs(c).edit().putString("workers", list.joinToString("\n") { it.apiId + "|" + it.model.replace("|", "").trim() }).apply()
+
+    private val refusal = Regex("(?i)(I can['’]t (help|assist|do that|provide|comply)|I cannot (help|assist|provide|comply|create|write)|I['’]m (sorry|unable)[^.]{0,60}(can['’]t|cannot|unable|not able)|I won['’]t (help|be able)|I am not able to (help|assist)|against (my|the) (guidelines|policy|policies)|I must decline|can['’]t help with that)")
+
+    /** A worker's answer that is a refusal instead of work (short, no code, and says it won't help). */
+    fun isRefusal(reply: String): Boolean {
+        val r = reply.trim()
+        if (r.isEmpty()) return true
+        if (r.contains("=== FILE:") || r.contains("=== EDIT:") || r.contains("```") || r.contains("<ask_helper>")) return false
+        return r.length < 1_500 && refusal.containsMatchIn(r)
+    }
+
+    /** Kinds of task each worker refused, so the next one goes straight to a worker that accepts it. */
+    fun noteRefusal(c: Context, w: Worker, kind: String) =
+        prefs(c).edit().putBoolean("refused|${w.apiId}|${w.model}|$kind", true).apply()
+    fun refused(c: Context, w: Worker, kind: String): Boolean = prefs(c).getBoolean("refused|${w.apiId}|${w.model}|$kind", false)
+
+    // ---- does the server give a cache discount? (read from each reply's usage) ----
+
+    private val cacheHit = ConcurrentHashMap<String, Long>()
+    private val cacheTotal = ConcurrentHashMap<String, Long>()
+    private fun host(url: String) = runCatching { java.net.URI(url).host.orEmpty() }.getOrDefault(url)
+
+    /** Called with each reply's "usage": counts cached tokens and the free pool. */
+    fun recordUsage(url: String, prompt: Long, cached: Long, completion: Long) {
+        val h = host(url)
+        cacheTotal.merge(h, prompt, Long::plus)
+        cacheHit.merge(h, cached, Long::plus)
+        runCatching {
+            val c = com.arin.ArinApp.instance
+            c.getSharedPreferences("credit_saver", Context.MODE_PRIVATE).edit().putBoolean("cache_ok|$h", cacheHit[h] ?: 0 > 0).apply()
+            if (h.contains("experientiallabs")) addFreePool(c, prompt + completion)
+        }
+    }
+
+    /** True when this server has given cached tokens: then old messages are kept unchanged so the cache keeps working. */
+    fun cacheWorks(c: Context, url: String): Boolean = prefs(c).getBoolean("cache_ok|${host(url)}", false)
+    fun cacheRate(url: String): Int { val h = host(url); val t = cacheTotal[h] ?: 0; return if (t == 0L) -1 else ((cacheHit[h] ?: 0) * 100 / t).toInt() }
+
+    // ---- Experiential Labs free pool: 1,000,000 tokens a day, resets 00:00 UTC ----
+
+    const val FREE_POOL = 1_000_000L
+    private fun utcDay() = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString()
+    fun addFreePool(c: Context, tokens: Long): Long {
+        val p = prefs(c); val d = utcDay()
+        val used = (if (p.getString("pool_day", "") == d) p.getLong("pool_used", 0) else 0L) + tokens
+        p.edit().putString("pool_day", d).putLong("pool_used", used).apply()
+        return used
+    }
+    fun freePoolUsed(c: Context): Long = prefs(c).let { if (it.getString("pool_day", "") == utcDay()) it.getLong("pool_used", 0) else 0 }
+
+    // ---- stay under the free pool's 10 requests a minute ----
+
+    private val sent = ConcurrentHashMap<String, ArrayDeque<Long>>()
+    suspend fun throttle(url: String, perMinute: Int = 9) {
+        val h = host(url)
+        if (!h.contains("experientiallabs")) return
+        while (true) {
+            val wait = synchronized(sent) {
+                val q = sent.getOrPut(h) { ArrayDeque() }
+                val now = System.currentTimeMillis()
+                while (q.isNotEmpty() && now - q.first() > 60_000) q.removeFirst()
+                if (q.size < perMinute) { q.addLast(now); 0L } else 60_000 - (now - q.first()) + 200
+            }
+            if (wait <= 0) return
+            kotlinx.coroutines.delay(wait)
+        }
+    }
+
     // ---- tokens used (rough: characters / 4), per day, for the meter and the daily warning ----
 
     fun addUsage(c: Context, chars: Int): Long {
@@ -200,8 +288,88 @@ fun CreditSaverSection(vm: com.arin.chat.ChatViewModel) {
             }
             androidx.compose.material3.OutlinedTextField(budget, { v -> budget = v.filter(Char::isDigit).take(6); CreditSaver.setDailyBudgetK(c, budget.toIntOrNull() ?: 0) },
                 label = { androidx.compose.material3.Text("Daily warning, thousand tokens (blank = off)") }, singleLine = true)
+            WorkerModeUi(vm)
             androidx.compose.material3.Text("Used today by your model: about ${"%,d".format(CreditSaver.usedToday(c))} tokens. Unlimited tries " +
                 "pause only when the same error fails 5 times in a row.", style = small, color = dim)
         }
+    }
+}
+
+
+/** Settings: worker mode on/off and the list of worker models, in the order they are tried. */
+@androidx.compose.runtime.Composable
+private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
+    val c = androidx.compose.ui.platform.LocalContext.current
+    var on by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(CreditSaver.workerMode(c)) }
+    var list by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(CreditSaver.workers(c)) }
+    var adding by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    val small = androidx.compose.material3.MaterialTheme.typography.bodySmall
+    val dim = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+    fun save(l: List<CreditSaver.Worker>) { list = l; CreditSaver.setWorkers(c, l) }
+    fun name(w: CreditSaver.Worker) = if (w.apiId == "offline") "Offline model" else
+        (vm.savedApis.firstOrNull { it.slotId == w.apiId }?.name ?: "(removed API)") + " · " + w.model
+    androidx.compose.material3.HorizontalDivider()
+    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.weight(1f)) {
+            androidx.compose.material3.Text("Worker mode (experiment)")
+            androidx.compose.material3.Text("Your model stays the boss: it gives directions, inspects and approves. A worker writes " +
+                "all the code and fixes, with Claude's help. Off = the previous method.", style = small, color = dim)
+        }
+        androidx.compose.material3.Switch(on, { on = it; CreditSaver.setWorkerMode(c, it) })
+    }
+    if (!on) return
+    // 1. Main model (the boss): the model picked in each tab.
+    androidx.compose.material3.Text("1 · Main model (boss) — inspects and directs. Each tab keeps its own; this one is for the tab you came from:", style = small)
+    com.arin.selffix.ModelSwitcher(vm)
+    // 2. Middle model (the worker).
+    androidx.compose.material3.Text("2 · Middle model (worker) — writes the code and fixes. Tried in this order (if one refuses, the next one gets the task):", style = small)
+    if (list.isEmpty()) androidx.compose.material3.Text("None yet — add your Experiential Labs API in Your APIs, then add GPT-6 Luna here.", style = small, color = dim)
+    list.forEachIndexed { i, w ->
+        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            androidx.compose.material3.Text("${i + 1}. " + name(w), style = small, modifier = androidx.compose.ui.Modifier.weight(1f))
+            if (i > 0) androidx.compose.material3.TextButton({ save(list.toMutableList().apply { add(i - 1, removeAt(i)) }) }) { androidx.compose.material3.Text("↑") }
+            androidx.compose.material3.TextButton({ save(list.toMutableList().apply { removeAt(i) }) }) { androidx.compose.material3.Text("✕") }
+        }
+    }
+    androidx.compose.material3.TextButton({ adding = true }) { androidx.compose.material3.Text("+ Add worker") }
+    // 3. Helper (helps the worker; also the boss when it asks).
+    androidx.compose.material3.Text("3 · Helper — helps the worker with hard parts and errors:", style = small)
+    var hp by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(ClaudeHelper.helper(c)) }
+    val choices = listOf(ClaudeHelper.Helper("claude") to "Claude (login or key)", ClaudeHelper.Helper("chatgpt") to "ChatGPT", ClaudeHelper.Helper("gemini") to "Gemini") +
+        vm.savedApis.map { ClaudeHelper.Helper("custom", "", it.slotId, it.name) to it.name }
+    choices.forEach { (h, n) ->
+        val sel = hp.kind == h.kind && (h.kind != "custom" || hp.apiId == h.apiId)
+        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            androidx.compose.material3.RadioButton(sel, { hp = h.copy(model = ""); vm.setHelper(hp) })
+            androidx.compose.material3.Text(n, style = small)
+        }
+    }
+    androidx.compose.material3.OutlinedTextField(hp.model, { v -> hp = hp.copy(model = v.trim()); vm.setHelper(hp) },
+        label = { androidx.compose.material3.Text("Helper model (blank = its default)") }, singleLine = true)
+    val used = CreditSaver.freePoolUsed(c)
+    if (used > 0 || vm.savedApis.any { it.baseUrl.contains("experientiallabs") })
+        androidx.compose.material3.Text("Experiential Labs free pool today: ${"%,d".format(used)} / 1,000,000 tokens (resets 5:30 AM India time). " +
+            "Keep \"Keep going on credits\" off there to never pay.", style = small, color = dim)
+    if (adding) {
+        var api by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(vm.savedApis.firstOrNull()?.slotId ?: "offline") }
+        var model by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("gpt-6-luna") }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { adding = false },
+            title = { androidx.compose.material3.Text("Add a worker") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    (vm.savedApis.map { it.slotId to it.name } + ("offline" to "Offline model (on the phone)")).forEach { (id, n) ->
+                        androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            androidx.compose.material3.RadioButton(api == id, { api = id })
+                            androidx.compose.material3.Text(n, style = small)
+                        }
+                    }
+                    if (api != "offline") androidx.compose.material3.OutlinedTextField(model, { model = it.trim() },
+                        label = { androidx.compose.material3.Text("Model id (e.g. gpt-6-luna)") }, singleLine = true)
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton({ save(list + CreditSaver.Worker(api, if (api == "offline") "offline" else model)); adding = false }) { androidx.compose.material3.Text("Add") } },
+            dismissButton = { androidx.compose.material3.TextButton({ adding = false }) { androidx.compose.material3.Text("Cancel") } },
+        )
     }
 }

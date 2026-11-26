@@ -51,9 +51,14 @@ object Llm {
             // ARIN-PROTECTED: claude-harness — one running Claude Code session per conversation (cached, low usage).
             Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns)
             Provider.Custom -> (endpoint ?: CustomApi.current()).let { ep ->
-                val direct = when (ep.format) {
-                    ApiFormat.OpenAI -> lessThinking { low -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }
+                val direct0 = when (ep.format) {
+                    ApiFormat.OpenAI -> lessThinking { low -> withUsage(ep.chatUrl()) { u -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low, usage = u) } }
                     ApiFormat.Anthropic -> anthropicStream(ep.chatUrl(), customAnthropicHeaders(key), key, model, system, turns, maxTokens, cache)
+                }
+                // ARIN-PROTECTED: credit-saver — stay under a free pool's requests-per-minute limit (waits, never fails).
+                val direct = kotlinx.coroutines.flow.flow {
+                    com.arin.selffix.CreditSaver.throttle(ep.baseUrl)
+                    direct0.collect { emit(it) }
                 }
                 // ARIN-PROTECTED: claude-harness for Custom APIs — the same API, key and model (never changed), run
                 // through the Claude Code harness for its tools and caching. If the harness can't start, the API is
@@ -72,6 +77,27 @@ object Llm {
                         direct.collect { emit(it) }
                     }
                 }
+            }
+        }
+    }
+
+    /** Hosts that refused "stream_options" (usage reports): asked without it from then on. */
+    private val noUsage = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Asks the service to report usage (cached tokens) at the end; if it refuses that before answering, asks without. */
+    private fun withUsage(url: String, make: (Boolean) -> Flow<Delta>): Flow<Delta> {
+        val h = runCatching { java.net.URI(url).host.orEmpty() }.getOrDefault(url)
+        val wanted = (h.contains("deepseek") || h.contains("experientiallabs") || h.contains("openrouter")) && h !in noUsage
+        if (!wanted) return make(false)
+        return kotlinx.coroutines.flow.flow {
+            var emitted = false
+            try {
+                make(true).collect { emitted = true; emit(it) }
+            } catch (e: LlmException) {
+                val m = e.message.orEmpty().lowercase()
+                if (emitted || !(m.contains("stream_options") || m.contains("include_usage") || m.contains("400") || m.contains("unknown") || m.contains("unrecognized"))) throw e
+                noUsage += h
+                make(false).collect { emit(it) }
             }
         }
     }
@@ -248,10 +274,12 @@ object Llm {
         extra: Boolean = false,
         maxTokens: Int? = null,
         lowReasoning: Boolean = false,
+        usage: Boolean = false,
     ): Flow<Delta> {
         val body = buildJsonObject {
             put("model", model)
             put("stream", true)
+            if (usage) putJsonObject("stream_options") { put("include_usage", true) }
             if (maxTokens != null) put("max_tokens", maxTokens)
             if (lowReasoning) {
                 put("reasoning_effort", "low")
@@ -301,6 +329,12 @@ object Llm {
             val o = Http.parseObject(data) ?: return@mapNotNull null
             (o["error"] as? JsonObject)?.let { err ->
                 throw LlmException((err["message"] as? JsonPrimitive)?.contentOrNull ?: "The model returned an error.")
+            }
+            // Usage (sent with the last chunk): how many input tokens the server's cache served, for the credit saver.
+            (o["usage"] as? JsonObject)?.let { u ->
+                fun n(x: kotlinx.serialization.json.JsonElement?) = (x as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: 0L
+                val cached = n(u["prompt_cache_hit_tokens"]).takeIf { it > 0 } ?: n((u["prompt_tokens_details"] as? JsonObject)?.get("cached_tokens"))
+                runCatching { com.arin.selffix.CreditSaver.recordUsage(url, n(u["prompt_tokens"]), cached, n(u["completion_tokens"])) }
             }
             val choice = (o["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return@mapNotNull null
             val delta = choice["delta"] as? JsonObject ?: return@mapNotNull null

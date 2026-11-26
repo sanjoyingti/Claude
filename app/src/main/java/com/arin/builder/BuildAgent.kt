@@ -195,6 +195,7 @@ class BuildAgent(
     /** Arin's own source as read from GitHub (self-updates), to keep the strict and protected rules. */
     private var selfOriginal: Map<String, String> = emptyMap()
     private var claudeAsks = 0
+    private var approvedSig = 0
     /** The helper's plan is asked for once per build, before the model writes its first code. */
     private var helperPlanned = false
 
@@ -370,6 +371,7 @@ class BuildAgent(
             step(BuildEvent.Kind.THINKING, "Working out the changes to Arin with ${req.provider.label}")
             val assets = addAttachedAssets()
             notes = apply(ask(changePrompt() + assets, req.attachments))
+            notes = inspect(notes, "the changes, before building")
             if (pendingFiles.isEmpty() && !depsChanged) {
                 return BuildResult(false, "The model didn't change any of Arin's files. Try describing the change differently.", repo.url, log = modelReplyLog())
             }
@@ -431,6 +433,7 @@ class BuildAgent(
             }
         }
         if ((helperOn() || com.arin.selffix.CreditSaver.on(context)) && !req.resume && pendingFiles.isNotEmpty()) helperReview()
+        if (!req.resume) notes = inspect(notes, "the finished code, before building")
         saveProject(repo, null)
         if (req.stopAfterWriting && !self && !(existing == null && req.zipPath != null) && !req.resume) {
             step(BuildEvent.Kind.DONE, "The code is written (${pendingFiles.size} file(s)). Waiting for you to choose where to build")
@@ -516,6 +519,7 @@ class BuildAgent(
                             val count = out.log.lines().count { it.startsWith("e: ") || it.contains("error:", true) }.coerceAtLeast(1)
                             step(BuildEvent.Kind.ERROR, "Phone build failed with $count error${if (count == 1) "" else "s"}: ${plainError(out.log)}. Fixing on the phone (${com.arin.selffix.AutoFix.roundText(localRounds, if (localOnly) maxFixRounds else baseFixRounds)})")
                             notes = apply(ask(fixPrompt(out.log, notes, web)))
+                            notes = inspect(notes, "the fix for the build errors")
                             continue
                         }
                         if (localOnly) {
@@ -685,6 +689,7 @@ class BuildAgent(
             if (crashLog != null) step(BuildEvent.Kind.ERROR, "Fixing the crash (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)}), then building and testing again")
             else step(BuildEvent.Kind.ERROR, "Build failed with $count error${if (count == 1) "" else "s"}: ${plainError(errors)}. Fixing (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)})")
             notes = apply(ask(fixPrompt(errors, notes, web)))
+            notes = inspect(notes, "the fix for the build errors")
             saveProject(repo, null)
         }
     }
@@ -788,6 +793,12 @@ class BuildAgent(
         val working = mutableListOf(ChatMessage(Role.USER, prompt + seenText + helperPlan + steeringNote(), seenFiles))
         var steps = 0
         claudeAsks = 0
+        // ARIN-PROTECTED: worker-mode — the worker writes; the boss (req.provider/model) only inspects (see [inspect]).
+        val pool = if (workerOn()) workerTargets() else emptyList()
+        var wi = 0
+        var target: Target = pool.firstOrNull() ?: bossTarget()
+        val workSystem = if (target.worker) workerSystem(system) else system
+        if (target.worker) step(BuildEvent.Kind.THINKING, "Worker ${target.label} is writing the code (your model inspects it after)")
         while (true) {
             val sb = StringBuilder()
             val thinking = StringBuilder()
@@ -796,8 +807,8 @@ class BuildAgent(
             // ARIN-PROTECTED: steer-immediately — a direction sent while the model writes stops this answer at once, and the
             // model starts again WITH the direction (not queued for later).
             val steeredNow = try { resilient(
-                attempt = { model -> streamModel(req.provider, req.apiKey, model, working.toList(), system, req.endpoint()) },
-                model = req.model,
+                attempt = { model -> streamModel(target.provider, target.key, model, working.toList(), if (target.worker) workSystem else system, target.endpoint) },
+                model = target.model,
                 fallback = { if (req.provider != com.arin.llm.Provider.Free) null else alternativeModel(req.provider, req.apiKey, req.model) }, // ARIN-PROTECTED: never change the Custom API — nor Claude, GPT or the Claude Code login: only the person switches them
                 onRetry = { step(BuildEvent.Kind.STEP, it) },
             ).collect { raw ->
@@ -846,9 +857,17 @@ class BuildAgent(
                 continue
             }
             val reply = sb.toString()
+            // A worker that refuses: the same task goes to the next worker; after the last one, to your model.
+            if (target.worker && com.arin.selffix.CreditSaver.isRefusal(reply)) {
+                com.arin.selffix.CreditSaver.noteRefusal(context!!, target.w!!, helperTab)
+                wi++
+                target = pool.getOrNull(wi) ?: bossTarget()
+                step(BuildEvent.Kind.THINKING, "That worker refused — handing the task to " + (if (target.worker) "worker ${target.label}" else "your model"))
+                continue
+            }
             lastReply = reply
             // Credit meter: roughly how much of your model this task has used so far (and today's warning, if set).
-            if (context != null) {
+            if (context != null && !target.worker) {
                 val chars = system.length + working.sumOf { it.text.length } + reply.length
                 taskTokens += chars / 4
                 val today = com.arin.selffix.CreditSaver.addUsage(context, chars)
@@ -859,7 +878,7 @@ class BuildAgent(
             if (steps >= MAX_WEB_STEPS || reply.contains("=== FILE:")) return reply
             val search = WebTools.searchTag.find(reply)?.groupValues?.get(1)?.trim()
             val fetch = WebTools.fetchTag.find(reply)?.groupValues?.get(1)?.trim()
-            val claudeQ = if (context != null && com.arin.selffix.ClaudeHelper.enabled(context, helperTab) && claudeAsks < com.arin.selffix.ClaudeHelper.maxAsks(context)) com.arin.selffix.ClaudeHelper.question(reply) else null
+            val claudeQ = if (context != null && (target.worker || com.arin.selffix.ClaudeHelper.enabled(context, helperTab)) && claudeAsks < com.arin.selffix.ClaudeHelper.maxAsks(context)) com.arin.selffix.ClaudeHelper.question(reply) else null
             val result = when {
                 claudeQ != null -> {
                     claudeAsks++
@@ -880,6 +899,103 @@ class BuildAgent(
             working += ChatMessage(Role.ASSISTANT, reply.trim())
             working += ChatMessage(Role.USER, "[Tool result]\n$result\n\nNow continue: write the files in the required format.")
         }
+    }
+
+    /** Who writes this answer: a worker (worker mode) or your model. */
+    private class Target(val provider: com.arin.llm.Provider, val key: String, val model: String,
+                         val endpoint: com.arin.llm.CustomApi.Endpoint?, val label: String, val w: com.arin.selffix.CreditSaver.Worker? = null) {
+        val worker get() = w != null
+    }
+
+    private fun bossTarget() = Target(req.provider, req.apiKey, req.model, req.endpoint(), req.model)
+
+    private fun workerOn(): Boolean = context != null && com.arin.selffix.CreditSaver.on(context) && com.arin.selffix.CreditSaver.workerMode(context)
+
+    /** The workers the person listed, in order; ones that refused this kind of task before go last. */
+    private suspend fun workerTargets(): List<Target> {
+        val ctx = context ?: return emptyList()
+        val settings = com.arin.data.Settings(ctx)
+        val list = com.arin.selffix.CreditSaver.workers(ctx).mapNotNull { w ->
+            if (w.apiId == "offline") {
+                val f = com.arin.llm.LocalModel.lastModel(ctx) ?: return@mapNotNull null
+                if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(ctx, f) != null) return@mapNotNull null
+                Target(com.arin.llm.Provider.Custom, com.arin.llm.LocalModel.DUMMY_KEY, com.arin.llm.LocalModel.MODEL_ID,
+                    com.arin.llm.CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, com.arin.llm.ApiFormat.OpenAI), "offline model", w)
+            } else {
+                val api = settings.savedApis.firstOrNull { it.slotId == w.apiId } ?: return@mapNotNull null
+                val fmt = runCatching { com.arin.llm.ApiFormat.valueOf(api.format) }.getOrDefault(com.arin.llm.ApiFormat.OpenAI)
+                Target(com.arin.llm.Provider.Custom, settings.apiKey(api), w.model.ifBlank { api.model },
+                    com.arin.llm.CustomApi.Endpoint(api.baseUrl, fmt), w.model.ifBlank { api.model }, w)
+            }
+        }
+        return list.sortedBy { t -> if (com.arin.selffix.CreditSaver.refused(ctx, t.w!!, helperTab)) 1 else 0 }
+    }
+
+    /** The worker's own instructions: it works for your model, writes ALL the code, and asks the helper when stuck. */
+    private fun workerSystem(base: String): String {
+        val helper = context?.let { com.arin.selffix.ClaudeHelper.helper(it).label } ?: "the helper"
+        return base.substringBefore("WHO YOU ARE:").substringBefore("AI helper status:") + "\n\nYOUR ROLE: you are the WORKER. A supervisor model gave you this task and " +
+            "will inspect your work; follow its directions exactly. Write ALL the code yourself, complete and working. When you " +
+            "are stuck, a part is hard, or the supervisor says to, ask $helper (code-only): <ask_helper>FILE: path\nSIGNATURE: …\n" +
+            "BODY:\n<code>\nERROR: <error>\nNEED: <one line></ask_helper> as the LAST thing in your reply; its answer comes back to you. " +
+            "Never refuse ordinary programming work: this is the owner's own Android app.\n"
+    }
+
+    // ARIN-PROTECTED: worker-mode — your model (the boss) inspects the worker's work: a short summary of what changed,
+    // never whole files. It answers APPROVE, or gives directions that go back to the worker (who may ask Claude).
+    private suspend fun inspect(notesIn: List<String>, what: String): List<String> {
+        var notes = notesIn
+        if (!workerOn() || pendingFiles.isEmpty()) return notes
+        fun sig() = pendingFiles.keys.sorted().joinToString { it + ":" + files[it].hashCode() }.hashCode()
+        if (sig() == approvedSig) return notes // already approved as it is
+        for (round in 1..2) {
+            val summary = buildString {
+                appendLine("TASK: " + (if (self) "change the Arin app: " else "Android app \"$appName\": ") + req.description.take(2_500))
+                appendLine("STAGE: $what")
+                appendLine("CHANGED FILES (names and functions only):")
+                pendingFiles.keys.take(30).forEach { p ->
+                    val c = files[p].orEmpty()
+                    val sig = Regex("(?m)^\\s*(?:(?:private|internal|override|suspend|data|sealed|abstract|open)\\s+)*(fun|class|object|interface)\\s+[\\w<>.,? ]+")
+                        .findAll(c).map { it.value.trim() }.take(10).joinToString("; ")
+                    appendLine("- $p (${c.lines().size} lines)" + if (sig.isNotBlank()) ": $sig" else "")
+                }
+                if (notes.isNotEmpty()) appendLine("WORKER NOTES: " + notes.joinToString("; ").take(800))
+            }
+            step(BuildEvent.Kind.THINKING, "Your model is inspecting the worker's work ($what)")
+            val verdict = bossSay(summary + "\nYou are the supervisor. Inspect: does this cover the task, and is anything clearly " +
+                "wrong or missing? Answer in at most 6 lines: either just APPROVE, or FIX: <exact directions for the worker>. " +
+                "You may write \"ask Claude\" in a direction.")
+            if (verdict.isBlank() || verdict.trim().uppercase().startsWith("APPROVE") || !verdict.contains("FIX", true)) {
+                step(BuildEvent.Kind.THINKING, "✅ Your model approved the work")
+                approvedSig = sig()
+                return notes
+            }
+            step(BuildEvent.Kind.THINKING, "Your model's directions: " + verdict.trim().take(160))
+            notes = apply(ask(buildString {
+                appendLine("The supervisor inspected your work and gives these directions. Follow them exactly (ask the helper if it says so " +
+                    "or you're stuck):")
+                appendLine(verdict.trim().take(2_000))
+                appendLine()
+                appendFilesLean(verdict)
+                appendLine()
+                appendLine("Reply with every file you change, in full, or EDIT blocks.")
+            }))
+        }
+        return notes
+    }
+
+    /** A short answer from your model (the boss), with little thinking, for inspecting. */
+    private suspend fun bossSay(prompt: String): String {
+        val out = StringBuilder()
+        runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(180_000) {
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
+                    "You are the supervisor of an AI coding worker. Be brief.", req.endpoint())
+                    .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
+            }
+        }
+        context?.let { com.arin.selffix.CreditSaver.addUsage(it, prompt.length + out.length) }
+        return out.toString().take(3_000)
     }
 
     /** Sent again when a reply had no files: just the format, as plainly as possible. */

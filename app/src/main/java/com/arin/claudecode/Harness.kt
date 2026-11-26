@@ -58,7 +58,9 @@ object Harness {
     /** A Custom API as the harness's brain: [anthropic] = it speaks Claude's format, else OpenAI's (through Arin's bridge). */
     data class Custom(val base: String, val key: String, val anthropic: Boolean)
 
-    fun customOn(c: Context) = com.arin.data.Settings(c).secret("HARNESS_CUSTOM") != "off"
+    // Off unless switched on (Settings → Storage): a Custom API answers directly, which starts instantly; the harness
+    // adds a whole Claude Code process and a translator in between, which made replies slow.
+    fun customOn(c: Context) = com.arin.data.Settings(c).secret("HARNESS_CUSTOM") == "on"
     fun setCustomOn(c: Context, on: Boolean) = com.arin.data.Settings(c).setSecret("HARNESS_CUSTOM", if (on) "on" else "off")
 
     fun stream(model: String, system: String, turns: List<Turn>, purpose: String = "chat", tools: String = TOOLS, custom: Custom? = null): Flow<Delta> = channelFlow {

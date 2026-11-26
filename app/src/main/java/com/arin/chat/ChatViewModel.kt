@@ -208,7 +208,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ARIN-PROTECTED: credit-saver — strict mode: the boss gets the least it needs to keep working at full strength.
     // The latest messages are sent whole; older ones are cut down. Nothing is deleted from the chat itself.
-    private fun strictTrim(turns: List<Turn>): List<Turn> {
+    private fun strictTrim(turns: List<Turn>, cacheSafe: Boolean = false): List<Turn> {
         if (turns.size <= 4) return turns
         val think = Regex("(?s)<think>.*?</think>")
         val lastUserMedia = turns.indexOfLast { it.fromUser && it.hasMedia }
@@ -221,14 +221,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // Attachments go once: only the latest message with pictures/PDFs keeps them.
             if (x.hasMedia && i != lastUserMedia) x = x.copy(images = emptyList(), pdfs = emptyList(),
                 text = x.text + "\n[attachment sent earlier — already seen]")
-            if (i < cut) {
+            if (i < cut && !cacheSafe) {
                 val lim = if (x.fromUser && !x.text.startsWith("[")) 2_000 else 700
                 if (x.text.length > lim + 300) x = x.copy(text = x.text.take(lim) + "\n…[older part shortened to save credits]…\n" + x.text.takeLast(200))
             }
             x
         }
         // A long chat: the first message (what the work is about) and the latest 24 turns.
-        if (out.size > 26) {
+        if (out.size > 26 && !cacheSafe) {
             val first = out.first()
             var tail = out.takeLast(24)
             if (!tail.first().fromUser) tail = tail.drop(1)
@@ -3067,8 +3067,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                     Turn(true, "Your reply above was cut off mid-way. Continue it from exactly where it stopped. Do not repeat anything already written and do not start over — just carry straight on.")
                             try {
                                 val strict = com.arin.selffix.CreditSaver.on(app)
-                                val sent0 = if (saveCredits || strict) shrinkOldToolOutput(dedupeTurns(streamTurns), firstToolTurn, keepRecent = if (strict) 2 else 4)
-                                    .let { if (strict) strictTrim(it) else it } else streamTurns
+                                // ARIN-PROTECTED: credit-saver — when this server gives a cache discount, old messages are
+                                // sent exactly as before (only appended to), so the cache keeps serving them at ~1-2% price.
+                                val cached = strict && endpoint != null && com.arin.selffix.CreditSaver.cacheWorks(app, endpoint.baseUrl)
+                                val sent0 = when {
+                                    cached -> strictTrim(shrinkOldToolOutput(streamTurns, firstToolTurn, keepRecent = 2), cacheSafe = true)
+                                    saveCredits || strict -> shrinkOldToolOutput(dedupeTurns(streamTurns), firstToolTurn, keepRecent = if (strict) 2 else 4)
+                                        .let { if (strict) strictTrim(it) else it }
+                                    else -> streamTurns
+                                }
                                 // After a broken tool call: only the recent part of the conversation (what usually triggers it).
                                 val sent = if (formatHint && sent0.size > 14) sent0.takeLast(14) else sent0
                                 // Speed check: how big the request is and how long the service takes to start answering.
