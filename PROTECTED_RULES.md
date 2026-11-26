@@ -173,3 +173,10 @@ told they are there.
   smaller or simplified app, and never drops a feature to make an error go away.
 - If something truly can't be done, it says so and asks instead of quietly changing it.
 - Only the owner can change this rule.
+
+## Heavy work off the main model (`builder/BuildAgent.kt`, `selffix/Worker.kt`)
+
+- With worker mode on, your main model only directs and inspects (short). It never writes code.
+- The workers write everything, in your order; if all refuse, the helper writes it. Explanations are written by the worker.
+- If no worker or helper can be reached, Arin stops and says so instead of spending your main model's credit.
+- Only the owner can change this rule.

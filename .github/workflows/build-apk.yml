@@ -48,6 +48,7 @@ jobs:
           grep -q "ARIN-PROTECTED: test-before-handover" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: test-before-handover" $D/builder/ProjectTemplate.kt
           grep -q "ARIN-PROTECTED: exact-request" $D/selffix/TaskSummary.kt
+          grep -q "ARIN-PROTECTED: heavy-work-off-the-boss" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: explain-after-coding" $D/selffix/TaskSummary.kt
           test -s app/src/main/assets/apk-toolkit-setup.sh
           for f in llm/Prompt.kt llm/Llm.kt chat/ChatViewModel.kt; do

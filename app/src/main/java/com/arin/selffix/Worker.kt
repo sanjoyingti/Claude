@@ -47,7 +47,9 @@ object Worker {
     fun instructions(c: Context): String {
         if (!on(c)) return ""
         return "WORKER MODE IS ON. The team: you (the boss, the only one who talks to the person), the worker (${names(c)}, a " +
-            "different model that does the heavy work) and the AI helper (helps the worker). Save your own tokens: for any code, " +
+            "different model that does the heavy work) and the AI helper (helps the worker). OWNER'S STRICT RULE: you only direct and " +
+            "inspect; you NEVER write code (not even a few lines), long text, research summaries or long analysis yourself. Keep your " +
+            "own replies short. For any code, " +
             "long text, long analysis or multi-step work, do NOT do it yourself — write <ask_worker>TASK: everything the worker " +
             "needs (it cannot see the person or this chat)</ask_worker> as the LAST thing in your reply and stop. Its result comes " +
             "back to you: inspect it; if it's wrong, send directions in another <ask_worker>. To show the worker's output to the " +
@@ -105,8 +107,12 @@ object Worker {
     }
 
     private suspend fun targets(c: Context): List<Target> {
+        val helper = runCatching { ClaudeHelper.asWriter(c) }.getOrNull()?.let { r ->
+            Target(r.key, r.model, r.endpoint, CreditSaver.Worker("helper", r.model), r.provider)
+        }
+        // The helper is the last one to try, so the boss never has to do the heavy work itself.
         return CreditSaver.workers(c).mapNotNull { w -> targetFor(c, w) }
-            .sortedBy { if (CreditSaver.refused(c, it.w, "chat")) 1 else 0 }
+            .sortedBy { if (CreditSaver.refused(c, it.w, "chat")) 1 else 0 } + listOfNotNull(helper)
     }
 
     /** Runs [task] on the first worker that accepts it (asking the helper when the worker wants). "" if none could. */

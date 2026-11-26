@@ -229,6 +229,30 @@ object ClaudeHelper {
         }.also { lastRoute = it; lastChecked = System.currentTimeMillis() }
     }
 
+    /** The helper as a model to write with (when every worker refused): provider, key, model, endpoint. Null if unreachable. */
+    suspend fun asWriter(context: Context): Worker.Resolved? {
+        val way = route(context) ?: return null
+        val s = com.arin.data.Settings(context)
+        val h = helper(context)
+        return when (way) {
+            "pro" -> Worker.Resolved(Provider.ClaudeCode, "", h.model.substringBefore('@').ifBlank { "sonnet" }.let { if (it.startsWith("claude-")) "sonnet" else it }, null)
+            "key" -> Worker.Resolved(Provider.Claude, s.key(Provider.Claude), h.model.takeIf { it.startsWith("claude-") } ?: "claude-sonnet-5-5", null)
+            "chatgpt" -> Worker.Resolved(Provider.ChatGPT, s.key(Provider.ChatGPT), h.model.ifBlank { com.arin.llm.DefaultModels.of(Provider.ChatGPT).firstOrNull()?.id.orEmpty() }, null)
+            "gemini" -> Worker.Resolved(Provider.Gemini, s.key(Provider.Gemini), h.model.ifBlank { com.arin.llm.DefaultModels.of(Provider.Gemini).firstOrNull()?.id.orEmpty() }, null)
+            "free" -> Worker.Resolved(Provider.Free, "", h.model.ifBlank { com.arin.llm.DefaultModels.of(Provider.Free).firstOrNull()?.id.orEmpty() }, null)
+            "offline" -> {
+                val f = com.arin.llm.LocalModel.lastModel(context) ?: return null
+                if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(context, f) != null) return null
+                Worker.Resolved(Provider.Custom, com.arin.llm.LocalModel.DUMMY_KEY, com.arin.llm.LocalModel.MODEL_ID, CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, ApiFormat.OpenAI))
+            }
+            "custom" -> {
+                val api = s.savedApis.firstOrNull { it.slotId == h.apiId } ?: return null
+                Worker.Resolved(Provider.Custom, s.apiKey(api), h.model.ifBlank { api.model }, endpoint(api))
+            }
+            else -> null
+        }
+    }
+
     /** What the last check found, so every model can be told truthfully whether its helper is on and working. */
     @Volatile var lastRoute: String? = null
     @Volatile var lastChecked = 0L

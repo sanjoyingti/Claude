@@ -295,14 +295,24 @@ class BuildAgent(
             "**What next:** one line offering to make any of these changes, or to " +
             (if (result.message.startsWith(CODE_READY)) "build it (they pick where below)." else if (result.success) "update it again." else "carry on fixing and building it.")
         val out = StringBuilder()
-        runCatching {
+        val ctx = context
+        if (ctx != null && workerOn()) {
+            // Worker mode: the worker writes the explanation (it gets file names only, not the code), saving your model's credit.
+            step(BuildEvent.Kind.THINKING, "The worker is writing the plain-English explanation")
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(240_000) {
+                    com.arin.selffix.Worker.run(ctx, prompt, bossName(),
+                        system = "You explain software to people who are not programmers, clearly and kindly, in plain English.").second
+                }
+            }.getOrNull()?.let { out.append(it) }
+        } else runCatching {
             kotlinx.coroutines.withTimeoutOrNull(240_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
                     "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint())
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
-        context?.let { com.arin.selffix.CreditSaver.addUsage(it, prompt.length + out.length) }
+        if (!workerOn()) context?.let { com.arin.selffix.CreditSaver.addUsage(it, prompt.length + out.length) }
         val text = out.toString().trim()
         if (text.isNotBlank()) step(BuildEvent.Kind.DONE, "Explained the code in plain English, with suggestions")
         return text.ifBlank {
@@ -931,7 +941,10 @@ class BuildAgent(
         var steps = 0
         claudeAsks = 0
         // ARIN-PROTECTED: worker-mode — the worker writes; the boss (req.provider/model) only inspects (see [inspect]).
-        val pool = if (workerOn()) workerTargets() else emptyList()
+        // ARIN-PROTECTED: heavy-work-off-the-boss — in worker mode the workers write, then the helper; your model never writes.
+        val pool = if (workerOn()) workerTargets() + listOfNotNull(helperWriter()) else emptyList()
+        if (workerOn() && pool.isEmpty()) throw IllegalStateException("Worker mode is on, but no worker or helper can be reached " +
+            "(check their keys or sign-in in Settings → Credit saver). Your main model doesn't write code in worker mode, to save its credit.")
         var wi = 0
         var target: Target = pool.firstOrNull() ?: bossTarget()
         val workSystem = if (target.worker) workerSystem(system) else system
@@ -998,8 +1011,9 @@ class BuildAgent(
             if (target.worker && com.arin.selffix.CreditSaver.isRefusal(reply)) {
                 com.arin.selffix.CreditSaver.noteRefusal(context!!, target.w!!, helperTab)
                 wi++
-                target = pool.getOrNull(wi) ?: bossTarget()
-                step(BuildEvent.Kind.THINKING, "${nice(pool[wi - 1].model)} refused — ${bossName()} is passing the task to " + (if (target.worker) nice(target.model) else "itself (${bossName()} writes it)"))
+                target = pool.getOrNull(wi) ?: throw IllegalStateException("Every worker and the helper refused this task. " +
+                    "Add another worker in Settings → Credit saver, or turn worker mode off for this task.")
+                step(BuildEvent.Kind.THINKING, "${nice(pool[wi - 1].model)} refused — ${bossName()} is passing the task to ${nice(target.model)}")
                 continue
             }
             lastReply = reply
@@ -1067,6 +1081,13 @@ class BuildAgent(
         return list.sortedBy { t -> if (com.arin.selffix.CreditSaver.refused(ctx, t.w!!, helperTab)) 1 else 0 }
     }
 
+    /** The helper, used as the last writer when every worker refuses (so your model never writes in worker mode). */
+    private suspend fun helperWriter(): Target? {
+        val ctx = context ?: return null
+        val r = com.arin.selffix.ClaudeHelper.asWriter(ctx) ?: return null
+        return Target(r.provider, r.key, r.model, r.endpoint, "helper " + r.model, com.arin.selffix.CreditSaver.Worker("helper", r.model))
+    }
+
     /** The worker's own instructions: it works for your model, writes ALL the code, and asks the helper when stuck. */
     private fun workerSystem(base: String): String {
         val helper = context?.let { com.arin.selffix.ClaudeHelper.helper(it).label } ?: "the helper"
@@ -1084,7 +1105,7 @@ class BuildAgent(
         if (!workerOn() || pendingFiles.isEmpty()) return notes
         fun sig() = pendingFiles.keys.sorted().joinToString { it + ":" + files[it].hashCode() }.hashCode()
         if (sig() == approvedSig) return notes // already approved as it is
-        for (round in 1..2) {
+        for (round in 1..1) { // one short inspection: saves your model's credit
             val summary = buildString {
                 appendLine("TASK: " + (if (self) "change the Arin app: " else "Android app \"$appName\": ") + req.description.take(2_500))
                 appendLine("STAGE: $what")
@@ -1145,7 +1166,7 @@ class BuildAgent(
         })
         val pieces = Regex("(?s)<piece>(.*?)</piece>").findAll(plan).mapNotNull { cut(it.groupValues[1]) }.take(4).toList()
         if (pieces.isEmpty()) {
-            step(BuildEvent.Kind.THINKING, "$boss couldn't point to a piece — $boss fixes it itself this time")
+            step(BuildEvent.Kind.THINKING, "$boss couldn't point to a piece — the worker fixes the whole error this time")
             return apply(ask(fixPrompt(errors, notesIn, web)))
         }
         var current = pieces
@@ -1161,7 +1182,7 @@ class BuildAgent(
                 fixed += pc to code
             }
             if (fixed.isEmpty()) {
-                step(BuildEvent.Kind.THINKING, "No worker could fix it — $boss fixes it itself this time")
+                step(BuildEvent.Kind.THINKING, "No worker could fix the pieces — the worker/helper fixes the whole error this time")
                 return apply(ask(fixPrompt(errors, notesIn, web)))
             }
             step(BuildEvent.Kind.THINKING, "$boss is inspecting the worker's fix")
