@@ -119,7 +119,7 @@ object ClaudeAccounts {
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit) {
+fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit, onError: (String) -> Unit = {}) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
             Column {
@@ -143,6 +143,13 @@ fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit
                             clearCache(true); clearHistory(); clearFormData()
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
+                            settings.javaScriptCanOpenWindowsAutomatically = true
+                            settings.setSupportMultipleWindows(false) // sign-in popups open in this same page
+                            // Look like normal Chrome: Claude's and Google's pages refuse "in-app" browsers.
+                            settings.userAgentString = settings.userAgentString.replace("; wv", "").replace(Regex("Version/\\d+\\.\\d+ "), "")
+                            CookieManager.getInstance().setAcceptCookie(true)
+                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true) // the security check needs them
                             var sent = false
                             fun check(u: String?) {
                                 if (sent || u == null) return
@@ -154,6 +161,9 @@ fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit
                                 onCode(if (state.isNotBlank()) "$code#$state" else code)
                             }
                             webViewClient = object : WebViewClient() {
+                                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                                    if (request.isForMainFrame) onError("The page didn't load: ${error.description}")
+                                }
                                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                                     check(request.url.toString()); return false
                                 }

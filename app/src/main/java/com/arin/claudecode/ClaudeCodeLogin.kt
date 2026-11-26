@@ -116,8 +116,17 @@ private fun ProLogin(vm: ChatViewModel) {
     vm.ccLoginUrl?.let { url ->
         // Fresh sign-in inside Arin: no saved logins, so it signs in to exactly the account you choose.
         var fresh by rememberSaveable { mutableStateOf(false) }
-        Button(onClick = { fresh = true }) { Text("Sign in here (fresh page)") }
-        if (fresh) com.arin.claudecode.FreshSignInDialog(url, onCode = { c -> fresh = false; vm.pasteCcCode(c) }, onClose = { fresh = false })
+        var pageError by rememberSaveable { mutableStateOf("") }
+        val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+        Button(onClick = { pageError = ""; fresh = true }) { Text("Sign in here (fresh page)") }
+        if (fresh) com.arin.claudecode.FreshSignInDialog(url, onCode = { c -> fresh = false; vm.pasteCcCode(c) }, onClose = { fresh = false },
+            onError = { e -> pageError = e })
+        if (pageError.isNotBlank()) Text(pageError, style = small, color = colors.error)
+        // Always works: a private tab remembers no account, so it signs in to exactly the one you type.
+        OutlinedButton(onClick = { clip.setText(androidx.compose.ui.text.AnnotatedString(url)); vm.notice = "Sign-in link copied — paste it in a Firefox private tab" }) {
+            Text("Copy link for a private tab")
+        }
+        Text("Firefox: ⋮ → New private tab → paste the link → sign in → copy the code it shows → paste it below.", style = small, color = colors.onSurfaceVariant)
         OutlinedButton(onClick = { uri.openUri(url) }) { Text("Or open in your browser") }
         var code by rememberSaveable { mutableStateOf("") }
         Row(verticalAlignment = Alignment.CenterVertically) {
