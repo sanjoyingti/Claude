@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, arin]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,32 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # ARIN-PROTECTED-RULE: protected-rules-check. Fails the build if a protected rule was removed.
+      - name: Check protected rules are still in place
+        run: |
+          set -e
+          D=app/src/main/java/com/arin
+          grep -q "ARIN-PROTECTED-RULE: research-first-autofix" $D/selffix/AutoFix.kt
+          grep -q "ARIN-PROTECTED-RULE: self-update-only-arin" $D/selffix/SelfUpdateRules.kt
+          grep -q "ARIN-PROTECTED-RULE: arin-update-tab" $D/selffix/ArinUpdateScreen.kt
+          grep -q "ARIN-PROTECTED: research the internet before every fix" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: never change the Custom API" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: self-updates change only Arin" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: research-first auto-fix rule for every model" $D/llm/Prompt.kt
+          grep -q "ARIN-PROTECTED-RULE: research-first-error-help" $D/selffix/ErrorDoctor.kt
+          grep -q "ARIN-PROTECTED: never give up" $D/builder/BuildService.kt
+          grep -q "ARIN-PROTECTED-RULE: ai-helper" $D/selffix/AiHelperUi.kt
+          grep -q "ARIN-PROTECTED-RULE: ai-helper" $D/selffix/ClaudeHelper.kt
+          grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/app/AppShell.kt
+          grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/chat/ChatScreen.kt
+          for f in builder/BuildScreen.kt claudecode/ClaudeCodeScreen.kt movie/MovieMakerScreen.kt settings/SettingsScreen.kt \
+                   free/FreeTokensScreen.kt project/ProjectScreens.kt app/LogsScreen.kt selffix/ArinUpdateScreen.kt voice/VoiceScreen.kt; do
+            grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/$f || { echo "AI helper missing in $f"; exit 1; }
+          done
+          grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
+          grep -q 'arin-debug.keystore' app/build.gradle.kts
+          echo "Protected rules OK"
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
@@ -35,8 +61,12 @@ jobs:
             echo "::error::${l//%/%25}"
           done
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Arin-${{ github.run_number }}.apk
+      - name: Rename APK (with the version number)
+        id: ver
+        run: |
+          V=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | head -1 | cut -d'"' -f2)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/debug/app-debug.apk "Arin-v${V}-build${{ github.run_number }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -47,6 +77,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: arin-${{ github.run_number }}
-          name: Arin build ${{ github.run_number }}
+          name: Arin v${{ steps.ver.outputs.version }} (build ${{ github.run_number }})
           files: Arin-*.apk
-          make_latest: true
+          # Only main marks the newest release, so a build on the arin branch doesn't replace another app's latest release.
+          make_latest: ${{ github.ref_name == 'main' }}
+
+      # One fixed link per branch that always gives the newest APK and source (the owner taps it, it downloads):
+      # https://github.com/<owner>/<repo>/releases/download/latest-<branch>/Arin-latest.apk  (and Arin-source.zip)
+      - name: Same-name copies for the fixed links
+        run: |
+          cp Arin-v*.apk Arin-latest.apk
+          git archive --format=zip -o Arin-source.zip HEAD
+
+      - name: Update the fixed download links
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-${{ github.ref_name }}
+          name: Latest Arin (${{ github.ref_name }}) — always the newest build
+          files: |
+            Arin-latest.apk
+            Arin-source.zip
+          make_latest: false

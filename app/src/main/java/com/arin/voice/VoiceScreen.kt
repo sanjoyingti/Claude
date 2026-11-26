@@ -72,8 +72,15 @@ fun VoiceMode(vm: ChatViewModel, onClose: () -> Unit) {
 
     DisposableEffect(Unit) {
         voice.rate = vm.settings.voiceRate
+        voice.naturalVoice = vm.settings.voiceNatural
+        voice.voiceName = vm.settings.voiceName
+        voice.voiceOpenAi = vm.settings.voiceEngine == "openai"
+        voice.voiceKey = vm.settings.voiceKey
+        voice.bargeIn = vm.settings.voiceBargeIn
+        vm.voiceMode = true
         voice.start()
         onDispose {
+            vm.voiceMode = false
             voice.close()
             vm.stop()
         }
@@ -116,6 +123,7 @@ fun VoiceMode(vm: ChatViewModel, onClose: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Box(Modifier.fillMaxWidth()) {
+                    Box(Modifier.align(Alignment.CenterStart)) { com.arin.selffix.AiHelperButtonHere() } // ARIN-PROTECTED: ai-helper in every tab
                     IconButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterEnd)) {
                         Icon(Icons.Filled.Close, contentDescription = "End voice mode", tint = androidx.compose.ui.graphics.Color.White)
                     }
@@ -152,7 +160,8 @@ fun VoiceMode(vm: ChatViewModel, onClose: () -> Unit) {
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    "Uses your phone's speech recognition and voice. Replies are saved in this chat.",
+                    if (vm.settings.voiceNatural) "Natural voice over the internet, with your phone's voice as backup. Replies are saved in this chat."
+                    else "Uses your phone's speech recognition and voice. Replies are saved in this chat.",
                     style = MaterialTheme.typography.labelSmall,
                     color = androidx.compose.ui.graphics.Color(0xFF6E7887),
                     textAlign = TextAlign.Center,

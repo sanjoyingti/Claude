@@ -32,7 +32,7 @@ class ReplyService : Service() {
         }
         val n = NotificationCompat.Builder(this, ArinApp.CHANNEL_WORKING)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle("Arin is replying…")
+            .setContentTitle(if (holders.all { it == "reply" }) "Arin is replying…" else "Arin is working — it keeps going in the background")
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(openApp(this, null))
@@ -49,12 +49,23 @@ class ReplyService : Service() {
         private const val ACTION_STOP = "com.arin.STOP_REPLY_SERVICE"
         const val EXTRA_CHAT_ID = "com.arin.CHAT_ID"
 
-        fun start(context: Context) {
+        /** What is keeping Arin running in the background right now (chat replies, installs, the helper…). */
+        private val holders = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+        fun start(context: Context) = hold(context, "reply")
+
+        fun stop(context: Context) = release(context, "reply")
+
+        /** Keeps Arin running in the background while [key]'s work goes on (several can run at once). */
+        fun hold(context: Context, key: String) {
+            holders += key
             runCatching { ContextCompat.startForegroundService(context, Intent(context, ReplyService::class.java)) }
         }
 
-        fun stop(context: Context) {
-            runCatching { context.startService(Intent(context, ReplyService::class.java).setAction(ACTION_STOP)) }
+        /** [key]'s work is done; the background service stops only when nothing else is still running. */
+        fun release(context: Context, key: String) {
+            holders -= key
+            if (holders.isEmpty()) runCatching { context.startService(Intent(context, ReplyService::class.java).setAction(ACTION_STOP)) }
         }
 
         fun openApp(context: Context, chatId: String?): PendingIntent {

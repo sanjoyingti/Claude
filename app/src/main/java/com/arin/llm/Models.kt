@@ -6,6 +6,9 @@ enum class Provider(val label: String, val needsKey: Boolean, val keyHint: Strin
     Claude("Claude", needsKey = true, keyHint = "console.anthropic.com → API keys"),
     Gemini("Gemini", needsKey = true, keyHint = "aistudio.google.com → Get API key"),
     ChatGPT("ChatGPT", needsKey = true, keyHint = "platform.openai.com → API keys"),
+    Custom("Custom API", needsKey = true, keyHint = "your service's dashboard"),
+    /** The person's Claude Pro/Max login from the Claude Code tab: no API key needed. */
+    ClaudeCode("Claude (Claude Code login)", needsKey = false, keyHint = "Claude Code tab → sign in"),
 }
 
 /** One model a provider offers. */
@@ -51,5 +54,19 @@ object DefaultModels {
             ModelOption("gpt-5", "GPT-5"),
             ModelOption("gpt-5-mini", "GPT-5 mini"),
         ),
+        Provider.ClaudeCode to listOf(
+            ModelOption("sonnet", "Claude Sonnet (Claude Code login)"),
+            ModelOption("opus", "Claude Opus (Claude Code login)"),
+            ModelOption("haiku", "Claude Haiku (Claude Code login)"),
+        ),
     )
+
+    /** Built-in list for [provider]. The Custom API uses the model id typed in Settings. */
+    fun of(provider: Provider): List<ModelOption> =
+        if (provider == Provider.Custom) {
+            val m = CustomApi.manualModel
+            if (m.isNotBlank()) listOf(ModelOption(m, m)) else listOf(ModelOption("", "No model yet: add one in Settings"))
+        } else {
+            byProvider.getValue(provider)
+        }
 }

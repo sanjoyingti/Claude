@@ -1,6 +1,10 @@
 package com.arin.design
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,6 +23,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -66,6 +74,7 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
                     )
                 }
                 is Block.Rule -> androidx.compose.material3.HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                is Block.Table -> MarkdownTable(b)
                 is Block.Paragraph -> Text(inline(b.text), style = MaterialTheme.typography.bodyLarge)
             }
         }
@@ -99,18 +108,55 @@ private fun CodeBlock(language: String, code: String) {
     }
 }
 
+/** A table drawn as a grid; scrolls sideways when it's wider than the screen. */
+@Composable
+private fun MarkdownTable(t: Block.Table) {
+    val columns = maxOf(t.header.size, t.rows.maxOfOrNull { it.size } ?: 0)
+    val line = MaterialTheme.colorScheme.outlineVariant
+    Column(
+        Modifier
+            .horizontalScroll(androidx.compose.foundation.rememberScrollState())
+            .border(1.dp, line, MaterialTheme.shapes.small),
+    ) {
+        (listOf(t.header) + t.rows).forEachIndexed { r, cells ->
+            Row(
+                Modifier
+                    .then(if (r == 0) Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh) else Modifier)
+                    .height(androidx.compose.foundation.layout.IntrinsicSize.Min),
+            ) {
+                for (c in 0 until columns) {
+                    Text(
+                        inline(cells.getOrElse(c) { "" }),
+                        style = if (r == 0) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .widthIn(min = 72.dp, max = 220.dp)
+                            .fillMaxHeight()
+                            .border(0.5.dp, line)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
 private sealed interface Block {
     data class Code(val language: String, val code: String) : Block
     data class Heading(val level: Int, val text: String) : Block
     data class Item(val marker: String, val text: String, val indent: Int) : Block
     data class Quote(val text: String) : Block
     data class Paragraph(val text: String) : Block
+    data class Table(val header: List<String>, val rows: List<List<String>>) : Block
     data object Rule : Block
 }
 
 private val numbered = Regex("""^(\s*)(\d+)[.)]\s+(.*)$""")
 private val bulleted = Regex("""^(\s*)[-*+]\s+(.*)$""")
 private val heading = Regex("""^(#{1,6})\s+(.*)$""")
+private val tableSeparator = Regex("""^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$""")
+
+private fun tableCells(line: String): List<String> =
+    line.trim().removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
 
 private fun parseBlocks(text: String): List<Block> {
     val out = mutableListOf<Block>()
@@ -136,6 +182,19 @@ private fun parseBlocks(text: String): List<Block> {
                     i++
                 }
                 out += Block.Code(lang, code.toString())
+            }
+            // A Markdown table: header row, separator row (|---|---|), then body rows.
+            trimmed.startsWith("|") && i + 1 < lines.size && tableSeparator.matches(lines[i + 1].trim()) -> {
+                flush()
+                val header = tableCells(trimmed)
+                val rows = mutableListOf<List<String>>()
+                i += 2
+                while (i < lines.size && lines[i].trim().startsWith("|")) {
+                    rows += tableCells(lines[i])
+                    i++
+                }
+                i--
+                out += Block.Table(header, rows)
             }
             trimmed.isEmpty() -> flush()
             trimmed == "---" || trimmed == "***" -> { flush(); out += Block.Rule }
@@ -166,7 +225,7 @@ private fun parseBlocks(text: String): List<Block> {
     return out
 }
 
-/** Bold, italic, inline code and links (shown as their text). */
+/** Bold, italic, inline code, and links (tappable). */
 @Composable
 private fun inline(text: String): AnnotatedString {
     val codeBg = LocalArinExtras.current.codeBackground
@@ -189,6 +248,14 @@ private fun inline(text: String): AnnotatedString {
                         }
                         i += end + 1
                     }
+                    // A bare web address: tappable as it is.
+                    rest.startsWith("https://") || rest.startsWith("http://") -> {
+                        var end = rest.indexOfFirst { it.isWhitespace() || it == ')' || it == '>' || it == '"' }.let { if (it < 0) rest.length else it }
+                        while (end > 0 && rest[end - 1] in ".,;:!?'") end--
+                        val url = rest.substring(0, end)
+                        withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = link, textDecoration = TextDecoration.Underline)))) { append(url) }
+                        i += end
+                    }
                     (rest.startsWith("*") || rest.startsWith("_")) && rest.length > 2 && !rest[1].isWhitespace() &&
                         rest.indexOf(rest[0], 1) > 1 -> {
                         val end = rest.indexOf(rest[0], 1)
@@ -198,7 +265,15 @@ private fun inline(text: String): AnnotatedString {
                     rest.startsWith("[") && rest.indexOf("](") > 0 && rest.indexOf(')', rest.indexOf("](")) > 0 -> {
                         val mid = rest.indexOf("](")
                         val end = rest.indexOf(')', mid)
-                        withStyle(SpanStyle(color = link)) { append(rest.substring(1, mid)) }
+                        val url = rest.substring(mid + 2, end).trim()
+                        if (url.startsWith("http://") || url.startsWith("https://")) {
+                            // Tapping opens the link (downloads such as APKs and source zips open in the browser).
+                            withLink(LinkAnnotation.Url(url, TextLinkStyles(SpanStyle(color = link, textDecoration = TextDecoration.Underline)))) {
+                                append(rest.substring(1, mid))
+                            }
+                        } else {
+                            withStyle(SpanStyle(color = link)) { append(rest.substring(1, mid)) }
+                        }
                         i += end + 1
                     }
                     else -> {

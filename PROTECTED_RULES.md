@@ -1,0 +1,83 @@
+# Arin — protected rules
+
+These rules were set by Arin's owner. **No self-update, model, tool or other app may remove, weaken or bypass them.**
+Only the owner can change them. If a feature truly needs a protected rule changed, the model must **ask the owner's
+approval first** (an Approve / Keep the rule card in the **Arin Update** tab), and changes it only after **Approve**.
+A self-update that tries to change a protected rule without approval is held back and shown for approval.
+
+How they are protected:
+
+- Every line or file that belongs to a rule is marked `ARIN-PROTECTED`. During a self-update, any change that
+  removes or edits a marked line is undone automatically (`selffix/SelfUpdateRules.kt`).
+- Self-updates can never touch `.github/`, the signing key, the Gradle wrapper or `settings.gradle.kts`.
+- The GitHub build checks that the rules are still in place ("Check protected rules are still in place") and
+  refuses to build an APK if one is missing.
+
+## 1. Research-first auto-fix (`selffix/AutoFix.kt`)
+
+- On **any** error (build, phone build, crash, command, install, tool), Arin **first searches the internet**
+  (several searches, and it reads the best pages), **then** applies the fix.
+- It may download any tool, library or file the fix needs.
+- It keeps going — search → fix → try again — **until the error is fixed**. Only the Stop button ends it early.
+- When the same error comes back, it tries a different approach and asks Claude for help (if the Claude helper is on).
+
+## 1b. Every tab: research first, never give up, exactly what was asked (`selffix/ErrorDoctor.kt`)
+
+- In **every tab** (chats, Build, Arin Update, Claude Code, Movie Maker), when something fails, Arin first searches
+  the internet for that error, then explains in plain English what went wrong.
+- If Arin can fix it, it does, and keeps trying **other methods** until the request is complete (builds retry by
+  themselves; chats carry on by themselves). Only Stop ends it.
+- If **you** must do something (a key, a sign-in, a permission), it tells you exactly how, step by step, and builds
+  check again every 10 seconds so they carry on by themselves once you've done it.
+- It always does **exactly what you asked**: a different method may be used, but your request is never changed,
+  shortened or dropped.
+
+## 2. The Custom API is never changed automatically
+
+Arin always uses the API and model you picked. It never switches your Custom API address, key or model on its own
+(also not when the service is busy).
+
+## 3. The Arin Update tab updates only Arin (`selffix/ArinUpdateScreen.kt`, `selffix/SelfUpdateRules.kt`)
+
+- It only changes Arin itself, in Arin's own source repository. It never builds a new or different app.
+- The app id stays `com.arin.app` and the signing key stays the same; the version number always goes up.
+  So every update installs **over** the Arin you have installed (chats, settings and logins kept).
+- Before installing, Arin checks the APK is Arin, signed with the same key, and not older — otherwise it blocks it.
+- The tab uses all of Arin's features: internet search, reading pages, downloads, your GitHub and the Claude helper.
+
+## New GitHub repositories only with your approval
+
+Arin never creates a new GitHub repository for an update on its own. If one is needed (for example your own copy of
+Arin's source), the Arin Update tab shows **Create a new GitHub repository? → Approve / Keep**, and Arin waits.
+
+## Everything is saved; Resume carries on
+
+- The Arin Update discussion, Movie Maker's conversation and every chat stay on the phone until **Clear all chats**.
+- **Resume** (Arin Update, Build mode, chat builds, chat replies, Claude Code, Movie Maker) continues from where the work
+  stopped — changes already made and uploaded are kept, nothing starts from the beginning.
+
+## 4. AI helper in every tab (protected: `selffix/AiHelperUi.kt`, `selffix/ClaudeHelper.kt`)
+
+The AI helper — its on/off switch and **Talk to Claude / ChatGPT / Gemini / Custom API** — is available in **every
+tab** (a helper button in each screen's top bar, also in new empty chats, Build's file and project screens and voice
+mode, plus the chat ⋮ menu). No update may remove, hide or change it; the GitHub build refuses to build if it's
+missing from any screen. Only you can switch it on or off, by tapping. Changing it needs your approval.
+
+### How the AI helper works
+
+- **Your model always reads your whole message first.** In "Talk to …" mode, the tab's own model reads the message and
+  drafts its answer; then it takes the helper's help (the helper corrects and fills gaps); then the model gives you the
+  final answer. In Build mode the model writes the code first, then the helper reviews it and the model fixes what it found.
+
+- **On:** any model (DeepSeek, ChatGPT, a Custom API, free models) can ask the chosen helper for help with
+  `<ask_helper>…</ask_helper>`, and Arin asks it on its own when an error keeps coming back. **Off:** every model
+  works on its own.
+- The helper can be **Claude** (Claude Code Pro login or a Claude API key), **ChatGPT**, **Gemini**, or **any model of a
+  Custom API you already saved**. "Talk to Custom API…" lists your saved APIs, then all of that API's models, to choose
+  the assistant.
+- The switch and "Talk to…" are in the ⋮ menu of every chat (next to Clear all chats) and in the helper button at the
+  top of every other tab.
+- **The helper only assists and forgets:** each question is asked fresh, nothing is kept afterwards. Claude Code as
+  helper runs in a throwaway folder and home that are deleted afterwards, so the Claude Code tab's own conversation is
+  never touched. **The tab's own model remembers everything** discussed in that tab, including the helper's answers.
+- The tab's model and your Custom API are never changed by the helper.

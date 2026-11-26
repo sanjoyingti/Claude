@@ -99,7 +99,7 @@ object Http {
         }.getOrNull()
         val hint = when (code) {
             401, 403 -> "The API key was rejected. Check it in Settings."
-            404 -> "That model isn't available. Pick another in the model menu."
+            404 -> "That model or address isn't available. Pick another model, or check the base URL in Settings → Custom API."
             429 -> "Too many requests right now. Wait a moment and try again."
             in 500..599 -> "The service is having trouble. Try again shortly."
             else -> "Request failed (HTTP $code)."
