@@ -2240,21 +2240,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Arin updating itself ----
 
     /** Where Arin's own source lives on GitHub (owner/repo and branch). */
-    fun selfRepo(): String { moveToHomeRepo(); return settings.secret("SELF_REPO").ifBlank { DEFAULT_SELF_REPO } }
+    fun selfRepo(): String = settings.secret("SELF_REPO").ifBlank { DEFAULT_SELF_REPO }
 
-    fun selfBranch(): String { moveToHomeRepo(); return settings.secret("SELF_BRANCH").ifBlank { DEFAULT_SELF_BRANCH } }
-
-    /**
-     * Once (1.1.9): Arin's source lives in sanjoyingti/Claude on main, where every build also refreshes the fixed
-     * download links. Older versions may have saved another repo/branch; the owner asked to switch to this one.
-     * After this, only the owner changes it (Settings → GitHub).
-     */
-    private fun moveToHomeRepo() {
-        if (settings.secret("SELF_REPO_HOME_119") == "done") return
-        settings.setSecret("SELF_REPO", DEFAULT_SELF_REPO)
-        settings.setSecret("SELF_BRANCH", DEFAULT_SELF_BRANCH)
-        settings.setSecret("SELF_REPO_HOME_119", "done")
-    }
+    fun selfBranch(): String = settings.secret("SELF_BRANCH").ifBlank { DEFAULT_SELF_BRANCH }
 
     fun saveSelfRepo(repo: String, branch: String) {
         settings.setSecret("SELF_REPO", repo.trim().removePrefix("https://github.com/").trimEnd('/'))
@@ -4331,8 +4319,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         const val PLAIN_TOOLS_NOTE = "\n\nIMPORTANT: Never use native function calling or tool_calls. Write every tool step as PLAIN " +
             "TEXT TAGS in your reply, exactly as described above (for example <run>command</run>), one per reply, then stop."
 
-        const val DEFAULT_SELF_REPO = "sanjoyingti/Claude"
-        const val DEFAULT_SELF_BRANCH = "main"
+        const val DEFAULT_SELF_REPO = "poisaingti-spec/aiapp-261110-1752"
+        const val DEFAULT_SELF_BRANCH = "arin"
 
         /** After REA is installed in the built-in Linux: have the model prove it works. */
         val REA_CHECK_PROMPT = """
