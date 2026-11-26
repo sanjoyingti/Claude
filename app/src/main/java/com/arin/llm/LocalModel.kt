@@ -87,11 +87,23 @@ object LocalModel {
      * Installs llama-server in Linux: the official prebuilt Ubuntu build from llama.cpp's latest GitHub
      * release, else (if it won't run here) a build from source. Safe to run again.
      */
-    suspend fun installServer(context: Context, log: (String) -> Unit): String? = withContext(Dispatchers.IO) {
+    /** Only one install at a time: a second tap waits for the first instead of deleting its files mid-way. */
+    private val installLock = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun installServer(context: Context, log: (String) -> Unit): String? = installLock.withLockSafe(log) { installServerOnce(context, log) }
+
+    private suspend fun <T> kotlinx.coroutines.sync.Mutex.withLockSafe(log: (String) -> Unit, block: suspend () -> T): T {
+        if (isLocked) log("Already installing — waiting for that to finish…")
+        lock()
+        try { return block() } finally { unlock() }
+    }
+
+    private suspend fun installServerOnce(context: Context, log: (String) -> Unit): String? = withContext(Dispatchers.IO) {
+        if (serverInstalled(context) && File(arinDir(context), "llama-server").exists()) return@withContext null
         if (!Linux.installed(context)) return@withContext "Install Linux first (Settings → Linux)."
         val arch = if (android.os.Build.SUPPORTED_ABIS.firstOrNull()?.startsWith("arm64") == true) "arm64" else "x64"
         log("Installing libraries llama.cpp needs…")
-        Linux.run(context, "apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq libgomp1 ca-certificates curl tar >/dev/null 2>&1; " +
+        Linux.run(context, "dpkg --configure -a >/dev/null 2>&1; apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq libgomp1 ca-certificates curl tar >/dev/null 2>&1; " +
             "apt-get install -y -qq libcurl4t64 libssl3t64 >/dev/null 2>&1 || apt-get install -y -qq libcurl4 libssl3 >/dev/null 2>&1; echo ok", timeoutMs = 15 * 60_000L)
 
         val prebuilt = runCatching {
@@ -117,8 +129,9 @@ object LocalModel {
             val dir = serverDir(context)
             val p = linuxPath(context, archive)
             val r = Linux.run(context,
-                "rm -rf ~/.arin/llama && mkdir -p ~/.arin/llama && cd ~/.arin/llama && " +
-                    (if (name.endsWith(".zip")) "(command -v unzip >/dev/null || apt-get install -y -qq unzip >/dev/null) && unzip -oq '$p'" else "tar -xzf '$p'") +
+                "rm -rf ~/.arin/llama.new && mkdir -p ~/.arin/llama.new && cd ~/.arin/llama.new && " +
+                    (if (name.endsWith(".zip")) "(command -v unzip >/dev/null || apt-get install -y -qq unzip >/dev/null) && unzip -oq '$p'" else "tar --no-same-owner -xzf '$p'") +
+                    " && cd ~ && rm -rf ~/.arin/llama && mv ~/.arin/llama.new ~/.arin/llama" +
                     " && rm -f '$p' && S=$(find ~/.arin/llama -name llama-server -type f | head -1) && chmod +x \"\$S\" && " +
                     "D=$(dirname \"\$S\") && ln -sf \"\$S\" ~/.arin/llama-server && echo \"\$D\" > ~/.arin/llama-libdir && " +
                     "LD_LIBRARY_PATH=\"\$D\" \"\$S\" --version 2>&1 | head -3",
@@ -132,7 +145,8 @@ object LocalModel {
         }
         if (!prebuilt) {
             val r = Linux.run(context,
-                "set -o pipefail; (apt-get update -qq; apt-get install -y -qq build-essential cmake git) 2>&1 | tail -3 && rm -rf ~/.arin/llama-src && " +
+                "(dpkg --configure -a; apt-get update -qq; apt-get install -y -qq build-essential cmake git) >/dev/null 2>&1; " +
+                    "for t in cmake g++ git make; do command -v \$t >/dev/null || { echo \"missing tool: \$t\"; exit 1; }; done; set -o pipefail; rm -rf ~/.arin/llama-src && " +
                     "git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/.arin/llama-src 2>&1 | tail -2 && cd ~/.arin/llama-src && " +
                     "cmake -B build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF 2>&1 | tail -3 && " +
                     "cmake --build build --target llama-server -j\$(nproc) 2>&1 | tail -3 && " +
