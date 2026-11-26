@@ -93,3 +93,17 @@ Only the model the person picked sees the person's messages and files. The AI he
 model describes what it needs in its own words, and Arin only passes the boss's own steps, drafts, code and error
 output to the helper. Only the owner can change this. (selffix/ClaudeHelper.kt ask(), chat/ChatViewModel.kt,
 selffix/ArinUpdateChat.kt, builder/BuildAgent.kt, builder/BuildService.kt)
+
+## 5. Team of three in every tab (`selffix/TeamWork.kt`, `selffix/Worker.kt`)
+
+When worker mode is on, every tab (chats, Reverse engineering/REA, Rebuild, Build, Arin Update) works as one team:
+
+- **Main model (boss)** — only gives short directions and checks results. It does not write the commands or long
+  files itself.
+- **Middle model (worker, e.g. GPT-6 Luna)** — writes the commands, new files and research summaries from the boss's
+  directions. It **never sees your chat, the files/code or any command output**. Arin removes code blocks from
+  directions before the worker sees them.
+- **Helper (e.g. Claude)** — helps the worker when it is stuck, with the same limits.
+- **Arin itself (no AI)** runs the commands and shortens every result before the boss reads it.
+
+No self-update may remove this, or let the worker or helper see the chat, files or results, without the owner's approval.

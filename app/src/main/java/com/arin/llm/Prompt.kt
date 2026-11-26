@@ -460,6 +460,7 @@ object Prompt {
         // AI helper (Claude, ChatGPT, Gemini or a Custom API model): only when it is switched on.
         append(runCatching { com.arin.selffix.ClaudeHelper.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: ai-helper
         append(runCatching { com.arin.selffix.Worker.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: worker-mode
+        append(runCatching { com.arin.selffix.TeamWork.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: team-work in every tab
         append(com.arin.selffix.AutoFix.RULE_GENERAL).append("\n\n") // ARIN-PROTECTED: research-first auto-fix rule for every model
 
         if (!need("build")) {
@@ -605,7 +606,7 @@ object Prompt {
     /** An unfinished tag at the end of a reply: on its own line, or with attributes, so prose mentions stay. */
     private fun openTail(tag: String) = Regex("""(?:(?m:^)[ \t]*<$tag\b|<$tag\s+\w+=)[\s\S]*$""")
 
-    fun clean(reply: String): String = withCodeMasked(reply, { cleanTags(com.arin.selffix.ClaudeHelper.clean(it)) }) { r, unmask -> unmask(r) }
+    fun clean(reply: String): String = withCodeMasked(reply, { cleanTags(com.arin.selffix.TeamWork.clean(com.arin.selffix.ClaudeHelper.clean(it))) }) { r, unmask -> unmask(r) }
 
     private fun cleanTags(reply: String): String =
         reply.replace(rememberTag, "").replace(Regex("""<remember>[^<]*$"""), "")

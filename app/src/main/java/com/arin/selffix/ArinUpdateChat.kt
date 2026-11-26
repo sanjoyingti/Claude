@@ -267,6 +267,8 @@ object ArinUpdateChat {
         append(SelfUpdateRules.RULE_FOR_MODEL).append('\n')
         append(AutoFix.RULE_GENERAL).append("\n\n")
         append(ClaudeHelper.instructions(context, "arin-update"))
+        append(Worker.instructions(context)) // ARIN-PROTECTED: team-work in every tab
+        append(TeamWork.instructions(context)) // ARIN-PROTECTED: team-work in every tab
         if (fileList.isNotEmpty()) {
             append("Arin's source files (read any with <read_source>):\n")
             append(fileList.joinToString("\n").take(12_000)).append('\n')
@@ -342,7 +344,36 @@ object ArinUpdateChat {
                         live = cleanTags(sb.toString())
                         status = null
                     }
-                    val reply = sb.toString()
+                    var reply = sb.toString()
+                    // ARIN-PROTECTED: team-work in every tab — the boss directs; the worker writes the command without seeing
+                    // the owner's messages, Arin's files or any output; Arin runs it and shrinks the result for the boss.
+                    val team = TeamWork.on(app)
+                    val bossName = Worker.nice(model)
+                    if (team && steps < 30) {
+                        val direction = TeamWork.doTask(reply)
+                        val workerTask = if (direction == null) Worker.task(reply) else null
+                        if (direction != null) {
+                            status = "$bossName is instructing the worker: " + direction.lineSequence().first().take(80)
+                            val (who, tool) = TeamWork.command(app, direction, bossName) { _, s -> status = s.take(120) }
+                            val base = TeamWork.clean(reply).trimEnd()
+                            if (who.isBlank() || tool.isBlank()) {
+                                turns += ChatMessage(Role.ASSISTANT, reply.trim())
+                                turns += ChatMessage(Role.USER, "[No worker could do this step. Do this one step yourself, briefly, then go back to giving directions.]")
+                                steps++
+                                continue
+                            }
+                            reply = "$base\n[$who wrote:] " + tool.replace(Regex("(?s)<install>(.*?)</install>"), "<run>apt-get install -y $1</run>")
+                        } else if (workerTask != null) {
+                            // Heavy writing (code, long text) goes to the worker; the boss inspects what comes back.
+                            steps++
+                            status = "$bossName is instructing the worker: " + workerTask.lineSequence().first().take(80)
+                            val (who, result) = Worker.run(app, TeamWork.safeDirection(workerTask), bossName) { _, s -> status = s.take(120) }
+                            turns += ChatMessage(Role.ASSISTANT, reply.trim())
+                            turns += ChatMessage(Role.USER, if (result.isBlank()) "[No worker could do this task. Do it yourself, briefly.]"
+                                else "[WORKER RESULT from ${Worker.nice(who)} — inspect it; send directions in another <ask_worker> if it's wrong.]\n" + result.take(12_000))
+                            continue
+                        }
+                    }
                     val read = readTag.find(reply)?.groupValues?.get(1)
                     val search = WebTools.searchTag.find(reply)?.groupValues?.get(1)?.trim()
                     val fetch = WebTools.fetchTag.find(reply)?.groupValues?.get(1)?.trim()
@@ -357,7 +388,8 @@ object ArinUpdateChat {
                                 else {
                                     LinuxGitHub.sync(app, token)
                                     val r = com.arin.terminal.Shell.run(app, cmd, 15 * 60_000L)
-                                    "Command: $cmd\nExit code: ${r.exitCode}\nOutput:\n" + (r.stdout + "\n" + r.stderr).trim().takeLast(12_000)
+                                    val out = (r.stdout + "\n" + r.stderr).trim()
+                                    "Command: $cmd\nExit code: ${r.exitCode}\nOutput:\n" + if (team) TeamWork.shrink(out) else out.takeLast(12_000)
                                 }
                             }
                             read != null -> {
@@ -366,8 +398,16 @@ object ArinUpdateChat {
                                 val txt = f?.let { SelfRepo.readFile(token, it.repo, it.branch, read) }
                                 if (txt == null) "Couldn't read $read." else "Content of $read:\n" + txt.take(30_000)
                             }
-                            search != null -> { status = "Searching the internet: $search"; "Search results for \"$search\":\n" + WebTools.search(search).take(8_000) }
-                            fetch != null -> { status = "Reading ${fetch.removePrefix("https://").take(50)}"; "Content of $fetch:\n" + WebTools.fetch(fetch).take(8_000) }
+                            search != null -> {
+                                status = "Searching the internet: $search"
+                                val found = WebTools.search(search).take(8_000)
+                                "Search results for \"$search\":\n" + if (team) TeamWork.digest(app, search, found, bossName, scrubAbout = false) { _, s -> status = s.take(120) } else found
+                            }
+                            fetch != null -> {
+                                status = "Reading ${fetch.removePrefix("https://").take(50)}"
+                                val page = WebTools.fetch(fetch).take(if (team) 16_000 else 8_000)
+                                "Content of $fetch:\n" + if (team) TeamWork.digest(app, "the page $fetch", page, bossName, scrubAbout = false) { _, s -> status = s.take(120) } else page
+                            }
                             else -> { helperAsks++; status = "Asking ${ClaudeHelper.helper(app).name} for help"; "The AI helper's answer:\n" + ClaudeHelper.ask(app, ask!!, source = "arin-update").take(12_000) }
                         }
                         turns += ChatMessage(Role.ASSISTANT, reply.trim())
@@ -438,7 +478,7 @@ object ArinUpdateChat {
         messages.forEach { append(if (it.fromUser) "Owner: " else "Developer: ").append(it.text.take(4_000)).append("\n\n") }
     }.let { if (it.length > 30_000) it.take(6_000) + "\n[…]\n" + it.takeLast(24_000) else it }
 
-    private fun cleanTags(s: String) = ClaudeHelper.clean(s)
+    private fun cleanTags(s: String) = Worker.clean(TeamWork.clean(ClaudeHelper.clean(s))).replace(Worker.RESULT_TAG, "")
         .replace(readTag, "").replace(updateTag, "").replace(approvalTag, "").replace(runTag, "")
         .replace(WebTools.searchTag, "").replace(WebTools.fetchTag, "")
         .replace(Regex("""<(read_source|update_arin|search|fetch|ask_approval|run)>[\s\S]*$"""), "")

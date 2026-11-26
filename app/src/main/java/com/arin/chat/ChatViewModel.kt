@@ -2637,7 +2637,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * What the model is told after a failure: Arin searches the web for the error itself, every time, and passes on what
      * it found with the instruction to apply a fix and retry, so known solutions are used straight away.
      */
-    private suspend fun fixAdvice(streak: Int, errorQuery: String, sources: MutableList<Source>): String {
+    private suspend fun fixAdvice(streak: Int, errorQuery: String, sources: MutableList<Source>, boss: String? = null): String {
         val base = "Fix this yourself and keep going: find the cause in the output, apply a fix (install what's missing, change " +
             "the command or flags, correct the code or config) and try again. Don't stop to ask unless it truly needs the person."
         if (errorQuery.isBlank()) {
@@ -2665,6 +2665,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         web.take(6_000) + "\n\nWhat is the real cause and the exact fix?").take(6_000)
                 status = null
             }
+        }
+        // ARIN-PROTECTED: team-work in every tab — the worker reads the research and gives the boss a short summary.
+        if (boss != null && web.isNotBlank()) {
+            web = com.arin.selffix.TeamWork.digest(getApplication<Application>(), errorQuery, web, boss) { _, s -> status = s }
+            status = null
         }
         return if (web.isBlank()) {
             "$base A web search for the error found nothing; search with other words (<search>) or try a different approach."
@@ -3219,7 +3224,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         run.liveText = ""
                         continue
                     }
-                    val full = text.toString()
+                    var full = text.toString()
+                    // ARIN-PROTECTED: team-work in every tab — the boss writes a direction; the worker writes the command or
+                    // file without seeing any file, output or the person's chat; Arin runs it and shrinks the result for the boss.
+                    var bossView: String? = null
+                    val team = com.arin.selffix.TeamWork.on(app)
+                    if (team && ran.count { it.kind != "steer" } < Prompt.MAX_COMMANDS) {
+                        val direction = com.arin.selffix.TeamWork.doTask(full)
+                        val fileJob = if (direction == null) com.arin.selffix.TeamWork.writeTask(full) else null
+                        if (direction != null || fileJob != null) {
+                            run.liveText = ""
+                            run.status = "$bossName is instructing the worker: " + (direction ?: "write ${fileJob!!.first.substringAfterLast('/')}").lineSequence().first().take(90)
+                            val (who, tool) = if (direction != null)
+                                com.arin.selffix.TeamWork.command(app, direction, bossName) { w, s -> run.who = w; run.status = s }
+                            else com.arin.selffix.TeamWork.write(app, fileJob!!.first, fileJob.second, bossName) { w, s -> run.who = w; run.status = s }
+                            run.who = bossName
+                            run.status = null
+                            val base = com.arin.selffix.TeamWork.clean(full).trimEnd()
+                            if (who.isBlank() || tool.isBlank()) {
+                                turns += Turn(false, full)
+                                turns += Turn(true, "[No worker could do this step (all refused or failed). Do this one step yourself, briefly, then go back to giving directions.]")
+                                continue
+                            }
+                            if (direction != null) {
+                                full = "$base\n$tool"
+                                bossView = "$base\n[$who wrote:] $tool"
+                            } else {
+                                full = "$base\n<write path=\"${fileJob!!.first}\">\n$tool</write>"
+                                bossView = "$base\n[$who wrote ${fileJob.first} — short view for you to check; read it if you need more:]\n" +
+                                    com.arin.selffix.TeamWork.preview(tool)
+                            }
+                        }
+                    }
                     val underLimit = ran.count { it.kind != "steer" } < Prompt.MAX_COMMANDS
                     // Install / read / write / edit (Claude Code-style tools), and terminal commands. They work even when
                     // the terminal is switched off: the person is asked once, and Arin's Linux is set up if it's missing.
@@ -3267,17 +3303,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         ran += step
                         run.liveCommands += step
-                        turns += Turn(false, full)
+                        turns += Turn(false, bossView ?: full)
                         val failed = step.ran && step.exitCode != 0
                         failStreak = if (failed) failStreak + 1 else 0
+                        // ARIN-PROTECTED: team-work in every tab — Arin (no AI) shrinks the result before the boss reads it.
+                        val forBoss = if (team) com.arin.selffix.TeamWork.shrink(step.output, if (action is Prompt.AgentAction.Read) 8_000 else 3_500) else step.output
+                        val shownLabel = if (action is Prompt.AgentAction.Write && bossView != null) "write ${action.path}" else label
                         turns += Turn(
                             true,
                             when {
                                 !step.ran -> "I chose not to allow that. Continue without it, or suggest another way."
-                                !failed -> "Done: $label (exit code ${step.exitCode ?: "unknown"}). Output:\n```\n${step.output}\n```\n" +
-                                    "Continue the task: run the next command if needed, or answer when you're done."
-                                else -> "Command FAILED (exit code ${step.exitCode ?: "unknown"}). Output:\n```\n${step.output}\n```\n" +
-                                    fixAdvice(failStreak, Prompt.errorQuery(step.output, label), sources)
+                                !failed -> "Done: $shownLabel (exit code ${step.exitCode ?: "unknown"}). Output:\n```\n$forBoss\n```\n" +
+                                    (if (team) "Continue: give the worker the next direction if needed, or answer when you're done."
+                                    else "Continue the task: run the next command if needed, or answer when you're done.")
+                                else -> "Command FAILED (exit code ${step.exitCode ?: "unknown"}). Output:\n```\n$forBoss\n```\n" +
+                                    fixAdvice(failStreak, Prompt.errorQuery(step.output, label), sources, if (team) bossName else null)
                             },
                         )
                         continue
@@ -3312,10 +3352,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             if (!step.ran) "I didn't allow that tool call. Continue without it, or suggest another way."
                             else if (step.exitCode != 0) {
                                 failStreak++
-                                "Result of $name (FAILED):\n```\n${step.output}\n```\n" + fixAdvice(failStreak, Prompt.errorQuery(step.output, name), sources)
+                                "Result of $name (FAILED):\n```\n${if (team) com.arin.selffix.TeamWork.shrink(step.output) else step.output}\n```\n" +
+                                    fixAdvice(failStreak, Prompt.errorQuery(step.output, name), sources, if (team) bossName else null)
                             } else {
                                 failStreak = 0
-                                "Result of $name:\n```\n${step.output}\n```\n" +
+                                "Result of $name:\n```\n${if (team) com.arin.selffix.TeamWork.shrink(step.output, 6_000) else step.output}\n```\n" +
                                     "Continue the task: call the next tool or command if needed, or answer when you're done."
                             },
                         )
@@ -3399,7 +3440,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 }
                                 page != null -> {
                                     run.status = "Reading " + page.removePrefix("https://").removePrefix("http://").take(60)
-                                    "Content of $page:\n\n" + runCatching { com.arin.builder.WebTools.fetch(page) }.getOrElse { "Couldn't open it: ${it.message}" }.take(24_000)
+                                    val pageText = runCatching { com.arin.builder.WebTools.fetch(page) }.getOrElse { "Couldn't open it: ${it.message}" }.take(24_000)
+                                    // ARIN-PROTECTED: team-work in every tab — the worker reads the page; the boss gets a short summary.
+                                    if (team && !pageText.startsWith("Couldn't open")) "Content of $page:\n\n" +
+                                        com.arin.selffix.TeamWork.digest(app, "the page $page", pageText, bossName, scrubAbout = false) { w, st -> run.who = w; run.status = st }
+                                            .also { run.who = bossName; run.status = null }
+                                    else "Content of $page:\n\n$pageText"
                                 }
                                 else -> {
                                     val (name, url) = file!!
@@ -3491,7 +3537,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             turns += Turn(false, full)
                             turns += Turn(
                                 true,
-                                "You described your next step but didn't send it. Do it now: put the <run> command or <tool> call " +
+                                (if (team) "You described your next step but didn't send it. Do it now: put the <worker_do> direction or <tool> call "
+                                else "You described your next step but didn't send it. Do it now: put the <run> command or <tool> call ") +
                                     "as the last thing in your reply. If the task is actually finished, give the final answer instead.",
                             )
                             run.liveText = ""
@@ -3525,11 +3572,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     hits.take(5).forEach { h -> if (sources.none { it.url == h.url }) sources += Source(h.title, h.url) }
                     run.status = null
                     turns += Turn(false, "<search>$q</search>")
-                    val trimmed = results
+                    // ARIN-PROTECTED: team-work in every tab — the worker reads the results; the boss gets a short summary.
+                    val trimmed = if (team) com.arin.selffix.TeamWork.digest(app, q, results, bossName) { w, st -> run.who = w; run.status = st }
+                        .also { run.who = bossName; run.status = null } else results
                     turns += Turn(true, trimmed + "\n\nNow answer my earlier message using these results where they help.")
                 }
                 // The worker's output goes in where the boss pointed to it (the boss didn't spend tokens copying it).
-                answer = com.arin.selffix.Worker.clean(answer).let {
+                answer = com.arin.selffix.Worker.clean(com.arin.selffix.TeamWork.clean(answer)).let {
                     if (lastWorkerResult.isNotBlank() && it.contains(com.arin.selffix.Worker.RESULT_TAG)) it.replace(com.arin.selffix.Worker.RESULT_TAG, lastWorkerResult) else it.replace(com.arin.selffix.Worker.RESULT_TAG, "")
                 }
                 if (Prompt.clean(answer).isBlank() && ran.isEmpty()) failure = "The model sent an empty reply. Tap Retry, or pick another model."

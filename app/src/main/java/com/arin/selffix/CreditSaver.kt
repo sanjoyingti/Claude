@@ -317,7 +317,9 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
         androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.weight(1f)) {
             androidx.compose.material3.Text("Worker mode (experiment)")
             androidx.compose.material3.Text("Your model stays the boss: it gives directions, inspects and approves. A worker writes " +
-                "all the code and fixes, with Claude's help. Off = the previous method.", style = small, color = dim)
+                "the code, the commands and the research summaries, with the helper's help — in every tab (chats, REA, Rebuild, " +
+                "Build, Arin Update). The worker and helper never see your chat, files or results; Arin runs the commands and " +
+                "shortens the results for your model. Off = the previous method.", style = small, color = dim)
         }
         androidx.compose.material3.Switch(on, { on = it; CreditSaver.setWorkerMode(c, it) })
     }

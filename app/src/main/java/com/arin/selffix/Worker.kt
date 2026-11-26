@@ -77,7 +77,7 @@ object Worker {
     }
 
     /** Runs [task] on the first worker that accepts it (asking the helper when the worker wants). "" if none could. */
-    suspend fun run(c: Context, task: String, boss: String = "your model", onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
+    suspend fun run(c: Context, task: String, boss: String = "your model", system: String = SYSTEM, onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
         val helper = ClaudeHelper.helper(c).name
         for (t in targets(c)) {
             val me = nice(t.model)
@@ -87,7 +87,7 @@ object Worker {
             while (true) {
                 val sb = StringBuilder()
                 val ok = runCatching {
-                    com.arin.llm.Llm.stream(com.arin.llm.Provider.Custom, t.key, t.model, SYSTEM, turns.toList(), endpoint = t.endpoint)
+                    com.arin.llm.Llm.stream(com.arin.llm.Provider.Custom, t.key, t.model, system, turns.toList(), endpoint = t.endpoint)
                         .collect { d -> if (d is Delta.Text) sb.append(d.text) }
                 }.isSuccess
                 val text = sb.toString()

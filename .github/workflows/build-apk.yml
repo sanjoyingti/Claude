@@ -39,6 +39,9 @@ jobs:
           grep -q "ARIN-PROTECTED-RULE: ai-helper" $D/selffix/AiHelperUi.kt
           grep -q "ARIN-PROTECTED-RULE: ai-helper" $D/selffix/ClaudeHelper.kt
           grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/app/AppShell.kt
+          grep -q "ARIN-PROTECTED-RULE: team-work" $D/selffix/TeamWork.kt
+          grep -q "ARIN-PROTECTED: team-work in every tab" $D/chat/ChatViewModel.kt
+          grep -q "ARIN-PROTECTED: team-work in every tab" $D/selffix/ArinUpdateChat.kt
           grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/chat/ChatScreen.kt
           for f in builder/BuildScreen.kt claudecode/ClaudeCodeScreen.kt movie/MovieMakerScreen.kt settings/SettingsScreen.kt \
                    free/FreeTokensScreen.kt project/ProjectScreens.kt app/LogsScreen.kt selffix/ArinUpdateScreen.kt voice/VoiceScreen.kt; do
