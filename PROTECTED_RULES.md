@@ -107,3 +107,17 @@ When worker mode is on, every tab (chats, Reverse engineering/REA, Rebuild, Buil
 - **Arin itself (no AI)** runs the commands and shortens every result before the boss reads it.
 
 No self-update may remove this, or let the worker or helper see the chat, files or results, without the owner's approval.
+
+## 6. A summary after every task, in every tab — STRICT (`selffix/TaskSummary.kt`)
+
+Set by the owner. After every task in every tab (chats, Reverse engineering, Rebuild, Build, Arin Update and all
+others), Arin ends with:
+
+- **Summary — what I did:** the main things done and their result (and anything that failed).
+- **What to do next:** the next step(s) for the owner.
+
+The model is told to write it. If it doesn't, Arin itself adds one from the steps it ran (no AI, no credit). The
+Build tab shows it on every build result.
+
+**No one may change or remove this rule — no self-update, model, tool, app or assistant (including Claude) — unless
+the owner says so directly.** The GitHub build refuses to make an APK if it is missing.

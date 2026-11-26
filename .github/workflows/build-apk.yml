@@ -40,6 +40,10 @@ jobs:
           grep -q "ARIN-PROTECTED-RULE: ai-helper" $D/selffix/ClaudeHelper.kt
           grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/app/AppShell.kt
           grep -q "ARIN-PROTECTED-RULE: team-work" $D/selffix/TeamWork.kt
+          grep -q "ARIN-PROTECTED-RULE: task-summary" $D/selffix/TaskSummary.kt
+          for f in llm/Prompt.kt chat/ChatViewModel.kt selffix/ArinUpdateChat.kt builder/BuildScreen.kt claudecode/ClaudeCode.kt; do
+            grep -q "ARIN-PROTECTED: task-summary in every tab" $D/$f || { echo "Task summary missing in $f"; exit 1; }
+          done
           grep -q "ARIN-PROTECTED: team-work in every tab" $D/chat/ChatViewModel.kt
           grep -q "ARIN-PROTECTED: team-work in every tab" $D/selffix/ArinUpdateChat.kt
           grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/chat/ChatScreen.kt

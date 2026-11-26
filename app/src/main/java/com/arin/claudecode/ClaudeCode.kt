@@ -587,7 +587,9 @@ PY
         val dropped = (HEAVY_TOOLS + if (pro) emptyList() else listOf("WebSearch")).joinToString(" ")
         val flags = (if (continueChat) "--continue " else "") +
             "--model '$m' --output-format stream-json --verbose --include-partial-messages --add-dir /root/.arin/cc-tab " + mcpFlag +
-            "--disallowedTools $dropped --allowedTools $tools"
+            "--disallowedTools $dropped --allowedTools $tools" +
+            // ARIN-PROTECTED: task-summary in every tab — the Claude Code tab ends every task with what it did and what to do next.
+            " --append-system-prompt '" + com.arin.selffix.TaskSummary.RULE.replace(Regex("[\\n'\"$`\\\\*]"), " ") + "'"
         val thinking = if (extras.thinkLess) "export MAX_THINKING_TOKENS=0; " else ""
         val r = Shell.run(
             context,

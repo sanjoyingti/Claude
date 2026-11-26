@@ -3284,7 +3284,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 if (action is Prompt.AgentAction.Edit) "$label\n\n− ${action.old.take(600)}\n+ ${action.new.take(600)}" else label, tool = false, fromChat = run.chat)
                         }
                         val shellProblem = if (allowed) com.arin.terminal.AgentTools.ensureShell(app) { run.status = it } else null
-                        val step = if (!allowed) {
+                        val step0 = if (!allowed) {
                             com.arin.data.CommandRun(label, "The person chose not to allow this.", null, ran = false)
                         } else if (shellProblem != null) {
                             com.arin.data.CommandRun(label, shellProblem, 1)
@@ -3306,6 +3306,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             run.status = null
                             com.arin.data.CommandRun(label, r.forModel(), r.exitCode)
                         }
+                        // A search that just found nothing (grep/find exit 1, a closed pipe) is not an error: no red ✗, no research.
+                        val step = if (step0.ran && com.arin.selffix.TeamWork.nothingFound(step0.exitCode, step0.output))
+                            step0.copy(exitCode = 0, output = "(nothing found — exit code ${step0.exitCode}, which is not an error here)\n" + step0.output)
+                        else step0
                         ran += step
                         run.liveCommands += step
                         turns += Turn(false, bossView ?: full)
@@ -3587,6 +3591,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (lastWorkerResult.isNotBlank() && it.contains(com.arin.selffix.Worker.RESULT_TAG)) it.replace(com.arin.selffix.Worker.RESULT_TAG, lastWorkerResult) else it.replace(com.arin.selffix.Worker.RESULT_TAG, "")
                 }
                 if (Prompt.clean(answer).isBlank() && ran.isEmpty()) failure = "The model sent an empty reply. Tap Retry, or pick another model."
+                // ARIN-PROTECTED: task-summary in every tab — after a task, what was done and what to do next (Arin adds it if missing).
+                ran.filter { it.kind != "steer" && it.ran }.let { steps ->
+                    answer = com.arin.selffix.TaskSummary.ensure(answer, steps.map { it.command }, steps.lastOrNull()?.exitCode.let { it != null && it != 0 })
+                }
             } catch (e: CancellationException) {
                 stopped = true
                 answer = run.liveText // Stop pressed: keep whatever arrived.

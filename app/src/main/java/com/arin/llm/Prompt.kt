@@ -254,7 +254,7 @@ object Prompt {
             .replace(Regex("""0x[0-9a-fA-F]+|\b\d{4,}\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim().take(160)
-        val tool = command.trim().split(Regex("""\s+""")).firstOrNull { it.isNotBlank() && it != "cd" && !it.contains('=') && !it.startsWith("sudo") }.orEmpty()
+        val tool = command.trim().split(Regex("""\s+""")).firstOrNull { it.isNotBlank() && it != "cd" && it != "set" && !it.startsWith("-") && it != "pipefail;" && !it.contains('=') && !it.startsWith("sudo") }.orEmpty()
         return (if (tool.isNotBlank() && !cleaned.contains(tool, true)) "$tool " else "") + cleaned
     }
     private val rememberTag = Regex("""<remember>(.{1,300}?)</remember>""", RegexOption.DOT_MATCHES_ALL)
@@ -461,6 +461,7 @@ object Prompt {
         append(runCatching { com.arin.selffix.ClaudeHelper.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: ai-helper
         append(runCatching { com.arin.selffix.Worker.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: worker-mode
         append(runCatching { com.arin.selffix.TeamWork.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: team-work in every tab
+        append(com.arin.selffix.TaskSummary.RULE).append('\n') // ARIN-PROTECTED: task-summary in every tab
         append(com.arin.selffix.AutoFix.RULE_GENERAL).append("\n\n") // ARIN-PROTECTED: research-first auto-fix rule for every model
 
         if (!need("build")) {

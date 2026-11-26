@@ -269,6 +269,7 @@ object ArinUpdateChat {
         append(ClaudeHelper.instructions(context, "arin-update"))
         append(Worker.instructions(context)) // ARIN-PROTECTED: team-work in every tab
         append(TeamWork.instructions(context)) // ARIN-PROTECTED: team-work in every tab
+        append(TaskSummary.RULE) // ARIN-PROTECTED: task-summary in every tab
         if (fileList.isNotEmpty()) {
             append("Arin's source files (read any with <read_source>):\n")
             append(fileList.joinToString("\n").take(12_000)).append('\n')
@@ -315,6 +316,9 @@ object ArinUpdateChat {
                     }
                 }.toMutableList()
                 var steps = 0
+                // ARIN-PROTECTED: task-summary in every tab — the steps done, for the summary at the end.
+                val done = mutableListOf<String>()
+                var lastFailed = false
                 var helperAsks = 0
                 var consulted = false
                 // ARIN-PROTECTED: helper-sees-only-the-boss — the helper never sees the owner's messages or files. When a
@@ -393,7 +397,8 @@ object ArinUpdateChat {
                                     LinuxGitHub.sync(app, token)
                                     val r = com.arin.terminal.Shell.run(app, cmd, 15 * 60_000L)
                                     val out = (r.stdout + "\n" + r.stderr).trim()
-                                    "Command: $cmd\nExit code: ${r.exitCode}\nOutput:\n" + if (team) TeamWork.shrink(out) else out.takeLast(12_000)
+                                    val code = if (TeamWork.nothingFound(r.exitCode, out)) "0 (nothing found — not an error)" else "${r.exitCode}"
+                                    "Command: $cmd\nExit code: $code\nOutput:\n" + if (team) TeamWork.shrink(out) else out.takeLast(12_000)
                                 }
                             }
                             read != null -> {
@@ -415,6 +420,8 @@ object ArinUpdateChat {
                             else -> { helperAsks++; status = "Asking ${ClaudeHelper.helper(app).name} for help"; "The AI helper's answer:\n" + ClaudeHelper.ask(app, ask!!, source = "arin-update").take(12_000) }
                         }
                         turns += ChatMessage(Role.ASSISTANT, reply.trim())
+                        done += cmd ?: read?.let { "read $it" } ?: search?.let { "searched the internet: $it" } ?: fetch?.let { "read $it" } ?: "asked the AI helper"
+                        lastFailed = Regex("(?i)exit code: [1-9]|couldn't").containsMatchIn(result.take(4_000))
                         val isError = ask == null && Regex("(?i)(FAILED|error|exception|not found|denied|couldn't|cannot|unable|exit code: [1-9])").containsMatchIn(result.take(4_000))
                         val g = if (ask != null || !isError) null else guide(result) // only errors, and only the error itself
                         turns += ChatMessage(Role.USER, "[Tool result]\n$result" +
@@ -437,7 +444,7 @@ object ArinUpdateChat {
                         live = ""
                         continue
                     }
-                    val shown = cleanTags(reply).trim()
+                    val shown = TaskSummary.ensure(cleanTags(reply).trim(), done, lastFailed) // ARIN-PROTECTED: task-summary in every tab
                     messages += Msg(false, shown.ifBlank { "(Ready to build.)" })
                     live = ""
                     save(app)

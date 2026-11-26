@@ -316,6 +316,12 @@ private fun ResultCard(r: TimelineItem.Result, onRetry: (() -> Unit)? = null, on
                 color = if (r.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
             )
             r.apkUrl?.let { url -> ApkDownload(url) }
+            // ARIN-PROTECTED: task-summary in every tab — what was done and what to do next, after every build (made by Arin, no AI).
+            com.arin.selffix.TaskSummary.forBuild(r.success, r.message, r.apkUrl,
+                if (written) r.message.removePrefix(BuildAgent.CODE_READY).split(',').count { it.isNotBlank() } else null).let { (did, next) ->
+                Text("Summary — what I did: $did", style = MaterialTheme.typography.bodyMedium)
+                Text("What to do next: $next", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            }
             if (onRetry != null) {
                 Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("Retry from where it stopped") }
             }

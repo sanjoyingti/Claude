@@ -92,6 +92,24 @@ object TeamWork {
         return text.take(h) + "\n…(${text.length - max} characters skipped by Arin — ask for a narrower step if you need them)…\n" + text.takeLast(max - h)
     }
 
+    /**
+     * Arin removes `set -e` / `set -o pipefail` (also inside `set -euo pipefail`): with them, a grep or find that simply
+     * finds nothing, or a `| head`, makes the whole step look failed.
+     */
+    fun noStrictShell(cmd: String): String =
+        cmd.replace(Regex("""(?m)(^|;|&&|>)[ \t]*set[ \t]+-[euxo]+([ \t]+pipefail)?[ \t]*(;|&&|$)""")) { m ->
+            val before = m.groupValues[1]
+            if (before == ";" || before == "&&") "$before " else before
+        }.replace(Regex("""(;|&&)[ \t]*(;|&&)"""), "$1")
+
+    /**
+     * True when a "failed" step really just found nothing: grep/find/diff exit 1 or a closed pipe (141) with no error
+     * text in the output. Arin then tells the model "nothing found" instead of researching an error that isn't there.
+     */
+    fun nothingFound(exitCode: Int?, output: String): Boolean =
+        (exitCode == 1 || exitCode == 141) &&
+            !Regex("(?i)(error|exception|fatal|denied|invalid|traceback|not found|no such file|cannot|can't|unable|usage:)").containsMatchIn(output)
+
     /** A direction as the worker may see it: no code blocks, not too long. */
     fun safeDirection(d: String): String = d
         .replace(Regex("(?s)```.*?```"), "[code removed by Arin]")
@@ -122,7 +140,8 @@ object TeamWork {
         "the shell command(s) for it. You can NOT see any files or outputs — the supervisor reads the result. Reply with ONLY " +
         "<run>the commands</run> (one tag; chain with && or a short heredoc script), or <install>package</install> if a tool " +
         "must be installed. Keep the output SMALL: grep -rn with -m limits, head, sed -n ranges, wc -l, ls | head, quiet flags; " +
-        "never print whole big files or binaries. If you truly can't, ask the helper: <ask_helper>NEED: …</ask_helper>."
+        "never print whole big files or binaries. NEVER use set -e, set -u or set -o pipefail (a search that finds nothing " +
+        "would look like a failure); end searches that may find nothing with || true. If you truly can't, ask the helper: <ask_helper>NEED: …</ask_helper>."
 
     private const val WRITE_SYSTEM = "You are the WORKER. Your supervisor tells you what a file must contain. Write the " +
         "COMPLETE file, working and ready to use. Reply with ONLY the file's content in one ``` block — no explanations. " +
@@ -144,7 +163,7 @@ object TeamWork {
         val tag = Regex("""(?s)<run>.*?</run>|<install>.*?</install>""").find(out)?.value
             ?: out.replace(Regex("(?s)^.*?```(?:bash|sh|shell)?\\n"), "").substringBefore("```").trim()
                 .takeIf { it.isNotBlank() && it.lines().size <= 40 && !out.contains("<ask_helper>") }?.let { "<run>$it</run>" }
-        return if (tag == null) "" to "" else Worker.nice(who) to tag
+        return if (tag == null) "" to "" else Worker.nice(who) to noStrictShell(tag)
     }
 
     /** The worker writes the file [path] from the boss's [spec]. Returns (worker model, content) or ("", ""). */

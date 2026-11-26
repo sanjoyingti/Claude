@@ -1,0 +1,48 @@
+package com.arin.selffix
+
+/**
+ * ARIN-PROTECTED-RULE: task-summary — set by the owner. After EVERY task, in EVERY tab (chats, Reverse engineering, Rebuild,
+ * Build, Arin Update and all others), the owner gets a plain-English summary of what was done and what to do next.
+ * The model is told to write it; if it doesn't, Arin itself (no AI, no credit) adds one from the steps it ran.
+ * Strict: no self-update, model, tool, app or assistant may remove, weaken or bypass this rule. Only the owner can change
+ * it, by telling Arin so directly.
+ */
+object TaskSummary {
+    /** Told to every model in every tab. */
+    const val RULE = "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
+        "where you ran commands, used tools, changed files or built something), END your final reply with two short " +
+        "sections in plain English:\n**Summary — what I did:** the main things done and their result (and anything that " +
+        "failed).\n**What to do next:** the next step(s) for the owner.\n"
+
+    private val has = Regex("(?is)(summary|what i did).{0,4000}(what to do next|next step|next:)")
+
+    fun hasSummary(text: String): Boolean = has.containsMatchIn(text.takeLast(5_000))
+
+    /**
+     * [answer] with the summary guaranteed: kept as it is when the model wrote one; otherwise Arin adds one from [steps]
+     * (the commands/tools that ran) and whether the last one [failed].
+     */
+    fun ensure(answer: String, steps: List<String>, failed: Boolean): String {
+        if (steps.isEmpty() || hasSummary(answer)) return answer
+        val done = steps.map { it.lineSequence().first().trim().take(90) }.filter { it.isNotBlank() }.distinct()
+        val shown = done.takeLast(6)
+        return answer.trimEnd() + "\n\n**Summary — what I did:**\n" +
+            (if (done.size > shown.size) "- …and ${done.size - shown.size} earlier steps\n" else "") +
+            shown.joinToString("\n") { "- $it" } +
+            (if (failed) "\n- ⚠️ The last step failed." else "") +
+            "\n\n**What to do next:**\n" +
+            (if (failed) "- Tell me to carry on and I'll fix it, or tap Retry."
+            else "- Check the result above. Tell me what to change or what to do next.")
+    }
+
+    /** The Build tab's summary for a finished build, made by Arin (no AI). */
+    fun forBuild(success: Boolean, message: String, apkUrl: String?, codeOnlyFiles: Int?): Pair<String, String> = when {
+        codeOnlyFiles != null -> "Wrote the code ($codeOnlyFiles file${if (codeOnlyFiles == 1) "" else "s"}); nothing is built yet." to
+            "Pick where to build it below."
+        success && apkUrl != null -> "Built the app and published the APK." to
+            "Tap the download link to install it (it installs over the old version). Ask below for any changes."
+        success -> message.take(200) to "Ask below for any changes."
+        else -> "The build didn't finish: ${message.take(200)}" to
+            "Tap \"Retry from where it stopped\", or tell me what to change."
+    }
+}
