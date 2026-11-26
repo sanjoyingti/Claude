@@ -84,7 +84,9 @@ private fun ProLogin(vm: ChatViewModel) {
         val accounts = remember(vm.ccAccountsTick) { com.arin.claudecode.ClaudeAccounts.migrate(ctx); com.arin.claudecode.ClaudeAccounts.list(ctx) }
         accounts.forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("• ${a.name}", modifier = Modifier.weight(1f))
+                var email by remember(a.id) { mutableStateOf<String?>(null) }
+                androidx.compose.runtime.LaunchedEffect(a.id) { email = com.arin.claudecode.ClaudeAccounts.email(ctx, a.id) }
+                Text("• ${a.name}" + (email?.let { " ($it)" } ?: ""), modifier = Modifier.weight(1f))
                 TextButton(onClick = { vm.makeCcAccountMain(a.id) }) { Text("Use in this tab") }
                 TextButton(onClick = { vm.removeCcAccount(a.id) }) { Text("Remove") }
             }

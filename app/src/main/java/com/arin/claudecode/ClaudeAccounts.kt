@@ -95,6 +95,18 @@ object ClaudeAccounts {
         if (src.exists()) runCatching { src.copyTo(file(c, ClaudeCode.tokenFile()), overwrite = true) }
     }
 
+    /** The email of the Claude account behind a token (when Claude says), to check it's the right account. */
+    suspend fun email(c: Context, id: String): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val token = file(c, tokenPath(id)).readText().trim()
+            val con = java.net.URL("https://api.anthropic.com/api/oauth/profile").openConnection() as java.net.HttpURLConnection
+            con.setRequestProperty("Authorization", "Bearer $token"); con.setRequestProperty("anthropic-beta", "oauth-2025-04-20")
+            con.connectTimeout = 15_000; con.readTimeout = 15_000
+            if (con.responseCode != 200) return@runCatching null
+            JSONObject(con.inputStream.bufferedReader().readText()).optJSONObject("account")?.optString("email")?.ifBlank { null }
+        }.getOrNull()
+    }
+
     fun rename(c: Context, id: String, name: String) = save(c, list(c).map { if (it.id == id) it.copy(name = name) else it })
 
     fun remove(c: Context, id: String) {
@@ -120,6 +132,8 @@ object ClaudeAccounts {
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit, onError: (String) -> Unit = {}) {
+    // When it closes, forget this sign-in too, so the next fresh page starts empty.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { CookieManager.getInstance().removeAllCookies(null); WebStorage.getInstance().deleteAllData() } }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
             Column {
@@ -136,8 +150,6 @@ fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         // Fresh every time: forget all cookies, storage and cache before loading.
-                        CookieManager.getInstance().removeAllCookies(null)
-                        CookieManager.getInstance().flush()
                         WebStorage.getInstance().deleteAllData()
                         WebView(ctx).apply {
                             clearCache(true); clearHistory(); clearFormData()
@@ -176,7 +188,15 @@ fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit
                                     }
                                 }
                             }
-                            loadUrl(url)
+                            // Load only AFTER every old cookie is really gone (removal finishes later, in the background),
+                            // otherwise Claude still sees the previous account and shows its "Authorize" page.
+                            val wv = this
+                            CookieManager.getInstance().removeAllCookies {
+                                CookieManager.getInstance().removeSessionCookies {
+                                    CookieManager.getInstance().flush()
+                                    wv.post { wv.loadUrl(url) }
+                                }
+                            }
                         }
                     },
                 )

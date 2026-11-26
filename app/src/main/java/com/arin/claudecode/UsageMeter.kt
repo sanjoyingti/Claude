@@ -197,14 +197,14 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
     )
 }
 
-private fun pct(w: UsageMeter.Window?) = if (w == null) "–" else "${(w.used * 100).toInt()}%"
+private fun pct(w: UsageMeter.Window?) = if (w == null) "–" else if (w.used >= 1.0) "limit reached" else "${(w.used * 100).toInt()}%"
 
 @Composable
 private fun Block(title: String, w: UsageMeter.Window?) {
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(if (w == null) "not known yet" else "${(w.used * 100).toInt()}% used", style = MaterialTheme.typography.bodySmall)
+            Text(if (w == null) "not known yet" else if (w.used >= 1.0) "limit reached" else "${(w.used * 100).toInt()}% used", style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(6.dp))
         LinearProgressIndicator(progress = { (w?.used ?: 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(6.dp))
