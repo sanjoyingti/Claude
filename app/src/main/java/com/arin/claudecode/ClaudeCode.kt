@@ -388,7 +388,7 @@ PY
         #!/bin/bash
         # ARIN_WRAPPER — written by Arin. Your brain (API and model) is set in Arin: Settings → Claude Code.
         if [ -f $BRIDGE_ENV ] && ! curl -s -m 2 http://127.0.0.1:8787/health >/dev/null 2>&1; then
-          ( set -a; . $BRIDGE_ENV; set +a; setsid python3 /root/.arin/cc-bridge.py >/dev/null 2>&1 & )
+          ( set -a; . $BRIDGE_ENV; set +a; setsid python3 /root/.arin/cc-bridge.py 8787 >/dev/null 2>&1 & )
           for i in 1 2 3 4 5 6 7 8 9 10; do curl -s -m 1 http://127.0.0.1:8787/health >/dev/null 2>&1 && break; sleep 0.3; done
         fi
         exec $REAL_BIN "${'$'}@"
@@ -470,36 +470,37 @@ PY
 
         // 4. Restart the bridge only if its API or key changed (so a running reply isn't cut off).
         val bridgeAfter = runCatching { bridgeEnv.readText() }.getOrDefault("")
-        if (bridgeAfter != bridgeBefore) Shell.run(context, "pkill -f 'cc-[b]ridge.py' 2>/dev/null; echo ok", 30_000)
+        // Only this tab's bridge (port 8787); other tabs' bridges keep running.
+        if (bridgeAfter != bridgeBefore) Shell.run(context, "pkill -f 'cc-[b]ridge.py( 8787)?$' 2>/dev/null; echo ok", 30_000)
     }
 
     // ---------- the local bridge (Anthropic format -> OpenAI format) ----------
 
     private const val BRIDGE_PORT = 8787
     const val BRIDGE_PORT_PUBLIC = BRIDGE_PORT
-    @Volatile private var bridgeFor = ""
-
-    /** The bridge for [base] (OpenAI-style APIs), started only if it isn't already running for that API. */
-    suspend fun ensureBridge(context: Context, base: String, key: String): Boolean {
-        val id = base + "|" + key.hashCode()
-        if (bridgeFor == id && Shell.run(context, "curl -s http://127.0.0.1:$BRIDGE_PORT/health >/dev/null && echo up", 20_000).stdout.contains("up")) return true
-        val ok = startBridge(context, Backend("openai", base, key, ""))
-        if (ok) bridgeFor = id
-        return ok
+    /**
+     * A bridge of its own for each OpenAI-style API (its own port), started only if it isn't running yet — so tabs using
+     * different APIs at the same time never restart each other's. Returns its port, or null if it didn't start.
+     */
+    suspend fun ensureBridge(context: Context, base: String, key: String): Int? {
+        val port = 8800 + Math.floorMod((base + "|" + key).hashCode(), 150)
+        if (Shell.run(context, "curl -s -m 2 http://127.0.0.1:$port/health >/dev/null && echo up", 20_000).stdout.contains("up")) return port
+        return if (startBridge(context, Backend("openai", base, key, ""), port = port)) port else null
     }
     private const val BRIDGE = "/root/.arin/cc-bridge.py"
 
     /** (Re)start the bridge for this API. Its key goes in through the environment, never to disk. */
-    private suspend fun startBridge(context: Context, b: Backend, thinkLess: Boolean = false): Boolean {
+    private suspend fun startBridge(context: Context, b: Backend, thinkLess: Boolean = false, port: Int = BRIDGE_PORT): Boolean {
         val dir = java.io.File(com.arin.terminal.Linux.rootfs(context), "root/.arin").apply { mkdirs() }
         context.assets.open("cc-bridge.py").use { input -> java.io.File(dir, "cc-bridge.py").outputStream().use { input.copyTo(it) } }
         val r = Shell.run(
             context,
             "command -v python3 >/dev/null || apt-get install -y python3 >/dev/null 2>&1; " +
-                "pkill -f 'cc-[b]ridge.py' 2>/dev/null; sleep 0.3; " +
-                "ARIN_UPSTREAM='${esc(b.base)}' ARIN_KEY='${esc(b.key)}' ARIN_PORT=$BRIDGE_PORT ARIN_THINK_LESS=${if (thinkLess) 1 else 0} " +
-                    "setsid python3 $BRIDGE >/dev/null 2>&1 & " +
-                "for i in 1 2 3 4 5 6 7 8 9 10; do curl -s http://127.0.0.1:$BRIDGE_PORT/health >/dev/null && { echo up; break; }; sleep 0.5; done",
+                // Only the bridge on THIS port is restarted (each API/tab has its own).
+                (if (port == BRIDGE_PORT) "pkill -f 'cc-[b]ridge.py( $port)?$' 2>/dev/null; " else "pkill -f 'cc-[b]ridge.py $port$' 2>/dev/null; ") + "sleep 0.3; " +
+                "ARIN_UPSTREAM='${esc(b.base)}' ARIN_KEY='${esc(b.key)}' ARIN_PORT=$port ARIN_THINK_LESS=${if (thinkLess) 1 else 0} " +
+                    "setsid python3 $BRIDGE $port >/dev/null 2>&1 & " +
+                "for i in 1 2 3 4 5 6 7 8 9 10; do curl -s http://127.0.0.1:$port/health >/dev/null && { echo up; break; }; sleep 0.5; done",
             90_000,
         )
         return r.stdout.contains("up")
@@ -585,13 +586,13 @@ PY
             (if (pro) listOf("WebSearch") else emptyList()) + extras.mcpServers.map { "mcp__$it" }).joinToString(" ")
         val dropped = (HEAVY_TOOLS + if (pro) emptyList() else listOf("WebSearch")).joinToString(" ")
         val flags = (if (continueChat) "--continue " else "") +
-            "--model '$m' --output-format stream-json --verbose --include-partial-messages " + mcpFlag +
+            "--model '$m' --output-format stream-json --verbose --include-partial-messages --add-dir /root/.arin/cc-tab " + mcpFlag +
             "--disallowedTools $dropped --allowedTools $tools"
         val thinking = if (extras.thinkLess) "export MAX_THINKING_TOKENS=0; " else ""
         val r = Shell.run(
             context,
-            "pkill -f 'claude -[p]' 2>/dev/null; echo '$b64' | base64 -d > $RUN_PROMPT; rm -f $RUN_OUT; " +
-                "mkdir -p /root/files; cd /root/files; " + gitSetup +
+            "pkill -f '[a]dd-dir /root/.arin/cc-tab' 2>/dev/null; echo '$b64' | base64 -d > $RUN_PROMPT; rm -f $RUN_OUT; " +
+                "mkdir -p /root/files /root/.arin/cc-tab; cd /root/files; " + gitSetup +
                 "setsid bash -c \"$env $gh $thinking claude -p $flags < $RUN_PROMPT > $RUN_OUT 2>&1; echo '{\\\"type\\\":\\\"arin_end\\\"}' >> $RUN_OUT\" >/dev/null 2>&1 & echo started",
             60_000,
         )
@@ -600,7 +601,7 @@ PY
 
     /** Stop the running turn. Writes the end marker itself, since the wrapper that would is stopped too. */
     suspend fun stopTurn(context: Context) {
-        Shell.run(context, "pkill -f 'claude -[p]' 2>/dev/null; sleep 0.5; echo '{\"type\":\"arin_end\"}' >> $RUN_OUT; echo ok", 30_000)
+        Shell.run(context, "pkill -f '[a]dd-dir /root/.arin/cc-tab' 2>/dev/null; sleep 0.5; echo '{\"type\":\"arin_end\"}' >> $RUN_OUT; echo ok", 30_000)
     }
 
     /** What the running turn has produced so far: like a chat reply (text, thinking, the steps it ran). */

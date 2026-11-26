@@ -42,6 +42,7 @@ object Harness {
     }
 
     private val sessions = ConcurrentHashMap<String, Session>()
+    private val bridgePort = ConcurrentHashMap<String, Int>()
 
     private fun ctx(): Context = com.arin.ArinApp.instance
     private fun root(): File = com.arin.terminal.Linux.rootfs(ctx())
@@ -64,7 +65,8 @@ object Harness {
         if (!com.arin.terminal.Linux.installed(context)) throw LlmException("The Claude Code login needs Arin's Linux: Settings → Linux → Install Linux.")
         if (custom != null) {
             if (!ClaudeCode.installed(context)) throw LlmException("Claude Code isn't installed")
-            if (!custom.anthropic && !ClaudeCode.ensureBridge(context, custom.base, custom.key)) throw LlmException("Arin's bridge didn't start")
+            if (!custom.anthropic) bridgePort[custom.base + custom.key.hashCode()] = ClaudeCode.ensureBridge(context, custom.base, custom.key)
+                ?: throw LlmException("Arin's bridge didn't start")
         }
         // "sonnet@<account>": that account's own sign-in (several Claude accounts, each picked per chat).
         val account = ClaudeAccounts.accountOf(model)
@@ -274,7 +276,8 @@ object Harness {
     private suspend fun start(s: Session, system: String, tools: String) {
         val context = ctx()
         // Too many running at once uses a lot of memory: the least recently used one stops (it resumes later).
-        sessions.values.filter { it !== s && alive(it) }.sortedBy { it.lastUse }.dropLast(MAX_LIVE - 1).forEach { stop(it, keepSession = true) }
+        // Busy ones (working in another tab) are never stopped: tabs run side by side.
+        sessions.values.filter { it !== s && !it.lock.isLocked && alive(it) }.sortedBy { it.lastUse }.dropLast(MAX_LIVE - 1).forEach { stop(it, keepSession = true) }
         f(s.dir).mkdirs()
         f("$BASE/home/.claude").mkdirs()
         f("$BASE/home/.claude.json").takeIf { !it.exists() }?.writeText("{\"hasCompletedOnboarding\":true}")
@@ -310,7 +313,7 @@ object Harness {
     private fun brainEnv(s: Session, token: String): String {
         val c = s.custom ?: return "export CLAUDE_CODE_OAUTH_TOKEN=\\$(cat $token 2>/dev/null); "
         val m = s.model.replace("'", "")
-        val base = if (c.anthropic) c.base.trimEnd('/').removeSuffix("/v1") else "http://127.0.0.1:${ClaudeCode.BRIDGE_PORT_PUBLIC}"
+        val base = if (c.anthropic) c.base.trimEnd('/').removeSuffix("/v1") else "http://127.0.0.1:${bridgePort[c.base + c.key.hashCode()] ?: ClaudeCode.BRIDGE_PORT_PUBLIC}"
         val key = if (c.anthropic) c.key.replace("'", "") else "arin-bridge"
         return "unset CLAUDE_CODE_OAUTH_TOKEN; export ANTHROPIC_BASE_URL='$base' ANTHROPIC_AUTH_TOKEN='$key' ANTHROPIC_MODEL='$m' " +
             "ANTHROPIC_SMALL_FAST_MODEL='$m' ANTHROPIC_DEFAULT_OPUS_MODEL='$m' ANTHROPIC_DEFAULT_SONNET_MODEL='$m' " +
@@ -321,7 +324,7 @@ object Harness {
     private suspend fun stop(s: Session, keepSession: Boolean = false) {
         val pid = runCatching { f("${s.dir}/pid").readText().trim() }.getOrNull()
         runCatching {
-            com.arin.terminal.Shell.run(ctx(), "pkill -f 'add-dir ${s.dir}' 2>/dev/null; " + (if (pid != null) "kill $pid 2>/dev/null; " else "") +
+            com.arin.terminal.Shell.run(ctx(), "pkill -f '[a]dd-dir ${s.dir}' 2>/dev/null; " + (if (pid != null) "kill $pid 2>/dev/null; " else "") +
                 (if (keepSession) "" else "rm -rf ${s.dir}; ") + "echo ok", 20_000)
         }
         if (!keepSession) sessions.remove(s.key)
@@ -330,7 +333,7 @@ object Harness {
     /** Sessions not used for 30 minutes stop (they resume if the conversation continues). */
     private suspend fun trim() {
         val now = System.currentTimeMillis()
-        sessions.values.filter { now - it.lastUse > 30 * 60_000L && alive(it) }.forEach { stop(it, keepSession = true) }
+        sessions.values.filter { now - it.lastUse > 30 * 60_000L && !it.lock.isLocked && alive(it) }.forEach { stop(it, keepSession = true) }
         sessions.values.filter { now - it.lastUse > 24 * 3_600_000L }.forEach { stop(it) }
     }
 
