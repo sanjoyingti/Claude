@@ -536,7 +536,7 @@ private fun LinuxSettings(vm: ChatViewModel) {
             }
             if (vm.linuxReady || !vm.androidBuildReady) {
                 OutlinedButton(onClick = { vm.installDevTools() }) {
-                    Text(if (vm.androidBuildReady) "Update Android build tools" else "Install Android build tools (JDK, Gradle, SDK)")
+                    Text(if (vm.androidBuildReady) "Update all APK & build tools (newest)" else "Install all APK & build tools (JDK, Gradle, SDK, jadx…)")
                 }
             }
             if (vm.linuxReady && vm.mcpServers.any { it.name == com.arin.mcp.Mcp.REA.name }) {

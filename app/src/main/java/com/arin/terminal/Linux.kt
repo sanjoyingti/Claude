@@ -129,7 +129,7 @@ object Linux {
 
     /** Versions installed by [installDevTools] (checked November 2026). */
     const val KOTLINC_VERSION = "2.4.20"
-    const val GRADLE_VERSION = "9.9.0"
+    const val GRADLE_VERSION = "9.9.2"
 
     /**
      * Installs a Java/Kotlin toolchain: OpenJDK 21, the Kotlin compiler and Gradle, so Java and Kotlin
@@ -186,6 +186,60 @@ object Linux {
         }
         return r
     }
+
+    private fun toolkitMarker(context: Context) = File(base(context), "apk-toolkit-ready")
+
+    /** True when the full APK toolkit (jadx, dex2jar, bundletool, apktool, APKEditor, signer, Kotlin, Gradle…) is installed. */
+    fun apkToolkitReady(context: Context): Boolean = installed(context) && toolkitMarker(context).exists()
+
+    /**
+     * ARIN-PROTECTED: apk-toolkit — every tool to decompile, compile, change, rebuild, sign and package apps, always the
+     * newest release (researched November 2026; each run looks up the latest versions and updates what is older).
+     * Needs the Android SDK part ([installAndroidBuild]) for apksigner/d8/r8 and the native aapt2.
+     */
+    suspend fun installApkToolkit(context: Context, log: (String) -> Unit): Termux.Result {
+        log("Installing the newest APK tools: Gradle, Kotlin, apktool, APKEditor, jadx, dex2jar, bundletool, signer, androguard…")
+        configure(context)
+        File(rootfs(context), "root/.arin").mkdirs()
+        File(rootfs(context), "root/.arin/rebuild-sign.sh").writeText(rebuildSignScript)
+        val script = context.assets.open("apk-toolkit-setup.sh").bufferedReader().use { it.readText() }
+        File(rootfs(context), "root/.arin/setup-apk-toolkit.sh").writeText(script)
+        val r = run(context, "bash /root/.arin/setup-apk-toolkit.sh", timeoutMs = 60 * 60_000L, onOutput = log)
+        if (r.combined().contains("APK_TOOLKIT_READY")) toolkitMarker(context).writeText("ok")
+        return r
+    }
+
+    /** Commands that need the Android build tools / APK toolkit. */
+    private val needsTools = Regex("""(?:^|[\s;&|(/])(gradlew?|sdkmanager|avdmanager|aapt2?|d8|r8|apksigner|zipalign|bundletool|arin-build|arin-tools|kotlinc|kotlin|jadx|d2j-[\w-]+|apktool|apkeditor|uber-apk-signer|androguard|rebuild-sign\.sh)\b""")
+
+    /**
+     * ARIN-PROTECTED: apk-toolkit in every tab — before a command that uses a build or APK tool runs, Arin makes sure
+     * the tools are installed (installing them the first time). Returns a problem to report, or null.
+     */
+    suspend fun ensureToolsFor(context: Context, command: String, log: (String) -> Unit): String? {
+        if (!installed(context) || !needsTools.containsMatchIn(command)) return null
+        if (!androidBuildReady(context)) {
+            log("Installing the Android build tools first (JDK, Gradle, Android SDK, aapt2) — first time only…")
+            val a = installAndroidBuild(context, log)
+            if (!androidBuildReady(context)) return "The Android build tools didn't finish installing: " +
+                (a.error ?: a.combined().lines().lastOrNull { it.isNotBlank() }.orEmpty())
+        }
+        if (!apkToolkitReady(context)) {
+            log("Installing the APK toolkit (jadx, dex2jar, bundletool, apktool…) — first time only…")
+            installApkToolkit(context, log)
+        }
+        return null
+    }
+
+    /** Told to the model in every tab: what is installed and how to use it. */
+    const val TOOLS_NOTE = "\n\nAPK TOOLS in Arin's Linux (installed automatically the first time a command uses them; " +
+        "`arin-tools` lists versions, `arin-tools update` updates all to the newest): JDK 21, Gradle (latest) and each " +
+        "project's ./gradlew, Kotlin compiler (kotlinc), Android SDK at /opt/android-sdk (sdkmanager, platforms, " +
+        "build-tools: apksigner, d8, r8; native ARM aapt2/aidl/zipalign — Gradle already uses the ARM aapt2), " +
+        "`arin-build <project dir>` (builds a debug APK, prints ARIN_APK=path), apktool (decode/build), apkeditor " +
+        "(decode/rebuild/merge split APKs), jadx (dex→Java), d2j-dex2jar / d2j-smali / d2j-baksmali, bundletool " +
+        "(.aab→.apks/universal APK), uber-apk-signer, `bash /root/.arin/rebuild-sign.sh <decoded dir|apk> [out.apk]` " +
+        "(rebuild + sign, installable), androguard (Python). Use these instead of installing other copies."
 
     /** Script (inside Linux) that installs what REA needs to analyse APKs. */
     const val ANDROID_TOOLS_SCRIPT = "/root/.arin/setup-android-tools.sh"

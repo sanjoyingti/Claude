@@ -514,6 +514,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // The Android SDK too, so apps compile to APKs right on the phone.
                 val a = com.arin.terminal.Linux.installAndroidBuild(app) { logLine(it) }
                 androidBuildReady = com.arin.terminal.Linux.androidBuildReady(app)
+                // ARIN-PROTECTED: apk-toolkit — and every APK tool, in its newest version.
+                com.arin.terminal.Linux.installApkToolkit(app) { logLine(it) }
                 toggleTerminal(true)
                 notice = if (androidBuildReady) "Java, Kotlin, Gradle and the Android SDK are installed: apps now build on this phone too"
                     else "Java, Kotlin and Gradle are installed, but the Android SDK part didn't finish: " +
@@ -3010,6 +3012,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val gh = githubToken()
                     com.arin.selffix.LinuxGitHub.sync(app, gh)
                     system += com.arin.selffix.LinuxGitHub.note(gh)
+                    if (useTerminal) system += com.arin.terminal.Linux.TOOLS_NOTE // ARIN-PROTECTED: apk-toolkit in every tab
                 }
                 var recalls = 0
                 var claudeAsks = 0
@@ -3284,7 +3287,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             allowed = askToRun(if (action is Prompt.AgentAction.Write) label + "\n\n" + action.content.take(1_500) else
                                 if (action is Prompt.AgentAction.Edit) "$label\n\n− ${action.old.take(600)}\n+ ${action.new.take(600)}" else label, tool = false, fromChat = run.chat)
                         }
-                        val shellProblem = if (allowed) com.arin.terminal.AgentTools.ensureShell(app) { run.status = it } else null
+                        val shellProblem = (if (allowed) com.arin.terminal.AgentTools.ensureShell(app) { run.status = it } else null)
+                            // ARIN-PROTECTED: apk-toolkit in every tab — build/APK tools are installed before a command needs them.
+                            ?: (if (allowed && cmd != null) com.arin.terminal.Linux.ensureToolsFor(app, cmd) { run.status = it.take(120) } else null)
                         val step0 = if (!allowed) {
                             com.arin.data.CommandRun(label, "The person chose not to allow this.", null, ran = false)
                         } else if (shellProblem != null) {

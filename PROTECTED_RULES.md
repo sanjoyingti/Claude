@@ -133,3 +133,12 @@ task the owner gave in that tab:
 - Every model is told: never continue or mention a task from another tab.
 
 No self-update, model, tool or app may remove or weaken this without the owner's approval.
+
+## 8. Every APK and build tool, newest versions, in every tab (`terminal/Linux.kt`, `assets/apk-toolkit-setup.sh`)
+
+Arin's Linux carries the full toolchain to compile source code and to decompile, change, rebuild, sign and package
+APKs: JDK 21, Gradle (latest), Kotlin compiler (latest), Android SDK (command-line tools, platform, build-tools with
+apksigner/d8/r8), native ARM aapt2/aidl/zipalign, arin-build, apktool, APKEditor, jadx, dex2jar (smali/baksmali),
+bundletool, uber-apk-signer and androguard. Each install looks up the newest releases and updates older ones
+(`arin-tools update`). Every tab installs them automatically the first time a command needs them, and every model is
+told they are there.

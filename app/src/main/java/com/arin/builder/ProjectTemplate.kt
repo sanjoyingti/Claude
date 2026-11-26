@@ -14,7 +14,7 @@ object ProjectTemplate {
     const val AGP = "9.5.0"
     const val KOTLIN = "2.4.20"
     const val COMPOSE_BOM = "2026.08.00"
-    const val GRADLE = "9.9.0"
+    const val GRADLE = "9.9.2"
     const val JDK = "21"
     const val SDK = 37
     const val CORE = "1.19.0"

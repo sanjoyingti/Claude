@@ -259,6 +259,7 @@ object ArinUpdateChat {
         append("<run>command</run> runs a command in Arin's built-in Linux (Ubuntu, as root: apt, git, curl, python, node…) ")
         append("and sends you the output — use Linux, the terminal and GitHub whenever the work needs them.\n")
         append(LinuxGitHub.note(com.arin.data.Settings(context).secret("GITHUB")))
+        append(com.arin.terminal.Linux.TOOLS_NOTE).append('\n') // ARIN-PROTECTED: apk-toolkit in every tab
         append("Always research the internet first when you aren't sure how to do something.\n")
         append("PROTECTED RULES (research-first auto-fix, never changing the Custom API, Arin-only updates with the same ")
         append("app id and key, and the AI helper's never-store rule) can only change with the owner's approval. If a ")
@@ -395,6 +396,7 @@ object ArinUpdateChat {
                                 if (!com.arin.terminal.Linux.installed(app)) "Arin's Linux isn't installed yet (Settings → Linux → Install Linux), so the command couldn't run."
                                 else {
                                     LinuxGitHub.sync(app, token)
+                                    com.arin.terminal.Linux.ensureToolsFor(app, cmd) { status = it.take(120) } // ARIN-PROTECTED: apk-toolkit in every tab
                                     val r = com.arin.terminal.Shell.run(app, cmd, 15 * 60_000L)
                                     val out = (r.stdout + "\n" + r.stderr).trim()
                                     val code = if (TeamWork.nothingFound(r.exitCode, out)) "0 (nothing found — not an error)" else "${r.exitCode}"

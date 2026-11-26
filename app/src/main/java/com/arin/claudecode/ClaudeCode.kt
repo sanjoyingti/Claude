@@ -589,7 +589,7 @@ PY
             "--model '$m' --output-format stream-json --verbose --include-partial-messages --add-dir /root/.arin/cc-tab " + mcpFlag +
             "--disallowedTools $dropped --allowedTools $tools" +
             // ARIN-PROTECTED: task-summary in every tab — the Claude Code tab ends every task with what it did and what to do next.
-            " --append-system-prompt '" + com.arin.selffix.TaskSummary.RULE.replace(Regex("[\\n'\"$`\\\\*]"), " ") + "'"
+            " --append-system-prompt '" + (com.arin.selffix.TaskSummary.RULE + com.arin.terminal.Linux.TOOLS_NOTE).replace(Regex("[\\n'\"$`\\\\*]"), " ") + "'"
         val thinking = if (extras.thinkLess) "export MAX_THINKING_TOKENS=0; " else ""
         val r = Shell.run(
             context,
