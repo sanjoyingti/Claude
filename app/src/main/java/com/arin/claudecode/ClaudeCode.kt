@@ -131,9 +131,12 @@ PY
         Shell.run(
             context,
             "command -v script >/dev/null || apt-get install -y bsdutils >/dev/null 2>&1; " +
-                "pkill -f 'claude setup-[t]oken' 2>/dev/null; rm -f $OUT $FIFO; mkfifo $FIFO; " +
+                "pkill -f 'claude setup-[t]oken' 2>/dev/null; rm -f $OUT $FIFO $URL_FILE; mkfifo $FIFO; " +
+                // Claude Code "opens a browser" with the full sign-in link: catch it exactly, instead of reading it off the screen.
+                "mkdir -p /root/.arin/bin; printf '#!/bin/sh\\necho \"$1\" > $URL_FILE\\n' > /root/.arin/bin/xdg-open; " +
+                "chmod +x /root/.arin/bin/xdg-open; cp /root/.arin/bin/xdg-open /root/.arin/bin/arin-browser; " +
                 "( sleep 1800 > $FIFO & ) ; " +
-                "setsid bash -c 'COLUMNS=500 LINES=40 TERM=xterm-256color DISABLE_AUTOUPDATER=1 " +
+                "setsid bash -c 'PATH=/root/.arin/bin:\$PATH BROWSER=/root/.arin/bin/arin-browser COLUMNS=500 LINES=40 TERM=xterm-256color DISABLE_AUTOUPDATER=1 " +
                 "script -qfc \"stty cols 500 rows 40 2>/dev/null; claude setup-token\" /dev/null < $FIFO > $OUT 2>&1' " +
                 ">/dev/null 2>&1 & echo started",
             60_000,
@@ -152,9 +155,28 @@ PY
         .replace(Regex("\u001B[()][0-9A-Za-z]"), "")
         .replace("\r", "")
 
+    private const val URL_FILE = "/root/.cc_login_url"
+
+    /**
+     * The full sign-in link: the one Claude Code tried to open in a browser, or the link inside its terminal hyperlink.
+     * (Reading it off the screen can give a broken, cut link — that sends you to the wrong account.)
+     */
+    suspend fun loginUrl(context: Context): String? {
+        val r = Shell.run(context, "cat $URL_FILE 2>/dev/null; echo; echo ===; cat $OUT 2>/dev/null", 30_000).stdout
+        val opened = r.substringBefore("===").trim()
+        if (opened.startsWith("https://") && opened.contains("client_id")) return opened
+        val raw = r.substringAfter("===")
+        // Terminal hyperlinks: ESC ] 8 ; ; URL BEL
+        Regex("\u001B]8;[^;]*;(https://[^\u0007\u001B]+)").findAll(raw).map { it.groupValues[1] }
+            .firstOrNull { it.contains("oauth") && it.contains("client_id") }?.let { return it }
+        // Last resort: the plain text, joined across line breaks, but only if it is complete.
+        val joined = plain(raw).replace(Regex("\\s*\\n\\s*"), "")
+        return urlIn(joined)?.takeIf { it.contains("client_id") && it.contains("redirect_uri") }
+    }
+
     /** The OAuth URL printed by the login, if any. */
     fun urlIn(output: String): String? =
-        Regex("https://claude\\.ai/oauth/authorize\\S*").find(output)?.value
+        Regex("https://claude\\.(ai|com)/(cai/)?oauth/authorize\\S*").find(output)?.value
             ?: Regex("https://[\\w.-]*(claude|anthropic)[\\w.-]*/[\\w./?=&%+~-]*oauth[\\w./?=&%+~-]*", RegexOption.IGNORE_CASE).find(output)?.value
 
     /** True while the sign-in program is still running and waiting. */

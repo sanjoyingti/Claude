@@ -651,11 +651,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var out = com.arin.claudecode.ClaudeCode.startLogin(app)
                 // Claude Code starts slowly in Arin's Linux: keep looking for the link for up to a minute.
                 var tries = 0
-                ccLoginUrl = com.arin.claudecode.ClaudeCode.urlIn(out)
+                // The FULL link (a cut one sends you to the wrong account).
+                ccLoginUrl = com.arin.claudecode.ClaudeCode.loginUrl(app)
                 while (ccLoginUrl == null && tries++ < 30) {
                     kotlinx.coroutines.delay(2000)
                     out = com.arin.claudecode.ClaudeCode.loginOutput(app)
-                    ccLoginUrl = com.arin.claudecode.ClaudeCode.urlIn(out)
+                    ccLoginUrl = com.arin.claudecode.ClaudeCode.loginUrl(app)
                 }
                 if (ccLoginUrl == null) {
                     ccLoginStatus = "Couldn't get the sign-in link. " + lastLoginLine(out).ifBlank { "Is Claude Code installed?" }

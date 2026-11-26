@@ -117,6 +117,7 @@ object Harness {
             // Read this turn's events until its result.
             var sentText = false
             var newBlock = false
+            val thinkSplit = ThinkSplit()
             var finished = false
             var waited = 0L
             try {
@@ -135,7 +136,11 @@ object Harness {
                                         when (d.optString("type")) {
                                             "text_delta" -> d.optString("text").takeIf { it.isNotEmpty() }?.let {
                                                 if (newBlock) { send(Delta.Text("\n\n")); newBlock = false }
-                                                sentText = true; send(Delta.Text(it))
+                                                // Some models (DeepSeek and others) write their reasoning as <think>…</think>
+                                                // inside the answer: it goes to the reasoning, not the reply.
+                                                for ((isThought, part) in thinkSplit.feed(it)) {
+                                                    if (isThought) send(Delta.Thinking(part)) else { sentText = true; send(Delta.Text(part)) }
+                                                }
                                             }
                                             "thinking_delta" -> d.optString("thinking").takeIf { it.isNotEmpty() }?.let { send(Delta.Thinking(it)) }
                                         }
@@ -179,6 +184,33 @@ object Harness {
             session.lastUse = System.currentTimeMillis()
         }
         trim()
+    }
+
+    /** Splits streamed text into (reasoning?, text) parts at <think> and </think>, even when a tag arrives in pieces. */
+    private class ThinkSplit {
+        private var inside = false
+        private var held = ""
+        fun feed(chunk: String): List<Pair<Boolean, String>> {
+            var s = held + chunk
+            held = ""
+            val out = mutableListOf<Pair<Boolean, String>>()
+            while (s.isNotEmpty()) {
+                val tag = if (inside) "</think>" else "<think>"
+                val i = s.indexOf(tag)
+                if (i >= 0) {
+                    if (i > 0) out += inside to s.substring(0, i)
+                    inside = !inside
+                    s = s.substring(i + tag.length)
+                    continue
+                }
+                // Keep a possible half tag at the end for the next chunk.
+                val keep = (1 until tag.length).lastOrNull { s.endsWith(tag.substring(0, it)) } ?: 0
+                if (s.length > keep) out += inside to s.substring(0, s.length - keep)
+                held = s.takeLast(keep)
+                break
+            }
+            return out
+        }
     }
 
     private fun cap(t: String): String = if (t.length <= 24_000) t else t.take(16_000) + "\n…(cut: ${t.length - 22_000} characters)…\n" + t.takeLast(6_000)

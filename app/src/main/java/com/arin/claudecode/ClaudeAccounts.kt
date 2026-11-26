@@ -129,6 +129,9 @@ object ClaudeAccounts {
  * in to exactly the account you type — not whichever account your browser remembers. The code at the end is picked
  * up automatically.
  */
+/** Said by [FreshSignInDialog] when the sign-in finished by itself (nothing to paste). */
+const val LOCAL_DONE = "__arin_local_signin_done__"
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit, onError: (String) -> Unit = {}) {
@@ -165,6 +168,12 @@ fun FreshSignInDialog(url: String, onCode: (String) -> Unit, onClose: () -> Unit
                             var sent = false
                             fun check(u: String?) {
                                 if (sent || u == null) return
+                                // The link's own finish: Claude sends you back to Claude Code on this phone (localhost), which
+                                // completes the sign-in itself. Nothing to paste — just close when it's done.
+                                if (u.startsWith("http://localhost") || u.startsWith("http://127.0.0.1")) {
+                                    if (u.contains("callback") && u.contains("code=")) { sent = true; postDelayed({ onCode(LOCAL_DONE) }, 2500) }
+                                    return
+                                }
                                 val uri = android.net.Uri.parse(u)
                                 val code = uri.getQueryParameter("code") ?: return
                                 if (!u.contains("callback")) return
