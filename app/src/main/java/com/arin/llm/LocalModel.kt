@@ -95,13 +95,20 @@ object LocalModel {
             "apt-get install -y -qq libcurl4t64 libssl3t64 >/dev/null 2>&1 || apt-get install -y -qq libcurl4 libssl3 >/dev/null 2>&1; echo ok", timeoutMs = 15 * 60_000L)
 
         val prebuilt = runCatching {
-            log("Looking up the latest llama.cpp release…")
-            val rel = getJson("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest") as JsonObject
-            val tag = (rel["tag_name"] as? JsonPrimitive)?.contentOrNull.orEmpty()
-            val asset = (rel["assets"] as JsonArray).map { it as JsonObject }.firstOrNull { a ->
-                val n = (a["name"] as JsonPrimitive).content
-                n.endsWith("bin-ubuntu-$arch.tar.gz") || n.endsWith("bin-ubuntu-$arch.zip")
-            } ?: throw IllegalStateException("No Ubuntu $arch build in release $tag")
+            log("Looking up the newest llama.cpp build…")
+            // The phone builds are in the numbered build releases (b1234…), not in "latest" (which may have no files):
+            // take the newest release that has the Ubuntu build for this phone.
+            val releases = getJson("https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20") as JsonArray
+            var tag = ""
+            var asset: JsonObject? = null
+            for (r in releases.map { it as JsonObject }) {
+                val a = (r["assets"] as? JsonArray)?.map { it as JsonObject }?.firstOrNull { x ->
+                    val n = (x["name"] as JsonPrimitive).content
+                    n.endsWith("bin-ubuntu-$arch.tar.gz") || n.endsWith("bin-ubuntu-$arch.zip")
+                }
+                if (a != null) { asset = a; tag = (r["tag_name"] as? JsonPrimitive)?.contentOrNull.orEmpty(); break }
+            }
+            if (asset == null) throw IllegalStateException("No Ubuntu $arch build in the last 20 llama.cpp releases")
             val name = (asset["name"] as JsonPrimitive).content
             val url = (asset["browser_download_url"] as JsonPrimitive).content
             log("Downloading llama.cpp $tag ($name)…")
@@ -125,14 +132,14 @@ object LocalModel {
         }
         if (!prebuilt) {
             val r = Linux.run(context,
-                "apt-get install -y -qq build-essential cmake git >/dev/null 2>&1 && rm -rf ~/.arin/llama-src && " +
-                    "git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/.arin/llama-src && cd ~/.arin/llama-src && " +
-                    "cmake -B build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=ON >/dev/null && " +
+                "set -o pipefail; (apt-get update -qq; apt-get install -y -qq build-essential cmake git) 2>&1 | tail -3 && rm -rf ~/.arin/llama-src && " +
+                    "git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/.arin/llama-src 2>&1 | tail -2 && cd ~/.arin/llama-src && " +
+                    "cmake -B build -DCMAKE_BUILD_TYPE=Release -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF 2>&1 | tail -3 && " +
                     "cmake --build build --target llama-server -j\$(nproc) 2>&1 | tail -3 && " +
                     "mkdir -p ~/.arin/llama && cp build/bin/llama-server ~/.arin/llama/ && ln -sf ~/.arin/llama/llama-server ~/.arin/llama-server && " +
                     "echo ~/.arin/llama > ~/.arin/llama-libdir && ~/.arin/llama-server --version 2>&1 | head -3",
                 timeoutMs = 60 * 60_000L) { line -> if (line.contains('%') || line.contains("Linking")) log(line.trim().take(120)) }
-            if (r.exitCode != 0) return@withContext "Couldn't install llama.cpp: " + (r.error ?: r.combined().takeLast(500))
+            if (r.exitCode != 0) return@withContext "Couldn't install llama.cpp: " + (r.error ?: r.combined().takeLast(500).ifBlank { "the build stopped (exit ${r.exitCode})" })
         }
         serverMarker(context).writeText(System.currentTimeMillis().toString())
         log("llama.cpp server is installed.")
