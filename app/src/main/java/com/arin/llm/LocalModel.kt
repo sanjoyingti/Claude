@@ -128,14 +128,24 @@ object LocalModel {
             download(url, archive) { done, total -> log("Downloading llama.cpp: ${pct(done, total)}") }
             val dir = serverDir(context)
             val p = linuxPath(context, archive)
+            // Unpacked by Arin itself (not tar inside Linux, which fails on some phones): files, folders and links.
+            log("Unpacking llama.cpp…")
+            val fresh = File(arinDir(context), "llama.new")
+            fresh.deleteRecursively(); fresh.mkdirs()
+            if (name.endsWith(".zip")) unzip(archive, fresh) else untarGz(archive, fresh)
+            archive.delete()
+            dir.deleteRecursively()
+            if (!fresh.renameTo(dir)) throw IllegalStateException("couldn't move the unpacked files into place")
+            val server = dir.walkTopDown().firstOrNull { it.isFile && it.name == "llama-server" }
+                ?: throw IllegalStateException("llama-server wasn't in the download")
+            server.setExecutable(true, false)
+            dir.walkTopDown().filter { it.isFile && !it.name.contains('.') }.forEach { it.setExecutable(true, false) }
+            val sPath = linuxPath(context, server)
+            val dPath = linuxPath(context, server.parentFile!!)
             val r = Linux.run(context,
-                "rm -rf ~/.arin/llama.new && mkdir -p ~/.arin/llama.new && cd ~/.arin/llama.new && " +
-                    (if (name.endsWith(".zip")) "(command -v unzip >/dev/null || apt-get install -y -qq unzip >/dev/null) && unzip -oq '$p'" else "tar --no-same-owner -xzf '$p'") +
-                    " && cd ~ && rm -rf ~/.arin/llama && mv ~/.arin/llama.new ~/.arin/llama" +
-                    " && rm -f '$p' && S=$(find ~/.arin/llama -name llama-server -type f | head -1) && chmod +x \"\$S\" && " +
-                    "D=$(dirname \"\$S\") && ln -sf \"\$S\" ~/.arin/llama-server && echo \"\$D\" > ~/.arin/llama-libdir && " +
-                    "LD_LIBRARY_PATH=\"\$D\" \"\$S\" --version 2>&1 | head -3",
-                timeoutMs = 10 * 60_000L)
+                "ln -sf '$sPath' ~/.arin/llama-server && echo '$dPath' > ~/.arin/llama-libdir && " +
+                    "LD_LIBRARY_PATH='$dPath' '$sPath' --version 2>&1",
+                timeoutMs = 5 * 60_000L)
             if (r.exitCode != 0 || !File(dir, ".").exists()) throw IllegalStateException(r.combined().takeLast(400))
             log(r.combined().trim().lines().lastOrNull().orEmpty())
             true
@@ -158,6 +168,69 @@ object LocalModel {
         serverMarker(context).writeText(System.currentTimeMillis().toString())
         log("llama.cpp server is installed.")
         null
+    }
+
+    private fun skip(input: java.io.InputStream, n: Long) {
+        var left = n
+        val buf = ByteArray(8192)
+        while (left > 0) { val r = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt()); if (r < 0) break; left -= r }
+    }
+
+    /** Unpacks a .tar.gz into [dest]: files (with their permissions), folders and symbolic links. */
+    private fun untarGz(archive: File, dest: File) {
+        java.util.zip.GZIPInputStream(archive.inputStream().buffered(), 64 * 1024).use { input ->
+            val header = ByteArray(512)
+            var longName: String? = null
+            fun readFully(buf: ByteArray, n: Int) { var o = 0; while (o < n) { val r = input.read(buf, o, n - o); if (r < 0) throw java.io.EOFException(); o += r } }
+            fun str(b: ByteArray, off: Int, len: Int) = String(b, off, len, Charsets.UTF_8).substringBefore('\u0000').trim()
+            while (true) {
+                readFully(header, 512)
+                if (header.all { it.toInt() == 0 }) break
+                var name = longName ?: run {
+                    val prefix = str(header, 345, 155); val n = str(header, 0, 100)
+                    if (prefix.isNotEmpty()) "$prefix/$n" else n
+                }
+                longName = null
+                val size = str(header, 124, 12).ifBlank { "0" }.toLong(8)
+                val mode = str(header, 100, 8).ifBlank { "644" }.toInt(8)
+                val type = header[156].toInt().toChar()
+                val link = str(header, 157, 100)
+                val padded = ((size + 511) / 512) * 512
+                fun body(): ByteArray { val b = ByteArray(padded.toInt()); readFully(b, padded.toInt()); return b.copyOf(size.toInt()) }
+                if (type == 'L') { longName = String(body(), Charsets.UTF_8).substringBefore('\u0000'); continue }
+                if (type == 'x' || type == 'g') { body(); continue }
+                name = name.removePrefix("./")
+                if (name.contains("..")) { if (size > 0) skip(input, padded); continue }
+                val out = File(dest, name)
+                when (type) {
+                    '5' -> out.mkdirs()
+                    '2' -> { out.parentFile?.mkdirs(); out.delete(); runCatching { android.system.Os.symlink(link, out.path) } }
+                    '0', '\u0000', '7' -> {
+                        out.parentFile?.mkdirs()
+                        out.outputStream().use { o ->
+                            var left = size
+                            val buf = ByteArray(64 * 1024)
+                            while (left > 0) { val r = input.read(buf, 0, minOf(buf.size.toLong(), left).toInt()); if (r < 0) throw java.io.EOFException(); o.write(buf, 0, r); left -= r }
+                        }
+                        val rest = padded - size
+                        if (rest > 0) skip(input, rest)
+                        if (mode and 0b001_001_001 != 0) out.setExecutable(true, false)
+                    }
+                    else -> if (padded > 0) skip(input, padded)
+                }
+            }
+        }
+    }
+
+    private fun unzip(archive: File, dest: File) {
+        java.util.zip.ZipInputStream(archive.inputStream().buffered()).use { z ->
+            var e = z.nextEntry
+            while (e != null) {
+                val out = File(dest, e.name)
+                if (!e.name.contains("..")) { if (e.isDirectory) out.mkdirs() else { out.parentFile?.mkdirs(); out.outputStream().use { z.copyTo(it) } } }
+                e = z.nextEntry
+            }
+        }
     }
 
     // ------------------------------------------------------------------ download a model

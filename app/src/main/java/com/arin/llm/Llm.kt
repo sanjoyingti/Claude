@@ -59,7 +59,8 @@ object Llm {
                 // through the Claude Code harness for its tools and caching. If the harness can't start, the API is
                 // used directly exactly as before.
                 val app = com.arin.ArinApp.instance
-                if (!com.arin.claudecode.Harness.customOn(app) || !com.arin.terminal.Linux.installed(app)) direct
+                // The phone's own offline model is always used directly (the harness would only slow it down).
+                if (!com.arin.claudecode.Harness.customOn(app) || !com.arin.terminal.Linux.installed(app) || LocalModel.isLocal(ep.baseUrl)) direct
                 else kotlinx.coroutines.flow.flow {
                     var started = false
                     try {
