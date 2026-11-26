@@ -26,10 +26,18 @@ class ReplyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            releaseLocks()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
+        // Keep the processor and Wi-Fi awake with the screen off, so downloads, builds and replies keep going.
+        if (wake?.isHeld != true) wake = (getSystemService(POWER_SERVICE) as android.os.PowerManager)
+            .newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "Arin:working").apply { setReferenceCounted(false); acquire(6 * 60 * 60 * 1000L) }
+        if (wifi?.isHeld != true) wifi = runCatching {
+            (applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager)
+                .createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Arin:working").apply { setReferenceCounted(false); acquire() }
+        }.getOrNull()
         val n = NotificationCompat.Builder(this, ArinApp.CHANNEL_WORKING)
             .setSmallIcon(R.drawable.ic_notify)
             .setContentTitle(if (holders.all { it == "reply" }) "Arin is replying…" else "Arin is working — it keeps going in the background")
@@ -43,6 +51,16 @@ class ReplyService : Service() {
         }.onFailure { stopSelf() }
         return START_NOT_STICKY
     }
+
+    private var wake: android.os.PowerManager.WakeLock? = null
+    private var wifi: android.net.wifi.WifiManager.WifiLock? = null
+
+    private fun releaseLocks() {
+        runCatching { if (wake?.isHeld == true) wake?.release() }
+        runCatching { if (wifi?.isHeld == true) wifi?.release() }
+    }
+
+    override fun onDestroy() { releaseLocks(); super.onDestroy() }
 
     companion object {
         private const val ID_WORKING = 1

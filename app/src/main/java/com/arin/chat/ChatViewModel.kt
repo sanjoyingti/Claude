@@ -562,6 +562,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         ccBusy = true
         ccInstalling = true
         ccLog.clear()
+        ReplyService.hold(getApplication(), "cc-install") // keeps installing in the background
         ArinApp.scope.launch {
             try {
                 if (!com.arin.terminal.Linux.installed(app)) {
@@ -585,6 +586,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 ccInstalling = false
                 ccBusy = false
+                ReplyService.release(getApplication(), "cc-install")
             }
         }
     }
@@ -4124,6 +4126,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         offlineBusy = true
+        // Keeps going in the background (and with the screen off) until the model is downloaded.
+        ReplyService.hold(app, "offline-model")
         ArinApp.scope.launch {
             try {
                 if (!com.arin.llm.LocalModel.serverInstalled(app)) {
@@ -4143,6 +4147,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 offlineStatus = "Stopped: ${e.message ?: e.javaClass.simpleName}. Tap the model again to resume the download."
             } finally {
                 offlineBusy = false
+                ReplyService.release(app, "offline-model")
             }
         }
     }
