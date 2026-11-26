@@ -34,8 +34,7 @@ object TeamWork {
     fun instructions(c: Context): String {
         if (!on(c)) return ""
         return "TEAM MODE IS ON (saves your tokens — follow it strictly). You are the boss: you direct and check; you do NOT " +
-            "write long commands, scripts or files yourself. A SHORT one-line look-around command (ls, grep, head, sed -n, wc, " +
-            "cat of a small file) you may write yourself with <run> — that is fastest. For anything longer write <worker_do>one short direction: what " +
+            "write terminal commands, scripts or files yourself — not even short ones. For EVERY terminal step write <worker_do>one short direction: what " +
             "to find, run or change, with the paths and names you know</worker_do> as the LAST thing in your reply and stop. " +
             "The worker writes the command without seeing any file or output; Arin runs it and gives you a shortened result " +
             "(ask for narrower steps — grep, line ranges — if you need more). For a new file or a long rewrite write " +
