@@ -169,7 +169,8 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
     if (custom) LaunchedEffect(vm.customBaseUrl) { while (true) { UsageMeter.refreshCustom(vm.customBaseUrl, vm.customKeyForMeter()); delay(3 * 60_000L) } }
     val small = MaterialTheme.typography.labelSmall
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
-    Column(Modifier.fillMaxWidth().clickable { details = true }.padding(horizontal = 4.dp, vertical = 2.dp)) {
+    Column(Modifier.fillMaxWidth()) { // one line under the other (they used to be drawn on top of each other)
+    if (claude || custom) Column(Modifier.fillMaxWidth().clickable { details = true }.padding(horizontal = 4.dp, vertical = 2.dp)) {
         if (claude) {
             val s = UsageMeter.sessionBy[acc]
             val w = UsageMeter.weeklyBy[acc]
@@ -205,6 +206,7 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
                 LinearProgressIndicator(progress = { (hw?.used ?: 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.width(50.dp).height(4.dp))
             }
         }
+    }
     }
     if (details) AlertDialog(
         onDismissRequest = { details = false },

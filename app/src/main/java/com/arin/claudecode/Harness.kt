@@ -10,7 +10,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -86,7 +85,9 @@ object Harness {
             sessions[key] = s
         }
         val session = s!!
-        session.lock.withLock {
+        // A turn still stuck on this session (e.g. its process hung): end it, so this one isn't left waiting behind it.
+        if (!session.lock.tryLock()) { stop(session, keepSession = true); session.lock.lock() }
+        try {
             session.lastUse = System.currentTimeMillis()
             val newTurns = if (fresh) turns else userTurns.drop(session.sentUser.size)
             val content = JSONArray()
@@ -120,13 +121,22 @@ object Harness {
             val thinkSplit = ThinkSplit()
             var finished = false
             var waited = 0L
+            var quiet = 0L
+            var retries = 0
+            var toolRunning = false // a command of Claude Code's is running (it stays silent meanwhile)
             try {
                 while (!finished) {
                     val lines = withContext(Dispatchers.IO) { readNew(session, out) }
+                    if (lines.isEmpty()) quiet += 150 else quiet = 0
                     for (l in lines) {
                         val o = runCatching { JSONObject(l) }.getOrNull() ?: continue
                         when (o.optString("type")) {
-                            "system" -> o.optString("session_id").takeIf { it.isNotBlank() }?.let { session.sessionId = it }
+                            "system" -> {
+                                o.optString("session_id").takeIf { it.isNotBlank() }?.let { session.sessionId = it }
+                                // The model's service keeps failing: stop early instead of waiting through every retry.
+                                if (o.optString("subtype") == "api_retry" && ++retries >= 3 && !sentText)
+                                    throw LlmException("The model's service isn't answering (${o.optString("error").ifBlank { "retrying" }.take(120)})")
+                            }
                             "stream_event" -> {
                                 val ev = o.optJSONObject("event") ?: continue
                                 when (ev.optString("type")) {
@@ -152,9 +162,10 @@ object Harness {
                                 val c = o.optJSONObject("message")?.optJSONArray("content") ?: continue
                                 for (i in 0 until c.length()) {
                                     val b = c.optJSONObject(i) ?: continue
-                                    if (b.optString("type") == "tool_use") send(Delta.Thinking("\n▸ " + describe(b) + "\n"))
+                                    if (b.optString("type") == "tool_use") { toolRunning = true; send(Delta.Thinking("\n▸ " + describe(b) + "\n")) }
                                 }
                             }
+                            "user" -> toolRunning = false // the tool's result came back
                             "rate_limit_event" -> UsageMeter.fromRateLimit(o.optJSONObject("rate_limit_info"), session.account)
                             "result" -> {
                                 finished = true
@@ -173,7 +184,12 @@ object Harness {
                     }
                     if (!finished) {
                         delay(150); waited += 150
-                        if (waited > 40 * 60_000L) throw LlmException("Claude took too long to answer.")
+                        if (waited > 40 * 60_000L) throw LlmException("The model took too long to answer.")
+                        // Every few seconds: is the process still there? A dead one never answers.
+                        if (waited % 3_000L == 0L && !withContext(Dispatchers.IO) { alive(session) })
+                            throw LlmException("Claude Code stopped before answering")
+                        // Nothing at all for 3 minutes (not even "thinking"): it's stuck.
+                        if (quiet > (if (toolRunning) 30 else 3) * 60_000L) throw LlmException("No answer from the model for a long time")
                     }
                 }
             } catch (e: Throwable) {
@@ -182,7 +198,7 @@ object Harness {
                 throw e
             }
             session.lastUse = System.currentTimeMillis()
-        }
+        } finally { session.lock.unlock() }
         trim()
     }
 
@@ -280,7 +296,7 @@ object Harness {
             "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " + brainEnv(s, token) +
             "export HOME=$BASE/home DISABLE_AUTOUPDATER=1 " +
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 " +
-            "BASH_MAX_OUTPUT_LENGTH=8000 MAX_MCP_OUTPUT_TOKENS=6000; $ghEnv" +
+            "BASH_MAX_OUTPUT_LENGTH=8000 MAX_MCP_OUTPUT_TOKENS=6000 CLAUDE_CODE_MAX_RETRIES=2 API_TIMEOUT_MS=180000; $ghEnv" +
             "claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages " +
             "--model '${s.model.replace("'", "")}' $resume--tools '$tools' --allowedTools $allowed $mcpFlag" +
             "--add-dir ${s.dir} --system-prompt \\\"\\$(cat ${s.dir}/system.txt)\\\" " +
