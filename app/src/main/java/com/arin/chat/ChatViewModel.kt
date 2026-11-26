@@ -634,6 +634,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         ArinApp.scope.launch { com.arin.claudecode.ClaudeAccounts.makeMain(app, id); ccAccountsTick++; notice = "The Claude Code tab now uses this account" }
     }
 
+    /** New name for a Claude account (shown in the model menu, e.g. "Claude Sonnet · Work"). */
+    fun renameCcAccount(id: String, name: String) {
+        com.arin.claudecode.ClaudeAccounts.rename(getApplication(), id, name); ccAccountsTick++
+        if (provider == Provider.ClaudeCode) loadModels()
+        notice = "Renamed to \"$name\""
+    }
+
     fun removeCcAccount(id: String) {
         com.arin.claudecode.ClaudeAccounts.remove(getApplication(), id); ccAccountsTick++
         if (provider == Provider.ClaudeCode) loadModels()

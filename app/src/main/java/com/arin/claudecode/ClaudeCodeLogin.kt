@@ -87,6 +87,18 @@ private fun ProLogin(vm: ChatViewModel) {
                 var email by remember(a.id) { mutableStateOf<String?>(null) }
                 androidx.compose.runtime.LaunchedEffect(a.id) { email = com.arin.claudecode.ClaudeAccounts.email(ctx, a.id) }
                 Text("• ${a.name}" + (email?.let { " ($it)" } ?: ""), modifier = Modifier.weight(1f))
+                var renaming by rememberSaveable(a.id) { mutableStateOf(false) }
+                TextButton(onClick = { renaming = true }) { Text("Rename") }
+                if (renaming) {
+                    var name by rememberSaveable(a.id) { mutableStateOf(a.name) }
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { renaming = false },
+                        title = { Text("Rename Claude account") },
+                        text = { OutlinedTextField(name, { name = it }, singleLine = true, placeholder = { Text("Account name") }) },
+                        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { renaming = false; vm.renameCcAccount(a.id, name.trim()) }) { Text("Save") } },
+                        dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
+                    )
+                }
                 TextButton(onClick = { vm.makeCcAccountMain(a.id) }) { Text("Use in this tab") }
                 TextButton(onClick = { vm.removeCcAccount(a.id) }) { Text("Remove") }
             }
