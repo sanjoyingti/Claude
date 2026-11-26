@@ -18,7 +18,16 @@ object TaskSummary {
         "different app, never simplify, shorten, skip, rename or swap any part, and never drop a feature to make an error go " +
         "away — fix the error another way. If something truly cannot be done, say so plainly and ask; do not quietly change it.\n"
 
-    const val RULE = EXACT_REQUEST + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
+    /**
+     * ARIN-PROTECTED: test-before-handover — owner's strict rule for every tab and model (only the owner can change it).
+     */
+    const val TESTED_LINKS = "OWNER'S STRICT RULE — TESTED BEFORE HANDOVER (only the owner can change it): never give the owner an " +
+        "APK, an install file or a download link for an app until that exact APK has been installed, opened and tested on " +
+        "an Android emulator and did not crash. Arin's Build mode (<build>, building on GitHub) does this test; an APK made " +
+        "any other way (terminal, rebuild, phone) must go through it before you share it. If it wasn't tested, say so and " +
+        "offer to build and test it on GitHub — don't share the file or link.\n"
+
+    const val RULE = EXACT_REQUEST + TESTED_LINKS + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
         "where you ran commands, used tools, changed files or built something), END your final reply with two short " +
         "sections in plain English:\n**Summary — what I did:** the main things done and their result (and anything that " +
         "failed).\n**What to do next:** the next step(s) for the owner.\n" +

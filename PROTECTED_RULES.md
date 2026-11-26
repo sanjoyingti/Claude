@@ -161,7 +161,10 @@ told they are there.
 
 ## Tested before handover (`builder/BuildAgent.kt`, `builder/ProjectTemplate.kt`)
 
-- Every app Arin builds on GitHub is installed on an Android emulator, opened, and tapped around.
+- **Every app, in every tab** — apps Arin makes, uploaded projects and Arin's own updates — is installed on an Android
+  emulator, opened, and tapped around before any APK, install file or download link is given.
+- Every model in every tab is told this too: an APK made any other way (terminal, rebuild, phone) is never shared untested.
+- A phone-only build is not handed over (a phone can't run an emulator): say "build on github" to have it tested.
 - If it crashes, closes by itself or won't install, Arin fixes it like a build error and builds and tests again.
 - The APK download link is given **only after the app opens and runs without crashing**. If the test can't run, or it
   still crashes after the fix rounds, no link is given — say "try again" to keep going.

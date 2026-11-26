@@ -145,7 +145,7 @@ class BuildAgent(
     // ARIN-PROTECTED: test-before-handover — owner's strict rule (only the owner can change it): every app Arin builds on
     // GitHub is installed on an Android emulator, opened and tapped around; crashes are fixed like build errors, and the
     // APK download link is handed over only after the app opens and runs without crashing.
-    private val testing get() = !self && !imported
+    private val testing get() = true // every app: Arin-made, uploaded projects and Arin's own updates
     private val workflowFile = when {
         self -> SELF_WORKFLOW
         imported -> ProjectTemplate.IMPORT_WORKFLOW_FILE
@@ -607,9 +607,23 @@ class BuildAgent(
             }
             // Make sure GitHub always has the build instructions (harmless if unchanged).
             if (self) {
-                // Arin's repo already has its workflow and signing key: leave them alone.
+                // Arin's repo already has its workflow and signing key: leave them alone — except that Arin itself (not
+                // the model) adds the emulator test when it's missing (ARIN-PROTECTED: test-before-handover).
+                val wfPath = ".github/workflows/$SELF_WORKFLOW"
+                val wf = files[wfPath]
+                if (wf != null && !wf.contains("arin-test.sh")) {
+                    val patched = wf.trimEnd() + "\n\n" + ProjectTemplate.testJob("$SELF_TAG_PREFIX${'$'}{{ github.run_number }}", "Arin-v*.apk").prependIndent("  ") + "\n"
+                    files[wfPath] = patched
+                    pendingFiles[wfPath] = patched.toByteArray()
+                    step(BuildEvent.Kind.STEP, "Adding the emulator crash test to Arin's build")
+                }
+                if (files[ProjectTemplate.TEST_SCRIPT_PATH] != ProjectTemplate.testScript) {
+                    files[ProjectTemplate.TEST_SCRIPT_PATH] = ProjectTemplate.testScript
+                    pendingFiles[ProjectTemplate.TEST_SCRIPT_PATH] = ProjectTemplate.testScript.toByteArray()
+                }
             } else if (imported) {
                 pendingFiles[".github/workflows/${ProjectTemplate.IMPORT_WORKFLOW_FILE}"] = ProjectTemplate.importWorkflow.toByteArray()
+                if (files[ProjectTemplate.TEST_SCRIPT_PATH] != ProjectTemplate.testScript) pendingFiles[ProjectTemplate.TEST_SCRIPT_PATH] = ProjectTemplate.testScript.toByteArray()
             } else {
                 ProjectTemplate.files(appName, packageName, deps.toList())[".github/workflows/build.yml"]?.let {
                     pendingFiles[".github/workflows/build.yml"] = it.toByteArray()
@@ -633,13 +647,16 @@ class BuildAgent(
                             step(BuildEvent.Kind.DONE, "APK ready (${mb(out.size)}): ${out.apkPath}")
                             saveProject(repo, null)
                             step(BuildEvent.Kind.DONE, "Done")
+                            if (self) return BuildResult(true, "The new version of Arin is built on this phone.",
+                                phoneApk = out.apkPath, phoneSourceZip = zip, phoneInstallPath = out.installFile?.absolutePath)
+                            // ARIN-PROTECTED: test-before-handover — a phone can't run an Android emulator, so a phone-only build
+                            // is not handed over: it must be tested on GitHub's emulator first.
                             return BuildResult(
                                 true,
-                                (if (existing != null) "Your changes are built on this phone." else "Your app is ready (built on this phone).") +
-                                    (if (self) "" else " ⚠️ Not crash-tested: a phone build can't run an Android emulator. Say \"build on github\" to have it tested before you install it."),
-                                phoneApk = out.apkPath,
+                                "It compiles on this phone, but I can't hand it over yet: every app must first be opened and tested " +
+                                    "on an Android emulator, and a phone can't run one. Say \"build on github\" — GitHub builds it, " +
+                                    "tests it on its emulator, and then you get the download link.",
                                 phoneSourceZip = zip,
-                                phoneInstallPath = out.installFile?.absolutePath,
                             )
                         }
                         step(BuildEvent.Kind.DONE, "Compiled on this phone (${mb(out.size)}), saved to ${out.apkPath}. Now building on GitHub for the download links")
@@ -747,7 +764,7 @@ class BuildAgent(
                 var testNote = ""
                 var shot: String? = null
                 if (testing) {
-                    val tag = "build-${run.number}"
+                    val tag = if (self) "$SELF_TAG_PREFIX${run.number}" else "build-${run.number}"
                     val report = gh.releaseText(repo, tag, "arin-test-report.txt")
                     shot = gh.releaseAssetLink(repo, tag, "arin-test-screen.png")
                     val result = report?.lineSequence()?.firstOrNull { it.startsWith("RESULT:") }?.removePrefix("RESULT:")?.trim()

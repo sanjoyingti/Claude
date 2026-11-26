@@ -341,6 +341,53 @@ report PASS ""
         }
     """.trimIndent()
 
+    /**
+     * ARIN-PROTECTED: test-before-handover — the emulator test job (YAML, at the jobs: level) for any workflow: downloads the
+     * APK that [tag]'s release got ([pattern]), opens it on an Android emulator, taps around, and adds the report and a
+     * screenshot to that release. Used by Arin-made apps, uploaded projects and Arin's own updates.
+     */
+    fun testJob(tag: String, pattern: String): String = """
+          # ARIN-PROTECTED: test-before-handover — the APK is installed on an Android emulator, opened and tapped
+          # around; Arin hands the download link over only when this test passes. (Its own job: a test problem
+          # never breaks the build itself.)
+          test:
+            needs: build
+            runs-on: ubuntu-latest
+            timeout-minutes: 25
+            continue-on-error: true
+            steps:
+              - uses: actions/checkout@v5
+              - name: Get the APK that was just built
+                env:
+                  GH_TOKEN: ${'$'}{{ github.token }}
+                run: gh release download "$tag" --pattern '$pattern' --output app.apk --clobber
+              - name: Enable KVM
+                run: |
+                  echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+                  sudo udevadm control --reload-rules
+                  sudo udevadm trigger --name-match=kvm
+              - name: Open the app on an Android emulator and tap around
+                uses: reactivecircus/android-emulator-runner@v2
+                with:
+                  api-level: 34
+                  target: google_apis
+                  arch: x86_64
+                  disable-animations: true
+                  emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+                  script: bash .github/arin-test.sh app.apk
+              - name: Make sure there is a report
+                if: always()
+                run: '[ -f arin-test-report.txt ] || echo "RESULT: NO_TEST" > arin-test-report.txt'
+              - uses: softprops/action-gh-release@v2
+                if: always()
+                with:
+                  tag_name: $tag
+                  files: |
+                    arin-test-report.txt
+                    arin-test-screen.png
+                  fail_on_unmatched_files: false
+    """.trimIndent()
+
     val importWorkflow = """
         name: Arin build
         on:
@@ -403,7 +450,7 @@ report PASS ""
                   name: Build ${'$'}{{ github.run_number }}
                   files: app-*.apk
                   make_latest: true
-    """.trimIndent()
+    """.trimIndent() + "\n" + testJob("build-${'$'}{{ github.run_number }}", "app-*.apk").prependIndent("  ")
 
     val importedSystemPrompt = """
         You are an expert Android developer working on an existing Android Studio project (Gradle, Kotlin or Java).
