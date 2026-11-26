@@ -87,14 +87,15 @@ fun ActivityBar(source: String, modifier: Modifier = Modifier) {
                 )
                 Text(if (open) "  ▲" else "  ▼ steps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
-            // Count only real help (answers), not failed tries.
+            // Count only real help (answers), not failed tries — and only while the helper is on in this tab.
+            val helperOn = com.arin.selffix.ClaudeHelper.enabled(androidx.compose.ui.platform.LocalContext.current, source)
             val helped = mine.count { it.text.startsWith("🟣") && it.text.contains("answered") }
             val missed = mine.count { it.text.startsWith("🟣") && (it.text.contains("couldn't help") || it.text.contains("isn't connected")) }
-            if (missed > 0 && helped == 0 && !open) {
+            if (helperOn && missed > 0 && helped == 0 && !open) {
                 Text("🟣 The AI helper couldn't be reached ($missed tries) — open steps to see why", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error)
             }
-            if (helped > 0 && !open) {
+            if (helperOn && helped > 0 && !open) {
                 Text("🟣 Took help from the AI helper $helped time${if (helped == 1) "" else "s"}", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.tertiary)
             }

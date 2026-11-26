@@ -63,8 +63,16 @@ object ErrorDoctor {
             if (!text.isNullOrBlank()) return text
         }
         // 2. The AI helper, when it's on.
-        if (ClaudeHelper.route(context) != null) {
-            val text = runCatching { ClaudeHelper.ask(context, ask) }.getOrNull()
+        // Only when the helper is switched on in the tab the error came from.
+        val tab = when {
+            where.contains("Arin Update", true) || where.contains("updating Arin", true) -> "arin-update"
+            where.contains("Claude Code", true) -> "claude-code"
+            where.contains("Build", true) -> "build"
+            where.contains("Movie", true) -> "movie"
+            else -> "chat"
+        }
+        if (ClaudeHelper.route(context, tab) != null) {
+            val text = runCatching { ClaudeHelper.ask(context, ask, source = tab) }.getOrNull()
             if (!text.isNullOrBlank() && !text.contains("couldn't be reached")) return text
         }
         // 3. The research itself, in short.

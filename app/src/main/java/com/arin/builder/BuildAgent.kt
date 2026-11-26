@@ -1039,8 +1039,8 @@ class BuildAgent(
         val seen = repeats.count(query.ifBlank { errors.take(200) })
         if (seen >= 2) web += "\n\nThis same error has come back $seen times: use a clearly different approach this time."
         // ARIN-PROTECTED: with the AI helper on, every build error is solved one by one with its help (the model asks,
-        // the helper gives the solution, the model makes the fix). With it off, the helper still steps in on repeats.
-        if (context != null && (helperOn() || seen >= 2) && com.arin.selffix.ClaudeHelper.route(context) != null) {
+        // the helper gives the solution, the model makes the fix). With it off, the model works alone.
+        if (context != null && helperOn() && com.arin.selffix.ClaudeHelper.route(context, helperTab) != null) {
             step(BuildEvent.Kind.THINKING, "Asking ${com.arin.selffix.ClaudeHelper.helper(context).name} for the solution to this error")
             val answer = com.arin.selffix.ClaudeHelper.ask(
                 context = context,

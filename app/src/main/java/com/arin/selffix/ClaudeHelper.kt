@@ -209,7 +209,7 @@ object ClaudeHelper {
         onStatus: (String) -> Unit = {},
     ): String {
         if (!enabled(context, source)) {
-            Activity.log(source, "🟣 Wanted the AI helper, but it's switched off in this tab — working on alone")
+            // Switched off in this tab: the model works alone — nothing is asked and nothing is shown.
             return "The AI helper is switched off (⋮ menu → AI helper). Continue on your own."
         }
         val h = helper(context)
