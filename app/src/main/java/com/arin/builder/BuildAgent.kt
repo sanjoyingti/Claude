@@ -1269,7 +1269,7 @@ class BuildAgent(
         runCatching {
             kotlinx.coroutines.withTimeoutOrNull(180_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
-                    "You are the supervisor of an AI coding worker. Be brief.", req.endpoint())
+                    "You are the supervisor of an AI coding worker. Be brief.", req.endpoint(), boss = workerOn())
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }

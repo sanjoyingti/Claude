@@ -242,6 +242,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return out
     }
 
+    /** Worker mode: the main model sees the first message and only the latest 8 turns (older long ones cut short). */
+    private fun bossTrim(turns: List<Turn>): List<Turn> {
+        val cut = turns.mapIndexed { i, t ->
+            if (i < turns.size - 2 && t.text.length > 1_200 && !t.hasMedia) t.copy(text = t.text.take(800) + "\n…[shortened to save credits]…\n" + t.text.takeLast(200)) else t
+        }
+        if (cut.size <= 10) return cut
+        var tail = cut.takeLast(8)
+        if (!tail.first().fromUser) tail = tail.drop(1)
+        return listOf(cut.first(), Turn(false, "[Earlier messages left out to save credits; ask if you need something from them.]")) + tail
+    }
+
     private fun dedupeTurns(turns: List<Turn>): List<Turn> {
         if (turns.size <= 2) return turns
         val minLen = 600
@@ -3102,6 +3113,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var helperConsulted = false
                 var workerAsks = 0
                 val bossName = com.arin.selffix.Worker.nice(m)
+                // ARIN-PROTECTED: boss-minimum-credit — worker mode: your main model gets a short history, short replies,
+                // no harness and least thinking; the worker and helper do the heavy work.
+                val bossLean = !offline && com.arin.selffix.Worker.on(app)
                 var lastWorkerResult = ""
                 var helperGuides = 0
                 var lastGuided = -1
@@ -3193,7 +3207,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
-                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat).collect { d ->
+                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), if (bossLean) bossTrim(sent) else sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
+                                        maxTokens = if (bossLean) 2_000 else null, boss = bossLean).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
                                         val nowMs = System.currentTimeMillis()

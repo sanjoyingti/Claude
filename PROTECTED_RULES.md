@@ -180,3 +180,10 @@ told they are there.
 - The workers write everything, in your order; if all refuse, the helper writes it. Explanations are written by the worker.
 - If no worker or helper can be reached, Arin stops and says so instead of spending your main model's credit.
 - Only the owner can change this rule.
+
+## Main model uses as little credit as possible (`llm/Llm.kt`, `chat/ChatViewModel.kt`)
+
+- With worker mode on, your main model goes straight to its API (never through the Claude Code harness), thinks as
+  little as the service allows (DeepSeek's paid thinking off), sees only the first and latest messages, and writes short
+  replies (directions and checks). The worker and helper do the heavy work.
+- Only the owner can change this rule.

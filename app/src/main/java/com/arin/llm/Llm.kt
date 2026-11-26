@@ -37,7 +37,12 @@ object Llm {
      */
     @Volatile var thinkLess: Boolean = false
 
-    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null, cache: Boolean = false, endpoint: CustomApi.Endpoint? = null, conv: String = ""): Flow<Delta> {
+    /**
+     * [boss] = the main model in worker mode (ARIN-PROTECTED: boss-minimum-credit): it only directs, so it goes straight
+     * to its API (never through the Claude Code harness, whose own instructions cost thousands of tokens per message)
+     * and thinks as little as the service allows (DeepSeek's billed thinking switched off).
+     */
+    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null, cache: Boolean = false, endpoint: CustomApi.Endpoint? = null, conv: String = "", boss: Boolean = false): Flow<Delta> {
         // ARIN-PROTECTED: tab-isolation — each chat gets its own Claude Code session; one chat never reuses another's.
         val purpose = if (conv.isBlank()) "chat" else "chat:$conv"
         if (provider.needsKey && key.isBlank()) {
@@ -46,7 +51,7 @@ object Llm {
         if (model.isBlank()) throw LlmException("Pick a model first, or type a model id in Settings → Custom API.")
         return when (provider) {
             Provider.Free -> freeStream(model, system, turns, maxTokens)
-            Provider.Gemini -> lessThinking { low -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }
+            Provider.Gemini -> lessThinking(boss) { low -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }
             // OpenAI's newer models take max_completion_tokens; leave ChatGPT on its default.
             Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, system, turns)
             Provider.Claude -> anthropicStream("$ANTHROPIC_BASE/messages", anthropicHeaders(key), key, model, system, turns, maxTokens, cache)
@@ -54,7 +59,7 @@ object Llm {
             Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns, purpose = purpose)
             Provider.Custom -> (endpoint ?: CustomApi.current()).let { ep ->
                 val direct0 = when (ep.format) {
-                    ApiFormat.OpenAI -> lessThinking { low -> withUsage(ep.chatUrl()) { u -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low, usage = u) } }
+                    ApiFormat.OpenAI -> lessThinking(boss) { low -> withUsage(ep.chatUrl()) { u -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low, usage = u) } }
                     ApiFormat.Anthropic -> anthropicStream(ep.chatUrl(), customAnthropicHeaders(key), key, model, system, turns, maxTokens, cache)
                 }
                 // ARIN-PROTECTED: credit-saver — stay under a free pool's requests-per-minute limit (waits, never fails).
@@ -67,7 +72,7 @@ object Llm {
                 // used directly exactly as before.
                 val app = com.arin.ArinApp.instance
                 // The phone's own offline model is always used directly (the harness would only slow it down).
-                if (!com.arin.claudecode.Harness.customOn(app) || !com.arin.terminal.Linux.installed(app) || LocalModel.isLocal(ep.baseUrl)) direct
+                if (boss || !com.arin.claudecode.Harness.customOn(app) || !com.arin.terminal.Linux.installed(app) || LocalModel.isLocal(ep.baseUrl)) direct
                 else kotlinx.coroutines.flow.flow {
                     var started = false
                     try {
@@ -105,8 +110,8 @@ object Llm {
     }
 
     /** Run with "think less" fields when it's on; if the service refuses them before answering, run without. */
-    private fun lessThinking(make: (Boolean) -> Flow<Delta>): Flow<Delta> {
-        if (!thinkLess) return make(false)
+    private fun lessThinking(force: Boolean = false, make: (Boolean) -> Flow<Delta>): Flow<Delta> {
+        if (!thinkLess && !force) return make(false)
         return kotlinx.coroutines.flow.flow {
             var started = false
             try {
