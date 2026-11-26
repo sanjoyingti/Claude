@@ -158,15 +158,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      *     copies become a one-line marker. No unique information is dropped, so the model still has
      *     every bit it needs to build the project.
      */
-    /** Test apps on an Android emulator after building (Settings → Build apps). */
-    var testApps by mutableStateOf(settings.testApps)
-        private set
+    /**
+     * ARIN-PROTECTED: test-before-handover — every app is ALWAYS tested on an Android emulator after building, without being
+     * asked. There is no switch to turn it off; only the owner can change this rule.
+     */
+    val testApps: Boolean get() = true
 
+    @Suppress("UNUSED_PARAMETER")
     fun toggleTestApps(on: Boolean) {
-        testApps = on
-        settings.testApps = on
-        notice = if (on) "Apps will be opened and tested on an Android emulator after each build (adds a few minutes)."
-            else "Apps won't be tested after building (faster builds)."
+        notice = "Apps are always opened and tested on an Android emulator before you get the link (your strict rule)."
     }
 
     var saveCredits by mutableStateOf(settings.saveCredits)

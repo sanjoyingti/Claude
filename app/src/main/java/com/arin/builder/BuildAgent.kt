@@ -145,6 +145,7 @@ class BuildAgent(
     // ARIN-PROTECTED: test-before-handover — owner's strict rule (only the owner can change it): every app Arin builds on
     // GitHub is installed on an Android emulator, opened and tapped around; crashes are fixed like build errors, and the
     // APK download link is handed over only after the app opens and runs without crashing.
+    // Always on, whatever the request or settings say (the owner never has to ask for it).
     private val testing get() = true // every app: Arin-made, uploaded projects and Arin's own updates
     private val workflowFile = when {
         self -> SELF_WORKFLOW
