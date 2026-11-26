@@ -52,9 +52,14 @@ class ReplyService : Service() {
         /** What is keeping Arin running in the background right now (chat replies, installs, the helper…). */
         private val holders = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
-        fun start(context: Context) = hold(context, "reply")
+        /** How many replies/tasks are running: the background notification stays until the LAST one ends. */
+        private val replies = java.util.concurrent.atomic.AtomicInteger(0)
 
-        fun stop(context: Context) = release(context, "reply")
+        fun start(context: Context) { replies.incrementAndGet(); hold(context, "reply") }
+
+        fun stop(context: Context) {
+            if (replies.updateAndGet { maxOf(0, it - 1) } == 0) release(context, "reply")
+        }
 
         /** Keeps Arin running in the background while [key]'s work goes on (several can run at once). */
         fun hold(context: Context, key: String) {

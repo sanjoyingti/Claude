@@ -33,7 +33,7 @@ object Harness {
     /** Arin's tools + the person's MCP servers (config JSON, server names) and GitHub token; set by the app. */
     @Volatile var extras: (() -> Triple<String, List<String>, String>)? = null
 
-    private class Session(val dir: String, val key: String, val model: String, val tokenFile: String, val account: String, val custom: Custom? = null) {
+    private class Session(val dir: String, val key: String, val model: String, val tokenFile: String, val account: String, val custom: Custom? = null, val kind: String = "") {
         var sessionId: String? = null
         val sentUser = mutableListOf<Int>()   // what this session already has: the person's / tool turns, in order
         var lastUse = System.currentTimeMillis()
@@ -74,17 +74,19 @@ object Harness {
         if (custom == null && !f(tokenFile).let { it.exists() && it.length() > 20 }) throw LlmException("Sign in to Claude in the Claude Code tab first, or pick another AI from the model menu.")
         val m = ClaudeAccounts.modelOf(model).ifBlank { "sonnet" }
         val firstUser = turns.firstOrNull { it.fromUser } ?: throw LlmException("Nothing to answer.")
-        val key = "$purpose|$m|${custom?.base ?: account ?: "main"}|${firstUser.text.take(4000).hashCode()}"
+        val kind = "$purpose|$m|${custom?.base ?: account ?: "main"}"
         val userTurns = turns.filter { it.fromUser }
         val hashes = userTurns.map(::turnHash)
 
-        var s = sessions[key]
-        // Only the turns this session hasn't seen yet are sent; if the conversation changed underneath, start fresh.
-        val fresh = s == null || s.sentUser.size >= hashes.size || hashes.subList(0, s.sentUser.size) != s.sentUser
+        // The session that already has THIS conversation (everything it saw is the start of these turns). Two chats that
+        // both began with "Hi" are different conversations: each gets its own session, and neither ever stops the other.
+        var s: Session? = sessions.values.filter { it.kind == kind && it.sentUser.isNotEmpty() && it.sentUser.size < hashes.size &&
+            hashes.subList(0, it.sentUser.size) == it.sentUser }.maxByOrNull { it.sentUser.size }
+        val fresh = s == null
         if (fresh) {
-            s?.let { stop(it) }
-            s = Session("$BASE/${System.currentTimeMillis()}${(100..999).random()}", key, m, tokenFile, account ?: "main", custom)
-            sessions[key] = s
+            val dir = "$BASE/${System.currentTimeMillis()}${(100..999).random()}"
+            s = Session(dir, dir, m, tokenFile, account ?: "main", custom, kind)
+            sessions[dir] = s
         }
         val session = s!!
         // A turn still stuck on this session (e.g. its process hung): end it, so this one isn't left waiting behind it.

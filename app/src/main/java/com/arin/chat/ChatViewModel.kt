@@ -3545,7 +3545,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         withContext(Dispatchers.Main) { refreshChats() }
                     }
                 }
-                if (runs.isEmpty()) ReplyService.stop(app)
+                ReplyService.stop(app) // counted: the notification stays while any other task still runs
                 // ARIN-PROTECTED: research-first-error-help — a failed reply: search the internet first, then say how to fix it.
                 if (failure != null && !stopped && run.chat != TEMP_CHAT) {
                     val err = failure!!
