@@ -311,7 +311,8 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
     val dim = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
     fun save(l: List<CreditSaver.Worker>) { list = l; CreditSaver.setWorkers(c, l) }
     fun name(w: CreditSaver.Worker) = if (w.apiId == "offline") "Offline model" else
-        (vm.savedApis.firstOrNull { it.slotId == w.apiId }?.name ?: "(removed API)") + " · " + w.model
+        (vm.savedApis.firstOrNull { it.slotId == w.apiId }?.name ?: Worker.BUILT_IN.firstOrNull { it.first == w.apiId }?.second ?: "(removed API)") +
+            " · " + w.model.ifBlank { "default model" }
     androidx.compose.material3.HorizontalDivider()
     androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
         androidx.compose.foundation.layout.Column(androidx.compose.ui.Modifier.weight(1f)) {
@@ -329,7 +330,7 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
     com.arin.selffix.ModelSwitcher(vm)
     // 2. Middle model (the worker).
     androidx.compose.material3.Text("2 · Middle model (worker) — writes the code and fixes. Tried in this order (if one refuses, the next one gets the task):", style = small)
-    if (list.isEmpty()) androidx.compose.material3.Text("None yet — add your Experiential Labs API in Your APIs, then add GPT-6 Luna here.", style = small, color = dim)
+    if (list.isEmpty()) androidx.compose.material3.Text("None yet — tap + Add worker and pick any model: Claude, ChatGPT, Gemini, Free, offline or any of your APIs.", style = small, color = dim)
     list.forEachIndexed { i, w ->
         androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             androidx.compose.material3.Text("${i + 1}. " + name(w), style = small, modifier = androidx.compose.ui.Modifier.weight(1f))
@@ -341,7 +342,8 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
     // 3. Helper (helps the worker; also the boss when it asks).
     androidx.compose.material3.Text("3 · Helper — helps the worker with hard parts and errors:", style = small)
     var hp by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(ClaudeHelper.helper(c)) }
-    val choices = listOf(ClaudeHelper.Helper("claude") to "Claude (login or key)", ClaudeHelper.Helper("chatgpt") to "ChatGPT", ClaudeHelper.Helper("gemini") to "Gemini") +
+    val choices = listOf(ClaudeHelper.Helper("claude") to "Claude (login or key)", ClaudeHelper.Helper("chatgpt") to "ChatGPT", ClaudeHelper.Helper("gemini") to "Gemini",
+        ClaudeHelper.Helper("free") to "Free models", ClaudeHelper.Helper("offline") to "Offline model (on the phone)") +
         vm.savedApis.map { ClaudeHelper.Helper("custom", "", it.slotId, it.name) to it.name }
     choices.forEach { (h, n) ->
         val sel = hp.kind == h.kind && (h.kind != "custom" || hp.apiId == h.apiId)
@@ -370,19 +372,20 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
             title = { androidx.compose.material3.Text("Add a worker") },
             text = {
                 androidx.compose.foundation.layout.Column {
-                    (vm.savedApis.map { it.slotId to it.name } + ("offline" to "Offline model (on the phone)")).forEach { (id, n) ->
+                    (Worker.BUILT_IN + vm.savedApis.map { it.slotId to it.name } + ("offline" to "Offline model (on the phone)")).forEach { (id, n) ->
                         androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                            androidx.compose.material3.RadioButton(api == id, { api = id })
+                            androidx.compose.material3.RadioButton(api == id, { api = id; model = "" })
                             androidx.compose.material3.Text(n, style = small)
                         }
                     }
                     if (api != "offline") {
                         val savedApi = vm.savedApis.firstOrNull { it.slotId == api }
+                        val kind = if (savedApi != null) "custom" else api
                         var list by androidx.compose.runtime.remember(api) { androidx.compose.runtime.mutableStateOf<List<com.arin.llm.ModelOption>?>(null) }
-                        androidx.compose.runtime.LaunchedEffect(api) { list = runCatching { ClaudeHelper.models(c, "custom", savedApi) }.getOrDefault(emptyList()) }
+                        androidx.compose.runtime.LaunchedEffect(api) { list = runCatching { ClaudeHelper.models(c, kind, savedApi) }.getOrDefault(emptyList()) }
                         ModelList(list, model) { model = it }
                         androidx.compose.material3.OutlinedTextField(model, { model = it.trim() },
-                            label = { androidx.compose.material3.Text("Model id (or pick above)") }, singleLine = true)
+                            label = { androidx.compose.material3.Text("Model id (or pick above; blank = default)") }, singleLine = true)
                     }
                 }
             },

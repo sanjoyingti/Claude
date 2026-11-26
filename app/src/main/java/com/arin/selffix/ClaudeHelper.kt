@@ -112,6 +112,8 @@ object ClaudeHelper {
             "chatgpt" -> "ChatGPT"
             "gemini" -> "Gemini"
             "custom" -> apiName.ifBlank { "Custom API" }
+            "offline" -> "Offline model"
+            "free" -> "Free model"
             else -> "Claude"
         }
         val label: String get() = name + if (model.isNotBlank()) " ($model)" else ""
@@ -154,6 +156,8 @@ object ClaudeHelper {
                 "chatgpt" -> com.arin.llm.Llm.models(Provider.ChatGPT, s.key(Provider.ChatGPT))
                 "gemini" -> com.arin.llm.Llm.models(Provider.Gemini, s.key(Provider.Gemini))
                 "custom" -> if (api == null) emptyList() else customModels(api, s.apiKey(api))
+                "free" -> com.arin.llm.Llm.models(Provider.Free, "")
+                "offline" -> emptyList()
                 else -> {
                     val signedIn = runCatching { com.arin.terminal.Linux.installed(context) && com.arin.claudecode.ClaudeCode.connected(context) }.getOrDefault(false)
                     val pro = if (signedIn) com.arin.claudecode.ClaudeCode.PRO_MODELS.map { ModelOption(it, "$it (Claude Code login)") } else emptyList()
@@ -205,6 +209,8 @@ object ClaudeHelper {
             "chatgpt" -> "chatgpt".takeIf { s.key(Provider.ChatGPT).isNotBlank() }
             "gemini" -> "gemini".takeIf { s.key(Provider.Gemini).isNotBlank() }
             "custom" -> "custom".takeIf { s.savedApis.any { it.slotId == h.apiId } }
+            "free" -> "free"
+            "offline" -> "offline".takeIf { com.arin.llm.LocalModel.lastModel(context) != null }
             else -> {
                 // Any Claude model works through either way: the Claude key, or the Claude Code login (which accepts full
                 // model names like claude-sonnet-5-5 too). Use whichever is there — never "not connected" while one works.
@@ -299,9 +305,16 @@ object ClaudeHelper {
                 val api = s.savedApis.first { it.slotId == h.apiId }
                 Triple(Provider.Custom, s.apiKey(api), endpoint(api))
             }
+            "free" -> Triple(Provider.Free, "", null)
+            "offline" -> {
+                val f = com.arin.llm.LocalModel.lastModel(context) ?: throw IllegalStateException("No offline model is downloaded")
+                if (!com.arin.llm.LocalModel.isUp()) com.arin.llm.LocalModel.start(context, f)?.let { throw IllegalStateException(it) }
+                Triple(Provider.Custom, com.arin.llm.LocalModel.DUMMY_KEY, CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, ApiFormat.OpenAI))
+            }
             else -> Triple(Provider.Claude, s.key(Provider.Claude), null)
         }
-        val model = h.model.takeIf { it.isNotBlank() && !(provider == Provider.Claude && !it.startsWith("claude")) }
+        val model = (if (way == "offline") com.arin.llm.LocalModel.MODEL_ID else null)
+            ?: h.model.takeIf { it.isNotBlank() && !(provider == Provider.Claude && !it.startsWith("claude")) }
             ?: when (provider) {
                 Provider.Claude -> "claude-opus-5-5"
                 Provider.Custom -> s.savedApis.first { it.slotId == h.apiId }.model

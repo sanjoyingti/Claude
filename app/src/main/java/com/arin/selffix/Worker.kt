@@ -40,7 +40,7 @@ object Worker {
 
     private fun names(c: Context): String {
         val apis = com.arin.data.Settings(c).savedApis
-        return CreditSaver.workers(c).joinToString(", then ") { w -> if (w.apiId == "offline") "the offline model" else w.model.ifBlank { apis.firstOrNull { it.slotId == w.apiId }?.model.orEmpty() } }
+        return CreditSaver.workers(c).joinToString(", then ") { w -> if (w.apiId == "offline") "the offline model" else w.model.ifBlank { apis.firstOrNull { it.slotId == w.apiId }?.model ?: BUILT_IN.firstOrNull { it.first == w.apiId }?.second.orEmpty() } }
     }
 
     /** What the boss is told in chat when worker mode is on. */
@@ -58,20 +58,45 @@ object Worker {
         "and well; reply with only the result (code in full where asked), no chit-chat. When stuck, ask the helper code-only: " +
         "<ask_helper>FILE: …\nBODY:\n…\nERROR: …\nNEED: <one line></ask_helper> as the last thing; its answer comes back to you."
 
-    private data class Target(val key: String, val model: String, val endpoint: com.arin.llm.CustomApi.Endpoint, val w: CreditSaver.Worker)
+    private data class Target(val key: String, val model: String, val endpoint: com.arin.llm.CustomApi.Endpoint?, val w: CreditSaver.Worker,
+                              val provider: com.arin.llm.Provider = com.arin.llm.Provider.Custom)
+
+    /** The built-in services a worker (or helper) can be, besides saved Custom APIs and the offline model. */
+    val BUILT_IN = listOf("claude" to "Claude (key or Claude Code login)", "chatgpt" to "ChatGPT", "gemini" to "Gemini", "free" to "Free models")
 
     private suspend fun targets(c: Context): List<Target> {
         val settings = com.arin.data.Settings(c)
         return CreditSaver.workers(c).mapNotNull { w ->
-            if (w.apiId == "offline") {
-                val f = com.arin.llm.LocalModel.lastModel(c) ?: return@mapNotNull null
-                if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(c, f) != null) return@mapNotNull null
-                Target(com.arin.llm.LocalModel.DUMMY_KEY, com.arin.llm.LocalModel.MODEL_ID,
-                    com.arin.llm.CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, com.arin.llm.ApiFormat.OpenAI), w)
-            } else {
-                val api = settings.savedApis.firstOrNull { it.slotId == w.apiId } ?: return@mapNotNull null
-                val fmt = runCatching { com.arin.llm.ApiFormat.valueOf(api.format) }.getOrDefault(com.arin.llm.ApiFormat.OpenAI)
-                Target(settings.apiKey(api), w.model.ifBlank { api.model }, com.arin.llm.CustomApi.Endpoint(api.baseUrl, fmt), w)
+            when (w.apiId) {
+                "offline" -> {
+                    val f = com.arin.llm.LocalModel.lastModel(c) ?: return@mapNotNull null
+                    if (!com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.start(c, f) != null) return@mapNotNull null
+                    Target(com.arin.llm.LocalModel.DUMMY_KEY, com.arin.llm.LocalModel.MODEL_ID,
+                        com.arin.llm.CustomApi.Endpoint(com.arin.llm.LocalModel.BASE_URL, com.arin.llm.ApiFormat.OpenAI), w)
+                }
+                "claude" -> {
+                    val key = settings.key(com.arin.llm.Provider.Claude)
+                    val login = runCatching { com.arin.terminal.Linux.installed(c) && com.arin.claudecode.ClaudeCode.connected(c) }.getOrDefault(false)
+                    val m = w.model.ifBlank { if (key.isNotBlank()) "claude-sonnet-5-5" else "sonnet" }
+                    when {
+                        // Claude Code login models ("sonnet", "opus", "haiku"), or no key: use the login.
+                        login && (key.isBlank() || !m.startsWith("claude-")) -> Target("", m, null, w, com.arin.llm.Provider.ClaudeCode)
+                        key.isNotBlank() -> Target(key, if (m.startsWith("claude-")) m else "claude-sonnet-5-5", null, w, com.arin.llm.Provider.Claude)
+                        else -> null
+                    }
+                }
+                "chatgpt", "gemini" -> {
+                    val p = if (w.apiId == "chatgpt") com.arin.llm.Provider.ChatGPT else com.arin.llm.Provider.Gemini
+                    val key = settings.key(p).takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    Target(key, w.model.ifBlank { com.arin.llm.DefaultModels.of(p).firstOrNull()?.id.orEmpty() }, null, w, p)
+                }
+                "free" -> Target("", w.model.ifBlank { com.arin.llm.DefaultModels.of(com.arin.llm.Provider.Free).firstOrNull()?.id.orEmpty() },
+                    null, w, com.arin.llm.Provider.Free)
+                else -> {
+                    val api = settings.savedApis.firstOrNull { it.slotId == w.apiId } ?: return@mapNotNull null
+                    val fmt = runCatching { com.arin.llm.ApiFormat.valueOf(api.format) }.getOrDefault(com.arin.llm.ApiFormat.OpenAI)
+                    Target(settings.apiKey(api), w.model.ifBlank { api.model }, com.arin.llm.CustomApi.Endpoint(api.baseUrl, fmt), w)
+                }
             }
         }.sortedBy { if (CreditSaver.refused(c, it.w, "chat")) 1 else 0 }
     }
@@ -87,7 +112,7 @@ object Worker {
             while (true) {
                 val sb = StringBuilder()
                 val ok = runCatching {
-                    com.arin.llm.Llm.stream(com.arin.llm.Provider.Custom, t.key, t.model, system, turns.toList(), endpoint = t.endpoint)
+                    com.arin.llm.Llm.stream(t.provider, t.key, t.model, system, turns.toList(), endpoint = t.endpoint, conv = "worker")
                         .collect { d -> if (d is Delta.Text) sb.append(d.text) }
                 }.isSuccess
                 val text = sb.toString()

@@ -78,7 +78,7 @@ fun AiHelperMenuItems(vm: ChatViewModel, flow: AiHelperFlow, close: () -> Unit, 
         )
         // The helper in use is ticked, with its model (helperLabel changes when another one is picked, so this updates).
         val active = remember(vm.helperLabel) { vm.helperKind() }
-        listOf("claude" to "Talk to Claude", "chatgpt" to "Talk to ChatGPT", "gemini" to "Talk to Gemini", "custom" to "Talk to Custom API…")
+        listOf("claude" to "Talk to Claude", "chatgpt" to "Talk to ChatGPT", "gemini" to "Talk to Gemini", "free" to "Talk to Free models", "offline" to "Talk to the offline model", "custom" to "Talk to Custom API…")
             .forEach { (k, label) ->
                 val on = k == active
                 DropdownMenuItem(
