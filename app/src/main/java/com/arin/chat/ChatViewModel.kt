@@ -2174,6 +2174,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         localOnly = onPhone && !writeFirst,
                         codespace = inCodespace && !writeFirst,
                         stopAfterWriting = writeFirst,
+                        // Named place: "on github" builds only on GitHub (no phone build first).
+                        target = if (writeFirst) "" else when (target) {
+                            BuildTarget.PHONE -> "phone"; BuildTarget.CODESPACE -> "codespace"
+                            BuildTarget.CHAT, BuildTarget.BUILD_TAB -> "github"; else -> ""
+                        },
                     ),
                     session,
                 )
@@ -2183,6 +2188,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 null
             }
         }
+    }
+
+    /**
+     * After Stop (or a failed build), a plain order naming where to build ("build on github") continues this chat's
+     * build from where it stopped, at that place — nothing is rewritten. Returns null when there's nothing to continue
+     * (then a normal build starts), "" when it continued, or a problem to show.
+     */
+    private fun continueStoppedBuild(said: List<String>, target: BuildTarget): String? {
+        val session = chatBuildSession() ?: return null
+        if (session.running || session.project == null || session.project?.selfUpdate == true || session.lastRequest == null) return null
+        val tl = session.timeline.toList()
+        val lastUser = tl.indexOfLast { it is com.arin.builder.TimelineItem.User }
+        val lastResult = tl.indexOfLast { it is com.arin.builder.TimelineItem.Result }
+        val unfinished = lastUser > lastResult ||
+            (tl.getOrNull(lastResult) as? com.arin.builder.TimelineItem.Result)?.let { !it.success } == true
+        if (!unfinished) return null
+        // Only a short "build it on github"-style order; asking for changes makes a new round of coding.
+        if (said.none { it.trim().split(Regex("\\s+")).size <= 10 && Prompt.namedBuildTarget(it) != null }) return null
+        val where = when (target) {
+            BuildTarget.PHONE -> "phone"; BuildTarget.CODESPACE -> "codespace"; BuildTarget.BUILD_TAB -> "buildtab"
+            BuildTarget.AUTO -> "auto"; else -> "chat"
+        }
+        return buildWrittenAt(session.id, where) ?: ""
     }
 
     /**
@@ -3646,7 +3674,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         val target = runCatching { BuildTarget.valueOf(named) }.getOrDefault(BuildTarget.CHAT)
                         val (name, description) = buildAsked
                         ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                            startBuild(name, description, target)?.let { notice = it }
+                            // Stopped earlier and now told where ("build on github"): carry on from where it stopped
+                            // (the code already written is kept), only at the place they named.
+                            (continueStoppedBuild(saidAll, target) ?: startBuild(name, description, target))?.let { if (it.isNotEmpty()) notice = it }
                         }
                     } else if (ordered && run.chat == chatKey()) {
                         // Told to build: write the code now; where to build is asked once it's written.

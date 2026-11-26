@@ -450,7 +450,9 @@ class BuildAgent(
         // Build on the phone first when Linux has the Android build tools: errors are found and fixed here,
         // and GitHub then only builds code that already compiles (and gives the download links).
         val localSlug = repo.name
-        var useLocal = localOnly || phoneCan && (existing == null || LocalBuild.hasCopy(context!!, localSlug))
+        // The owner said where: "github"/"codespace" means GitHub only — no phone build first.
+        val githubOnly = req.target == "github" || req.target == "codespace"
+        var useLocal = localOnly || !githubOnly && phoneCan && (existing == null || LocalBuild.hasCopy(context!!, localSlug))
         if (useLocal && existing == null) {
             LocalBuild.write(context!!, localSlug, files.mapValues { it.value.toByteArray() })
         }
