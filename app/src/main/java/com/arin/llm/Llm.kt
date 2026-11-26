@@ -51,9 +51,25 @@ object Llm {
             // ARIN-PROTECTED: claude-harness — one running Claude Code session per conversation (cached, low usage).
             Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns)
             Provider.Custom -> (endpoint ?: CustomApi.current()).let { ep ->
-                when (ep.format) {
+                val direct = when (ep.format) {
                     ApiFormat.OpenAI -> lessThinking { low -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }
                     ApiFormat.Anthropic -> anthropicStream(ep.chatUrl(), customAnthropicHeaders(key), key, model, system, turns, maxTokens, cache)
+                }
+                // ARIN-PROTECTED: claude-harness for Custom APIs — the same API, key and model (never changed), run
+                // through the Claude Code harness for its tools and caching. If the harness can't start, the API is
+                // used directly exactly as before.
+                val app = com.arin.ArinApp.instance
+                if (!com.arin.claudecode.Harness.customOn(app) || !com.arin.terminal.Linux.installed(app)) direct
+                else kotlinx.coroutines.flow.flow {
+                    var started = false
+                    try {
+                        com.arin.claudecode.Harness.stream(model, system, turns,
+                            custom = com.arin.claudecode.Harness.Custom(ep.baseUrl, key, ep.format == ApiFormat.Anthropic))
+                            .collect { started = true; emit(it) }
+                    } catch (e: Exception) {
+                        if (started || e is kotlinx.coroutines.CancellationException) throw e
+                        direct.collect { emit(it) }
+                    }
                 }
             }
         }
@@ -146,7 +162,7 @@ object Llm {
                     .filter { m -> m.id.startsWith("gpt-") && listOf("audio", "realtime", "image", "tts", "transcribe", "search").none { it in m.id } }
                     .sortedByDescending { it.id }
                 Provider.Custom -> customModels(key)
-                Provider.ClaudeCode -> fallback
+                Provider.ClaudeCode -> com.arin.claudecode.ClaudeAccounts.models(com.arin.ArinApp.instance) // each account's models
             }
         }.getOrNull().orEmpty()
         if (provider == Provider.Custom) {

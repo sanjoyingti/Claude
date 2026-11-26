@@ -16,6 +16,7 @@ import kotlinx.coroutines.SupervisorJob
 class ArinApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        runCatching { com.arin.settings.ArinFolder.ensure(this) } // the one Arin folder (remade if it went missing)
         instance = this
         CrashLog.install(this)
         CrashLog.checkExitReasons(this)

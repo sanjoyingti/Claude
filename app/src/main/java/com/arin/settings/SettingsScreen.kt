@@ -306,6 +306,9 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit, openClaudeCode: Boolea
                 vm.mcpServers.takeIf { it.isNotEmpty() }?.joinToString { it.name } ?: "Connect REA or other MCP servers",
             ) { ToolsSettings(vm) }
 
+            FoldSection("Storage", "One protected Arin folder · Free up space · Backup") {
+                com.arin.settings.StorageSection(vm)
+            }
             Section("Your data") {
                 OutlinedButton(onClick = { confirmClear = true }) { Text("Delete all chats and projects") }
             }

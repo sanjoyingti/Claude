@@ -34,7 +34,7 @@ object Harness {
     /** Arin's tools + the person's MCP servers (config JSON, server names) and GitHub token; set by the app. */
     @Volatile var extras: (() -> Triple<String, List<String>, String>)? = null
 
-    private class Session(val dir: String, val key: String, val model: String) {
+    private class Session(val dir: String, val key: String, val model: String, val tokenFile: String, val account: String, val custom: Custom? = null) {
         var sessionId: String? = null
         val sentUser = mutableListOf<Int>()   // what this session already has: the person's / tool turns, in order
         var lastUse = System.currentTimeMillis()
@@ -54,13 +54,26 @@ object Harness {
      * A reply through the harness. [purpose] keeps different users apart ("chat", "helper:build"…); the conversation is
      * recognised by its first message, so the next step of the same conversation reuses the running session.
      */
-    fun stream(model: String, system: String, turns: List<Turn>, purpose: String = "chat", tools: String = TOOLS): Flow<Delta> = channelFlow {
+    /** A Custom API as the harness's brain: [anthropic] = it speaks Claude's format, else OpenAI's (through Arin's bridge). */
+    data class Custom(val base: String, val key: String, val anthropic: Boolean)
+
+    fun customOn(c: Context) = com.arin.data.Settings(c).secret("HARNESS_CUSTOM") != "off"
+    fun setCustomOn(c: Context, on: Boolean) = com.arin.data.Settings(c).setSecret("HARNESS_CUSTOM", if (on) "on" else "off")
+
+    fun stream(model: String, system: String, turns: List<Turn>, purpose: String = "chat", tools: String = TOOLS, custom: Custom? = null): Flow<Delta> = channelFlow {
         val context = ctx()
         if (!com.arin.terminal.Linux.installed(context)) throw LlmException("The Claude Code login needs Arin's Linux: Settings → Linux → Install Linux.")
-        if (!ClaudeCode.connected(context)) throw LlmException("Sign in to Claude in the Claude Code tab first, or pick another AI from the model menu.")
-        val m = model.ifBlank { "sonnet" }
+        if (custom != null) {
+            if (!ClaudeCode.installed(context)) throw LlmException("Claude Code isn't installed")
+            if (!custom.anthropic && !ClaudeCode.ensureBridge(context, custom.base, custom.key)) throw LlmException("Arin's bridge didn't start")
+        }
+        // "sonnet@<account>": that account's own sign-in (several Claude accounts, each picked per chat).
+        val account = ClaudeAccounts.accountOf(model)
+        val tokenFile = ClaudeAccounts.tokenFileFor(context, model)
+        if (custom == null && !f(tokenFile).let { it.exists() && it.length() > 20 }) throw LlmException("Sign in to Claude in the Claude Code tab first, or pick another AI from the model menu.")
+        val m = ClaudeAccounts.modelOf(model).ifBlank { "sonnet" }
         val firstUser = turns.firstOrNull { it.fromUser } ?: throw LlmException("Nothing to answer.")
-        val key = "$purpose|$m|${firstUser.text.take(4000).hashCode()}"
+        val key = "$purpose|$m|${custom?.base ?: account ?: "main"}|${firstUser.text.take(4000).hashCode()}"
         val userTurns = turns.filter { it.fromUser }
         val hashes = userTurns.map(::turnHash)
 
@@ -69,7 +82,7 @@ object Harness {
         val fresh = s == null || s.sentUser.size >= hashes.size || hashes.subList(0, s.sentUser.size) != s.sentUser
         if (fresh) {
             s?.let { stop(it) }
-            s = Session("$BASE/${System.currentTimeMillis()}${(100..999).random()}", key, m)
+            s = Session("$BASE/${System.currentTimeMillis()}${(100..999).random()}", key, m, tokenFile, account ?: "main", custom)
             sessions[key] = s
         }
         val session = s!!
@@ -137,7 +150,7 @@ object Harness {
                                     if (b.optString("type") == "tool_use") send(Delta.Thinking("\n▸ " + describe(b) + "\n"))
                                 }
                             }
-                            "rate_limit_event" -> UsageMeter.fromRateLimit(o.optJSONObject("rate_limit_info"))
+                            "rate_limit_event" -> UsageMeter.fromRateLimit(o.optJSONObject("rate_limit_info"), session.account)
                             "result" -> {
                                 finished = true
                                 o.optString("session_id").takeIf { it.isNotBlank() }?.let { session.sessionId = it }
@@ -223,11 +236,11 @@ object Harness {
         val allowed = (tools.split(',') + servers.map { "mcp__$it" }).filter { it.isNotBlank() }.joinToString(" ")
         val ghEnv = if (gh.isNotBlank()) "export GH_TOKEN='${gh.replace("'", "")}' GITHUB_TOKEN='${gh.replace("'", "")}'; " else ""
         val resume = s.sessionId?.let { "--resume '$it' " } ?: ""
-        val token = ClaudeCode.tokenFile()
-        val cmd = "mkdir -p ${s.dir} /root/files; cd /root/files; rm -f ${s.dir}/in; mkfifo ${s.dir}/in; " +
+        val token = s.tokenFile
+        val cmd = "mkdir -p ${s.dir} /root/files; cd /root/files; rm -f ${s.dir}/in ${s.dir}/out.jsonl ${s.dir}/pid; mkfifo ${s.dir}/in; " +
             "setsid bash -c \"exec 3<>${s.dir}/in; echo \\$\\$ > ${s.dir}/pid; " +
-            "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " +
-            "export CLAUDE_CODE_OAUTH_TOKEN=\\$(cat $token 2>/dev/null) HOME=$BASE/home DISABLE_AUTOUPDATER=1 " +
+            "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " + brainEnv(s, token) +
+            "export HOME=$BASE/home DISABLE_AUTOUPDATER=1 " +
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 " +
             "BASH_MAX_OUTPUT_LENGTH=8000 MAX_MCP_OUTPUT_TOKENS=6000; $ghEnv" +
             "claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages " +
@@ -237,6 +250,17 @@ object Harness {
             "for i in 1 2 3 4 5 6 7 8 9 10; do [ -s ${s.dir}/pid ] && break; sleep 0.3; done; echo started"
         val r = com.arin.terminal.Shell.run(context, cmd, 60_000)
         if (!r.stdout.contains("started")) throw LlmException("Couldn't start Claude Code: " + r.stderr.take(300))
+    }
+
+    /** Who answers: the Claude account's sign-in, or the Custom API (directly, or through Arin's bridge). */
+    private fun brainEnv(s: Session, token: String): String {
+        val c = s.custom ?: return "export CLAUDE_CODE_OAUTH_TOKEN=\\$(cat $token 2>/dev/null); "
+        val m = s.model.replace("'", "")
+        val base = if (c.anthropic) c.base.trimEnd('/').removeSuffix("/v1") else "http://127.0.0.1:${ClaudeCode.BRIDGE_PORT_PUBLIC}"
+        val key = if (c.anthropic) c.key.replace("'", "") else "arin-bridge"
+        return "unset CLAUDE_CODE_OAUTH_TOKEN; export ANTHROPIC_BASE_URL='$base' ANTHROPIC_AUTH_TOKEN='$key' ANTHROPIC_MODEL='$m' " +
+            "ANTHROPIC_SMALL_FAST_MODEL='$m' ANTHROPIC_DEFAULT_OPUS_MODEL='$m' ANTHROPIC_DEFAULT_SONNET_MODEL='$m' " +
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL='$m' CLAUDE_CODE_SUBAGENT_MODEL='$m' ENABLE_TOOL_SEARCH=false; "
     }
 
     /** Ends a session's process. With [keepSession] its conversation can be resumed later (same session id). */

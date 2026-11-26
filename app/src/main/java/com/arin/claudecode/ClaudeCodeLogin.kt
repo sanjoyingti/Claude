@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -73,9 +74,32 @@ private fun ProLogin(vm: ChatViewModel) {
     val uri = LocalUriHandler.current
     val colors = MaterialTheme.colorScheme
     val small = MaterialTheme.typography.bodySmall
-    if (vm.ccConnected) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var newName by rememberSaveable { mutableStateOf("") }
+    if (vm.ccConnected && !adding && vm.ccAddingAccount == null) {
         Text("Signed in with your Claude subscription ✓", color = colors.primary)
+        // Your Claude accounts: each has its own sign-in; pick one per chat from the model menu at the top.
+        vm.ccAccountsTick
+        val accounts = remember(vm.ccAccountsTick) { com.arin.claudecode.ClaudeAccounts.migrate(ctx); com.arin.claudecode.ClaudeAccounts.list(ctx) }
+        accounts.forEach { a ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("• ${a.name}", modifier = Modifier.weight(1f))
+                TextButton(onClick = { vm.makeCcAccountMain(a.id) }) { Text("Use in this tab") }
+                TextButton(onClick = { vm.removeCcAccount(a.id) }) { Text("Remove") }
+            }
+        }
+        OutlinedButton(onClick = { adding = true }) { Text("+ Add another Claude account") }
         TextButton(onClick = { vm.ccLogout() }) { Text("Sign out") }
+        return
+    }
+    if (adding && vm.ccAddingAccount == null) {
+        Text("Name this account (for example \"Work\" or \"Account 2\"), then sign in to it on a fresh page.", style = small, color = colors.onSurfaceVariant)
+        OutlinedTextField(newName, { newName = it }, placeholder = { Text("Account name") }, singleLine = true)
+        Row {
+            Button(onClick = { adding = false; vm.startCcLogin(newName.trim().ifBlank { "Account ${com.arin.claudecode.ClaudeAccounts.list(ctx).size + 1}" }); newName = "" }) { Text("Sign in") }
+            TextButton(onClick = { adding = false }) { Text("Cancel") }
+        }
         return
     }
     Text(
@@ -90,7 +114,11 @@ private fun ProLogin(vm: ChatViewModel) {
         Text(vm.ccLoginStatus, style = small, color = if (bad) colors.error else colors.onSurfaceVariant)
     }
     vm.ccLoginUrl?.let { url ->
-        OutlinedButton(onClick = { uri.openUri(url) }) { Text("Open sign-in page") }
+        // Fresh sign-in inside Arin: no saved logins, so it signs in to exactly the account you choose.
+        var fresh by rememberSaveable { mutableStateOf(false) }
+        Button(onClick = { fresh = true }) { Text("Sign in here (fresh page)") }
+        if (fresh) com.arin.claudecode.FreshSignInDialog(url, onCode = { c -> fresh = false; vm.pasteCcCode(c) }, onClose = { fresh = false })
+        OutlinedButton(onClick = { uri.openUri(url) }) { Text("Or open in your browser") }
         var code by rememberSaveable { mutableStateOf("") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(code, { code = it }, placeholder = { Text("Paste the code from the sign-in page") }, singleLine = true, modifier = Modifier.weight(1f))

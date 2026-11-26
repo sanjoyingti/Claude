@@ -192,7 +192,7 @@ object ArinUpdateChat {
             }
             else -> {
                 com.arin.builder.ApkInstaller.install(context, apk)
-                "⬇️ Downloaded (also saved in Download/Arin). Opening the installer: it updates the Arin you have now."
+                "⬇️ Downloaded (also saved in Arin's folder). Opening the installer: it updates the Arin you have now."
             }
         }
     } catch (e: kotlinx.coroutines.CancellationException) {

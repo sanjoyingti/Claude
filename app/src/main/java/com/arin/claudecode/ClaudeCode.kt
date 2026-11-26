@@ -454,6 +454,17 @@ PY
     // ---------- the local bridge (Anthropic format -> OpenAI format) ----------
 
     private const val BRIDGE_PORT = 8787
+    const val BRIDGE_PORT_PUBLIC = BRIDGE_PORT
+    @Volatile private var bridgeFor = ""
+
+    /** The bridge for [base] (OpenAI-style APIs), started only if it isn't already running for that API. */
+    suspend fun ensureBridge(context: Context, base: String, key: String): Boolean {
+        val id = base + "|" + key.hashCode()
+        if (bridgeFor == id && Shell.run(context, "curl -s http://127.0.0.1:$BRIDGE_PORT/health >/dev/null && echo up", 20_000).stdout.contains("up")) return true
+        val ok = startBridge(context, Backend("openai", base, key, ""))
+        if (ok) bridgeFor = id
+        return ok
+    }
     private const val BRIDGE = "/root/.arin/cc-bridge.py"
 
     /** (Re)start the bridge for this API. Its key goes in through the environment, never to disk. */

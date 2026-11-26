@@ -42,8 +42,10 @@ import java.net.URL
 object UsageMeter {
     data class Window(val used: Double, val resetsAt: Long) // used 0..1, resetsAt = epoch seconds
 
-    var session by mutableStateOf<Window?>(null); private set
-    var weekly by mutableStateOf<Window?>(null); private set
+    /** Per Claude account ("main" = the Claude Code tab's sign-in). */
+    val sessionBy = androidx.compose.runtime.mutableStateMapOf<String, Window>()
+    val weeklyBy = androidx.compose.runtime.mutableStateMapOf<String, Window>()
+    private val updatedBy = HashMap<String, Long>()
     var lastReplyTokens by mutableStateOf<Long?>(null); private set
     var updated by mutableStateOf(0L); private set
     var customLine by mutableStateOf<String?>(null); private set
@@ -53,8 +55,10 @@ object UsageMeter {
     private fun epoch(v: Long): Long = if (v > 10_000_000_000L) v / 1000 else v
 
     /** From Claude Code's `rate_limit_event` (stream-json). */
-    fun fromRateLimit(info: JSONObject?) {
+    fun fromRateLimit(info: JSONObject?, account: String = "main") {
         info ?: return
+        var session: Window? = sessionBy[account]
+        var weekly: Window? = weeklyBy[account]
         val windows = info.optJSONObject("unifiedWindows")
         if (windows != null) {
             windows.optJSONObject("five_hour")?.let { session = Window(it.optDouble("utilization", 0.0), epoch(it.optLong("resetsAt"))) }
@@ -65,6 +69,9 @@ object UsageMeter {
         } else if (info.has("resetsAt") && info.optString("rateLimitType") == "five_hour") {
             session = session?.copy(resetsAt = epoch(info.optLong("resetsAt")))
         }
+        session?.let { sessionBy[account] = it }
+        weekly?.let { weeklyBy[account] = it }
+        updatedBy[account] = System.currentTimeMillis()
         updated = System.currentTimeMillis()
     }
 
@@ -75,10 +82,12 @@ object UsageMeter {
     }
 
     /** Claude's own usage address (what Claude Code's /usage shows). Works when the sign-in allows it. */
-    suspend fun refreshClaude() = withContext(Dispatchers.IO) {
-        if (System.currentTimeMillis() - updated < 60_000 && session != null) return@withContext
+    suspend fun refreshClaude(account: String = "main") = withContext(Dispatchers.IO) {
+        if (System.currentTimeMillis() - (updatedBy[account] ?: 0L) < 60_000 && sessionBy[account] != null) return@withContext
+        val app = com.arin.ArinApp.instance
+        val path = if (account == "main") ClaudeCode.tokenFile() else ClaudeAccounts.tokenFileFor(app, "x@$account")
         val token = runCatching {
-            java.io.File(com.arin.terminal.Linux.rootfs(com.arin.ArinApp.instance), ClaudeCode.tokenFile().removePrefix("/")).readText().trim()
+            java.io.File(com.arin.terminal.Linux.rootfs(app), path.removePrefix("/")).readText().trim()
         }.getOrNull()?.takeIf { it.isNotBlank() } ?: return@withContext
         runCatching {
             val c = URL("https://api.anthropic.com/api/oauth/usage").openConnection() as HttpURLConnection
@@ -92,9 +101,9 @@ object UsageMeter {
                 val at = runCatching { java.time.Instant.parse(iso).epochSecond }.getOrDefault(0L)
                 Window(it.optDouble("utilization", 0.0) / 100.0, at) // this address reports 0–100
             }
-            w("five_hour")?.let { session = it }
-            w("seven_day")?.let { weekly = it }
-            updated = System.currentTimeMillis()
+            w("five_hour")?.let { sessionBy[account] = it }
+            w("seven_day")?.let { weeklyBy[account] = it }
+            updatedBy[account] = System.currentTimeMillis()
         }
     }
 
@@ -140,18 +149,22 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
     val custom = claudeLogin == null && vm.provider == Provider.Custom
     if (!claude && !custom) return
     var details by remember { mutableStateOf(false) }
-    if (claude) LaunchedEffect(Unit) { while (true) { UsageMeter.refreshClaude(); delay(5 * 60_000L) } }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // Which Claude account this tab uses: the one in the chosen model ("sonnet@id"), or the main sign-in.
+    val acc = if (claudeLogin != null) "main" else ClaudeAccounts.accountOf(vm.model) ?: "main"
+    val accName = if (acc == "main") "" else ClaudeAccounts.name(ctx, acc)
+    if (claude) LaunchedEffect(acc) { while (true) { UsageMeter.refreshClaude(acc); delay(5 * 60_000L) } }
     if (custom) LaunchedEffect(vm.customBaseUrl) { while (true) { UsageMeter.refreshCustom(vm.customBaseUrl, vm.customKeyForMeter()); delay(3 * 60_000L) } }
     val small = MaterialTheme.typography.labelSmall
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth().clickable { details = true }.padding(horizontal = 4.dp, vertical = 2.dp)) {
         if (claude) {
-            val s = UsageMeter.session
-            val w = UsageMeter.weekly
+            val s = UsageMeter.sessionBy[acc]
+            val w = UsageMeter.weeklyBy[acc]
             if (s == null && w == null) {
                 Text("⚡ Claude usage shows after your first reply", style = small, color = dim)
             } else Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Session ${pct(s)}", style = small, color = dim)
+                Text((if (accName.isNotBlank()) "$accName · " else "") + "Session ${pct(s)}", style = small, color = dim)
                 Spacer(Modifier.width(6.dp))
                 LinearProgressIndicator(progress = { (s?.used ?: 0.0).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.width(60.dp).height(4.dp))
                 Spacer(Modifier.width(12.dp))
@@ -167,12 +180,12 @@ fun UsageBar(vm: ChatViewModel, claudeLogin: Boolean? = null) {
     if (details) AlertDialog(
         onDismissRequest = { details = false },
         confirmButton = { TextButton(onClick = { details = false }) { Text("OK") } },
-        title = { Text(if (claude) "Claude usage" else "API usage") },
+        title = { Text(if (claude) "Claude usage" + (if (accName.isNotBlank()) " · $accName" else "") else "API usage") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (claude) {
-                    Block("Current session", UsageMeter.session)
-                    Block("Weekly limits · All models", UsageMeter.weekly)
+                    Block("Current session", UsageMeter.sessionBy[acc])
+                    Block("Weekly limits · All models", UsageMeter.weeklyBy[acc])
                     UsageMeter.lastReplyTokens?.let { Text("Last reply: ${"%,d".format(it)} tokens (cached history not counted)", style = MaterialTheme.typography.bodySmall) }
                     Text("The same numbers as the Claude app: your plan's limit is shared by the Claude app, Claude Code and Arin.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

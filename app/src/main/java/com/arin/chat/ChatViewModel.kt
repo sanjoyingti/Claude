@@ -613,9 +613,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             .filter { line -> line.length > 3 && line.any { it.isLetter() } && !line.all { it in "─│╭╮╰╯ " } }
             .lastOrNull().orEmpty().take(200)
 
-    fun startCcLogin() {
+    /** Name for the Claude account being added (several accounts, each with its own sign-in). */
+    var ccAddingAccount by mutableStateOf<String?>(null)
+    /** Bumps when the list of Claude accounts changes, so the screens update. */
+    var ccAccountsTick by mutableStateOf(0)
+
+    /** A sign-in finished: keep it as a named account and refresh the model menu. */
+    private fun ccSignedInAsAccount() {
+        val app = getApplication<Application>()
+        com.arin.claudecode.ClaudeAccounts.migrate(app)
+        val acc = com.arin.claudecode.ClaudeAccounts.addFromMainToken(app, ccAddingAccount.orEmpty())
+        ccAddingAccount = null
+        ccAccountsTick++
+        if (provider == Provider.ClaudeCode) loadModels()
+        acc?.let { notice = "Signed in ✓ — \"${it.name}\" is in the model menu" }
+    }
+
+    fun makeCcAccountMain(id: String) {
+        val app = getApplication<Application>()
+        ArinApp.scope.launch { com.arin.claudecode.ClaudeAccounts.makeMain(app, id); ccAccountsTick++; notice = "The Claude Code tab now uses this account" }
+    }
+
+    fun removeCcAccount(id: String) {
+        com.arin.claudecode.ClaudeAccounts.remove(getApplication(), id); ccAccountsTick++
+        if (provider == Provider.ClaudeCode) loadModels()
+    }
+
+    fun startCcLogin(newAccount: String? = null) {
         if (ccBusy) return
         val app = getApplication<Application>()
+        if (newAccount != null) ccAddingAccount = newAccount
         ccBusy = true
         ccLoginUrl = null
         ccLoginStatus = "Starting Claude Code's sign-in…"
@@ -644,7 +671,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         ccLoginUrl = null
                         ccLoginStatus = ""
                         applyCcLinux()
-                        notice = "Signed in to Claude Code ✓"
+                        notice = "Signed in to Claude Code ✓"; ccSignedInAsAccount()
                         return@launch
                     }
                     val line = lastLoginLine(out)
@@ -677,7 +704,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 kotlinx.coroutines.delay(2000)
                 if (ccConnected) return@launch
                 if (com.arin.claudecode.ClaudeCode.captureToken(app)) {
-                    ccConnected = true; ccLoginUrl = null; ccLoginStatus = ""; applyCcLinux(); notice = "Signed in to Claude Code ✓"
+                    ccConnected = true; ccLoginUrl = null; ccLoginStatus = ""; applyCcLinux(); notice = "Signed in to Claude Code ✓"; ccSignedInAsAccount()
                     return@launch
                 }
                 val says = com.arin.claudecode.ClaudeCode.loginSays(app)
@@ -707,7 +734,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             ccConnected = com.arin.claudecode.ClaudeCode.saveToken(app, t)
-            if (ccConnected) applyCcLinux()
+            if (ccConnected) { applyCcLinux(); ccSignedInAsAccount() }
             notice = if (ccConnected) "Connected to Claude Code ✓" else "That didn't look like a valid token."
         }
     }
@@ -1939,7 +1966,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             append("✅ **$name is built on this phone.**\n\n")
             result.phoneApk?.let { append("- **APK:** `$it`\n") }
             result.phoneSourceZip?.let { append("- **Source code (zip):** `$it`\n") }
-            append("\nAndroid's install screen opens now. Both files are in your Download/Arin folder.")
+            append("\nAndroid's install screen opens now. Both files are in Arin's folder (Builds).")
         } else if (result.success && project != null) buildString {
             append(if (project.selfUpdate) "✅ **The new version of Arin is built.**\n\n" else "✅ **$name is built.**\n\n")
             result.apkUrl?.let { append("- **APK:** [Download $name APK]($it)\n  $it\n") }
@@ -1987,7 +2014,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { com.arin.builder.ApkInstaller.download(app, url) {} }
                     .onSuccess {
                         postToBuildChat(f.chat, Message(fromUser = false, text =
-                            "⬇️ **$name saved to your phone** in Download/Arin (`${it.name}`). Opening the installer…"), null, "")
+                            "⬇️ **$name saved to your phone** in Arin's folder (Builds) (`${it.name}`). Opening the installer…"), null, "")
                         runCatching { com.arin.builder.ApkInstaller.install(app, it) }
                     }
                     .onFailure { notice = "Built, but couldn't auto-save the APK: ${it.message}. Tap the APK link above." }
@@ -2220,21 +2247,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (linuxPath != null) {
                         "Downloaded $fileName (${r.header("Content-Length")?.toLongOrNull()?.let { com.arin.data.Attachments.readableSize(it) } ?: "size unknown"}) to $linuxPath in Linux. Terminal tools can use it there."
                     } else {
-                        val values = android.content.ContentValues().apply {
-                            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fileName)
-                            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/Arin")
-                        }
-                        val dest = if (android.os.Build.VERSION.SDK_INT >= 29) {
-                            app.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-                        } else null
-                        if (dest != null) {
-                            app.contentResolver.openOutputStream(dest)?.use { out -> body.byteStream().use { it.copyTo(out, 64 * 1024) } }
-                            "Downloaded $fileName to the phone's Download/Arin folder (/storage/emulated/0/Download/Arin/$fileName)."
-                        } else {
-                            val f = java.io.File(app.getExternalFilesDir(null), fileName)
-                            f.outputStream().use { out -> body.byteStream().use { it.copyTo(out, 64 * 1024) } }
-                            "Downloaded $fileName to ${f.absolutePath}."
-                        }
+                        // Into Arin's one folder (Downloads), not scattered around the phone.
+                        val f = java.io.File(com.arin.settings.ArinFolder.sub(app, "Downloads"), fileName)
+                        f.outputStream().use { out -> body.byteStream().use { it.copyTo(out, 64 * 1024) } }
+                        "Downloaded $fileName to Arin's folder (Downloads): ${f.absolutePath}."
                     }
                 }
             } catch (e: Exception) {

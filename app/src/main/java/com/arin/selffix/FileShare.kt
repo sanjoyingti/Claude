@@ -102,7 +102,7 @@ object FileShare {
         null
     }
 
-    /** Downloads [url] to the phone's Download/Arin folder with Android's downloader (shows its own notification). */
+    /** Downloads [url] into Arin's folder (Builds) with Android's downloader (shows its own notification). */
     fun downloadToPhone(context: Context, url: String, name: String) {
         runCatching {
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
@@ -110,7 +110,8 @@ object FileShare {
                 .setTitle(name)
                 .setDescription("Saved by Arin")
                 .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, "Arin/$name")
+                // Into Arin's own protected folder (Android → data → com.arin.app → files → Arin → Builds), not scattered.
+                .setDestinationInExternalFilesDir(context, null, "Arin/Builds/$name")
             if (name.endsWith(".apk")) req.setMimeType("application/vnd.android.package-archive")
             dm.enqueue(req)
         }
