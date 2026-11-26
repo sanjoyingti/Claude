@@ -459,6 +459,7 @@ object Prompt {
         // Any model can call Claude for help; errors are always researched on the internet first (protected rules).
         // AI helper (Claude, ChatGPT, Gemini or a Custom API model): only when it is switched on.
         append(runCatching { com.arin.selffix.ClaudeHelper.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: ai-helper
+        append(runCatching { com.arin.selffix.Worker.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: worker-mode
         append(com.arin.selffix.AutoFix.RULE_GENERAL).append("\n\n") // ARIN-PROTECTED: research-first auto-fix rule for every model
 
         if (!need("build")) {

@@ -77,6 +77,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         var liveThinking by mutableStateOf("")
         /** The person is talking with the AI helper: after the model reads the message and drafts, the helper helps it. */
         var consultHelper = false
+        /** The person asked for the helper's help this time ("Talk to"): only then is the boss's draft checked by it. */
+        var askedHelper = false
         private var statusNow by mutableStateOf<String?>(null)
         /** What the reply is doing right now; every step also goes into the tab's "What Arin is doing" summary. */
         var status: String?
@@ -2903,7 +2905,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         // Each chat runs its own reply; others keep going in the background.
         // With the AI helper switched on, it helps the model from the start to the end of every reply.
-        val run = Run(chatKey(), title, messages.toList()).also { it.consultHelper = consultNext || claudeHelperOn; consultNext = false }
+        val run = Run(chatKey(), title, messages.toList()).also { it.consultHelper = consultNext || claudeHelperOn; it.askedHelper = consultNext; consultNext = false }
         if (runs.containsKey(run.chat)) return
         runs[run.chat] = run
         run.liveText = ""
@@ -3003,6 +3005,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var formatHint = false
                 var helperTakeovers = 0
                 var helperConsulted = false
+                var workerAsks = 0
+                var lastWorkerResult = ""
                 var helperGuides = 0
                 var lastGuided = -1
                 // The files the person uploaded in this chat: the helper can read them too.
@@ -3326,6 +3330,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         turns += Turn(true, "The AI helper's answer:\n\n${answer.take(16_000)}\n\nContinue the task using it where it helps.")
                         continue
                     }
+                    // ARIN-PROTECTED: worker-mode — the boss hands heavy work to the worker and inspects what comes back.
+                    val workerTask = if (workerAsks < 4 && com.arin.selffix.Worker.on(app)) com.arin.selffix.Worker.task(full) else null
+                    if (workerTask != null) {
+                        workerAsks++
+                        run.liveText = ""
+                        val (who, result) = com.arin.selffix.Worker.run(app, workerTask) { run.status = it }
+                        run.status = null
+                        val step = com.arin.data.CommandRun("worker ${who.ifBlank { "(none)" }}: ${workerTask.take(80)}", result.take(2_000), 0, kind = "tool")
+                        ran += step
+                        run.liveCommands += step
+                        turns += Turn(false, full)
+                        turns += Turn(true, if (result.isBlank()) "[No worker could do this task (all refused or failed). Do it yourself, briefly.]"
+                            else { lastWorkerResult = result; "[WORKER RESULT from $who — inspect it. If it's right, answer the person and write " +
+                                "${com.arin.selffix.Worker.RESULT_TAG} where its output should appear (don't copy it). If it's wrong, send directions " +
+                                "in another <ask_worker>.]\n" + result.take(16_000) })
+                        continue
+                    }
                     // Past chats: read what was said before.
                     val recallQuery = if (memoryFlag && recalls < 4) Prompt.recall(full) else null
                     if (recallQuery != null) {
@@ -3467,7 +3488,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         // Talking with the helper: the model has read the whole message and drafted its answer; now the
                         // helper helps it, and the model gives the final answer with that help.
-                        if (run.consultHelper && !helperConsulted && claudeHelperOn) {
+                        // ARIN-PROTECTED: credit-saver — with the saver on, the draft isn't sent for a second pass every reply
+                        // (that doubled your model's and Claude's use even for "hi"); only when you asked for the helper.
+                        if (run.consultHelper && !helperConsulted && claudeHelperOn && (run.askedHelper || !com.arin.selffix.CreditSaver.on(app))) {
                             helperConsulted = true
                             // Only the boss's own draft goes to the helper (never the person's message).
                             val help = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question =
@@ -3493,6 +3516,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     turns += Turn(false, "<search>$q</search>")
                     val trimmed = results
                     turns += Turn(true, trimmed + "\n\nNow answer my earlier message using these results where they help.")
+                }
+                // The worker's output goes in where the boss pointed to it (the boss didn't spend tokens copying it).
+                answer = com.arin.selffix.Worker.clean(answer).let {
+                    if (lastWorkerResult.isNotBlank() && it.contains(com.arin.selffix.Worker.RESULT_TAG)) it.replace(com.arin.selffix.Worker.RESULT_TAG, lastWorkerResult) else it.replace(com.arin.selffix.Worker.RESULT_TAG, "")
                 }
                 if (Prompt.clean(answer).isBlank() && ran.isEmpty()) failure = "The model sent an empty reply. Tap Retry, or pick another model."
             } catch (e: CancellationException) {

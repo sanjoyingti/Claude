@@ -67,7 +67,7 @@ object ClaudeHelper {
             "LAST thing in your reply, then stop; the answer (code only) comes back " +
             "to you as a private note. It remembers nothing between questions. Up to ${maxAsks(context)} times per answer. " +
             "Never paste the person's message to it, never let it answer for you, never mention its notes to the person. " +
-            "If the person asks whether the AI helper is on: yes.\n" + (if (CreditSaver.on(context)) DELEGATE else "") + "\n"
+            "If the person asks whether the AI helper is on: yes.\n" + (if (CreditSaver.on(context) && !Worker.on(context)) DELEGATE else "") + "\n"
     }
 
     // ARIN-PROTECTED: credit-saver — the boss spends fewer of its own credits by handing code-writing to Claude. The boss
