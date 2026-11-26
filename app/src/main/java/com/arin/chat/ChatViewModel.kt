@@ -206,6 +206,37 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ARIN-PROTECTED: credit-saver — strict mode: the boss gets the least it needs to keep working at full strength.
+    // The latest messages are sent whole; older ones are cut down. Nothing is deleted from the chat itself.
+    private fun strictTrim(turns: List<Turn>): List<Turn> {
+        if (turns.size <= 4) return turns
+        val think = Regex("(?s)<think>.*?</think>")
+        val lastUserMedia = turns.indexOfLast { it.fromUser && it.hasMedia }
+        val keepWhole = 6
+        val cut = turns.size - keepWhole
+        var out = turns.mapIndexed { i, t ->
+            var x = t
+            // Old thinking is never needed again.
+            if (!x.fromUser && x.text.contains("<think>")) x = x.copy(text = x.text.replace(think, "").trim())
+            // Attachments go once: only the latest message with pictures/PDFs keeps them.
+            if (x.hasMedia && i != lastUserMedia) x = x.copy(images = emptyList(), pdfs = emptyList(),
+                text = x.text + "\n[attachment sent earlier — already seen]")
+            if (i < cut) {
+                val lim = if (x.fromUser && !x.text.startsWith("[")) 2_000 else 700
+                if (x.text.length > lim + 300) x = x.copy(text = x.text.take(lim) + "\n…[older part shortened to save credits]…\n" + x.text.takeLast(200))
+            }
+            x
+        }
+        // A long chat: the first message (what the work is about) and the latest 24 turns.
+        if (out.size > 26) {
+            val first = out.first()
+            var tail = out.takeLast(24)
+            if (!tail.first().fromUser) tail = tail.drop(1)
+            out = listOf(first, Turn(false, "[Earlier messages were left out to save credits; ask if you need something from them.]")) + tail
+        }
+        return out
+    }
+
     private fun dedupeTurns(turns: List<Turn>): List<Turn> {
         if (turns.size <= 2) return turns
         val minLen = 600
@@ -2933,14 +2964,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (problem != null) throw com.arin.llm.LlmException(problem)
                 }
                 var system = if (offline) Prompt.localSystem(memoryList, aboutYou, howToAnswer, replyStyle) else Prompt.system(
-                    searchFlag, memoryFlag, memoryList, project, useTerminal, com.arin.mcp.Mcp.promptSection(activeNames, compact = saveCredits),
+                    searchFlag, memoryFlag, memoryList, project, useTerminal, com.arin.mcp.Mcp.promptSection(activeNames, compact = saveCredits || com.arin.selffix.CreditSaver.on(getApplication())),
                     terminalInfo = com.arin.terminal.Shell.describe(app),
                     pastChats = if (memoryFlag) withContext(Dispatchers.IO) { runCatching { store.recentTitles(run.chat) }.getOrDefault("") } else "",
                     aboutPerson = aboutYou,
                     howToAnswer = howToAnswer,
                     style = replyStyle,
                     deepResearch = deep,
-                    lean = saveCredits,
+                    lean = saveCredits || com.arin.selffix.CreditSaver.on(getApplication()),
                     topics = Prompt.topics(
                         history.filter { it.fromUser }.takeLast(3).joinToString("\n") { it.text } +
                             // A pending build failure keeps the build rules in.
@@ -3035,7 +3066,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 else turns + Turn(false, text.toString()) +
                                     Turn(true, "Your reply above was cut off mid-way. Continue it from exactly where it stopped. Do not repeat anything already written and do not start over — just carry straight on.")
                             try {
-                                val sent0 = if (saveCredits) shrinkOldToolOutput(dedupeTurns(streamTurns), firstToolTurn) else streamTurns
+                                val strict = com.arin.selffix.CreditSaver.on(app)
+                                val sent0 = if (saveCredits || strict) shrinkOldToolOutput(dedupeTurns(streamTurns), firstToolTurn, keepRecent = if (strict) 2 else 4)
+                                    .let { if (strict) strictTrim(it) else it } else streamTurns
                                 // After a broken tool call: only the recent part of the conversation (what usually triggers it).
                                 val sent = if (formatHint && sent0.size > 14) sent0.takeLast(14) else sent0
                                 // Speed check: how big the request is and how long the service takes to start answering.
@@ -3272,7 +3305,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         continue
                     }
                     // AI helper: any model can ask the chosen helper (Claude, ChatGPT, Gemini or a Custom API model) for help.
-                    val claudeQ = if (claudeHelperOn && claudeAsks < com.arin.selffix.ClaudeHelper.MAX_PER_ANSWER) com.arin.selffix.ClaudeHelper.question(full) else null // ARIN-PROTECTED: ai-helper
+                    val claudeQ = if (claudeHelperOn && claudeAsks < com.arin.selffix.ClaudeHelper.maxAsks(app)) com.arin.selffix.ClaudeHelper.question(full) else null // ARIN-PROTECTED: ai-helper
                     if (claudeQ != null) {
                         claudeAsks++
                         run.liveText = ""
@@ -4067,11 +4100,54 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             restoringSelection = false
         }
+        // An opened chat's model is the chat tab's model now.
+        settings.setTabSelection("chat", provider.name + "|" + model + "|" + currentSavedApi()?.slotId.orEmpty())
+    }
+
+    // ARIN-PROTECTED: model-per-tab — each tab (chat, build, Update Arin, Movie Maker, Claude Code) keeps its own
+    // model and API. Picking one in a tab changes only that tab; a task already running keeps the model it started with.
+    private val modelTabs = setOf("chat", "build", "arin-update", "movie", "claude-code")
+    /** Empty until the first tab opens, so the chat tab gets its own model back after a restart. */
+    private var modelTab = ""
+
+    private fun saveTabSelection() {
+        if (restoringSelection || modelTab.isBlank()) return
+        settings.setTabSelection(modelTab, provider.name + "|" + model + "|" + currentSavedApi()?.slotId.orEmpty())
+    }
+
+    /** Called when a tab opens: puts back that tab's own model (a tab never used yet starts with the one in use). */
+    fun enterModelTab(tab: String) {
+        if (tab !in modelTabs || tab == modelTab) return
+        saveTabSelection()
+        modelTab = tab
+        val saved = settings.tabSelection(tab)?.split('|')
+        if (saved == null || saved.size < 3) { saveTabSelection(); return }
+        if (saved[0] == provider.name && saved[1] == model && saved[2] == currentSavedApi()?.slotId.orEmpty()) return
+        applySelection(saved[0], saved[1], saved[2])
+    }
+
+    private fun applySelection(prov: String, mod: String, apiId: String) {
+        val p = runCatching { Provider.valueOf(prov) }.getOrNull() ?: return
+        restoringSelection = true
+        try {
+            val api = if (p == Provider.Custom) savedApis.firstOrNull { it.slotId == apiId } else null
+            if (api != null) useSavedApi(api, quiet = true) else if (p != provider || p == Provider.Custom) chooseProvider(p)
+            if (mod.isNotBlank()) {
+                pinnedModel = p to mod
+                model = mod
+                settings.setModel(p, mod)
+            }
+        } finally {
+            restoringSelection = false
+        }
     }
 
     /** Saves the open chat's model/API choice on that chat only (without moving it up the chats list). */
     private fun rememberChatSelection() {
-        if (restoringSelection || temporary) return
+        if (restoringSelection) return
+        saveTabSelection()
+        // Only the chat tab's choice belongs to the open chat: picking a model in Build or Update Arin leaves it alone.
+        if (modelTab != "chat" || temporary) return
         val id = chatId ?: return
         val prov = provider.name; val mod = model; val api = currentSavedApi()?.slotId.orEmpty()
         ArinApp.scope.launch(Dispatchers.IO) {

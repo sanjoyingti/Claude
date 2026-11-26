@@ -84,6 +84,10 @@ class Settings(context: Context) {
 
     fun setModel(provider: Provider, id: String) = prefs.edit().putString("model_${slot(provider)}", id).apply()
 
+    /** The model each tab uses ("provider|model|apiId"): changing it in one tab never changes another. */
+    fun tabSelection(tab: String): String? = prefs.getString("tabsel_$tab", null)
+    fun setTabSelection(tab: String, v: String) = prefs.edit().putString("tabsel_$tab", v).apply()
+
     var theme: ThemeMode
         get() = prefs.getString("theme", null)?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: ThemeMode.System
         set(value) = prefs.edit().putString("theme", value.name).apply()

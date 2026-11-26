@@ -346,7 +346,7 @@ object ArinUpdateChat {
                     val read = readTag.find(reply)?.groupValues?.get(1)
                     val search = WebTools.searchTag.find(reply)?.groupValues?.get(1)?.trim()
                     val fetch = WebTools.fetchTag.find(reply)?.groupValues?.get(1)?.trim()
-                    val ask = if (ClaudeHelper.enabled(app, "arin-update") && helperAsks < ClaudeHelper.MAX_PER_ANSWER) ClaudeHelper.question(reply) else null
+                    val ask = if (ClaudeHelper.enabled(app, "arin-update") && helperAsks < ClaudeHelper.maxAsks(app)) ClaudeHelper.question(reply) else null
                     val cmd = runTag.find(reply)?.groupValues?.get(1)?.trim()
                     if (steps < 30 && (read != null || search != null || fetch != null || ask != null || cmd != null)) {
                         steps++

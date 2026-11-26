@@ -430,7 +430,7 @@ class BuildAgent(
                 notes = reviewAgainstRequirements(notes)
             }
         }
-        if (helperOn() && !req.resume && pendingFiles.isNotEmpty()) helperReview()
+        if ((helperOn() || com.arin.selffix.CreditSaver.on(context)) && !req.resume && pendingFiles.isNotEmpty()) helperReview()
         saveProject(repo, null)
         if (req.stopAfterWriting && !self && !(existing == null && req.zipPath != null) && !req.resume) {
             step(BuildEvent.Kind.DONE, "The code is written (${pendingFiles.size} file(s)). Waiting for you to choose where to build")
@@ -859,12 +859,12 @@ class BuildAgent(
             if (steps >= MAX_WEB_STEPS || reply.contains("=== FILE:")) return reply
             val search = WebTools.searchTag.find(reply)?.groupValues?.get(1)?.trim()
             val fetch = WebTools.fetchTag.find(reply)?.groupValues?.get(1)?.trim()
-            val claudeQ = if (context != null && com.arin.selffix.ClaudeHelper.enabled(context, helperTab) && claudeAsks < com.arin.selffix.ClaudeHelper.MAX_PER_ANSWER) com.arin.selffix.ClaudeHelper.question(reply) else null
+            val claudeQ = if (context != null && com.arin.selffix.ClaudeHelper.enabled(context, helperTab) && claudeAsks < com.arin.selffix.ClaudeHelper.maxAsks(context)) com.arin.selffix.ClaudeHelper.question(reply) else null
             val result = when {
                 claudeQ != null -> {
                     claudeAsks++
                     step(BuildEvent.Kind.THINKING, "Asking ${com.arin.selffix.ClaudeHelper.helper(context!!).name} for help")
-                    "The helper's answer:\n\n" + com.arin.selffix.ClaudeHelper.ask(context!!, claudeQ, source = helperTab).take(12_000)
+                    "The helper's answer:\n\n" + com.arin.selffix.ClaudeHelper.ask(context!!, projectNote() + claudeQ, source = helperTab).take(12_000)
                 }
                 search != null -> {
                     step(BuildEvent.Kind.WEB, "Searching: $search")
@@ -1097,7 +1097,7 @@ class BuildAgent(
                 step(BuildEvent.Kind.THINKING, "Claude is researching this error and writing the fix")
                 val answer = com.arin.selffix.ClaudeHelper.ask(
                     context = ctx,
-                    question = code + "\nERROR:\n" + trimmed + (if (seen >= 2) "\nATTEMPT: $seen (the last fix didn't work — take a different approach)" else "") +
+                    question = projectNote() + code + "\nERROR:\n" + trimmed + (if (seen >= 2) "\nATTEMPT: $seen (the last fix didn't work — take a different approach)" else "") +
                         "\nNEED: research if needed, then return only the patched code (whole changed functions or files).",
                     source = helperTab, hard = seen >= 2,
                 ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
@@ -1124,6 +1124,22 @@ class BuildAgent(
                 web += "\n\nThe AI helper's solution (use it; you make the fix):\n" + answer.take(8_000)
         }
         return web
+    }
+
+    // ARIN-PROTECTED: credit-saver + helper-sees-only-the-boss — Claude (Claude Code login) may search a read-only COPY
+    // of the code being built, so the boss doesn't spend its tokens pasting files. Never the person's request or files.
+    private fun projectNote(): String {
+        val ctx = context ?: return ""
+        if (!com.arin.selffix.CreditSaver.on(ctx) || com.arin.selffix.ClaudeHelper.lastRoute != "pro" || files.isEmpty()) return ""
+        return runCatching {
+            val dir = java.io.File(com.arin.terminal.Linux.rootfs(ctx), "root/.arin/helper-work/project")
+            dir.deleteRecursively(); dir.mkdirs()
+            files.forEach { (p, c) ->
+                if (p.contains("..")) return@forEach
+                java.io.File(dir, p).apply { parentFile?.mkdirs() }.writeText(c)
+            }
+            "PROJECT: /root/.arin/helper-work/project (read-only copy of the code)\n"
+        }.getOrDefault("")
     }
 
     /** The AI helper helps from start to end when the person switched it on, or asked for it for this build. */
@@ -1173,22 +1189,25 @@ class BuildAgent(
         val changed = pendingFiles.keys.filter { files[it] != null }.take(20)
         val code = changed.joinToString("\n\n") { p -> "=== $p ===\n" + files[p].orEmpty().take(6_000) }.take(40_000)
         step(BuildEvent.Kind.THINKING, "Asking the AI helper to review the code")
+        if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) == null && com.arin.selffix.ClaudeHelper.route(ctx) == null) return
         val help = com.arin.selffix.ClaudeHelper.ask(ctx,
             // Only the boss's own code — never the person's request (helper-sees-only-the-boss).
-            "I (the building model, the boss) wrote this Android code. Review it: list real bugs and build errors it will hit, " +
-                "with exact fixes. If it's all right, say so.\n\nCODE:\n$code",
+            projectNote() + "NEED: review this code before the build: list only real bugs/build errors, each as FILE + the " +
+                "patched code. If it's all right, answer just: OK\n\nCODE:\n$code",
             source = helperTab)
         if (help.contains("couldn't be reached") || help.contains("isn't connected") || help.contains("switched off")) return
+        if (help.trim().let { it == "OK" || it.startsWith("OK.") || it.contains("NO_HELP_NEEDED") }) return
         step(BuildEvent.Kind.THINKING, "Fixing what the AI helper found")
         apply(ask(buildString {
             appendLine("The AI helper reviewed the code you wrote. Its review:")
             appendLine(help.take(10_000))
             appendLine()
             appendLine("Current files:")
-            appendFiles(help.take(300))
+            if (com.arin.selffix.CreditSaver.on(context)) appendFilesLean(help.take(2_000)) else appendFiles(help.take(300))
             appendLine()
             appendLine("Fix what is right in the review (keep everything that was asked). Reply with every file you change, in full, " +
-                "in the same format; if nothing needs changing, reply with just: NO CHANGES")
+                "in the same format" + (if (com.arin.selffix.CreditSaver.on(context)) " (or EDIT blocks)" else "") +
+                "; if nothing needs changing, reply with just: NO CHANGES")
         }))
     }
 

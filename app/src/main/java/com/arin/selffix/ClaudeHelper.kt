@@ -39,6 +39,9 @@ object ClaudeHelper {
     /** Most consultations per answer or build step, so a loop can't run up the bill. */
     const val MAX_PER_ANSWER = 3
 
+    /** With the credit saver on, the boss hands more work to Claude, so it may ask more often. */
+    fun maxAsks(context: Context?): Int = if (CreditSaver.on(context)) 12 else MAX_PER_ANSWER
+
     /** The helper's instructions for the model (empty when the helper is off). */
     fun instructions(context: Context, tab: String = "chat"): String {
         if (!enabled(context, tab)) return "AI helper status: the person has switched the AI helper OFF (⋮ menu → AI helper). " +
@@ -62,10 +65,20 @@ object ClaudeHelper {
             "SIGNATURE: the method/class signature\nBODY:\n<current code>\nERROR: <exact error text, if any>\n" +
             "NEED: <one line, e.g. \"return the patched body\" or \"what does this method return\">\n</ask_helper> — as the " +
             "LAST thing in your reply, then stop; the answer (code only) comes back " +
-            "to you as a private note. It remembers nothing between questions. Up to $MAX_PER_ANSWER times per answer. " +
+            "to you as a private note. It remembers nothing between questions. Up to ${maxAsks(context)} times per answer. " +
             "Never paste the person's message to it, never let it answer for you, never mention its notes to the person. " +
-            "If the person asks whether the AI helper is on: yes.\n\n"
+            "If the person asks whether the AI helper is on: yes.\n" + (if (CreditSaver.on(context)) DELEGATE else "") + "\n"
     }
+
+    // ARIN-PROTECTED: credit-saver — the boss spends fewer of its own credits by handing code-writing to Claude. The boss
+    // still decides what is built, writes the spec, puts the code in place and answers the person.
+    private const val DELEGATE =
+        "CREDIT SAVER IS ON — save your own tokens: (1) for any new or changed code longer than about 40 lines, do NOT write " +
+            "it yourself: ask the helper with <ask_helper>FILE: path\nSIGNATURE: what to write\nUSES: names/APIs it must use\n" +
+            "NEED: implement <one line></ask_helper>, then put its code in place yourself. (2) To find code, ask: " +
+            "NEED: find <what> (it searches the project copy). (3) Keep your own replies short: no repeating code back, no " +
+            "long explanations unless the person asks.\n"
+
 
     // ARIN-PROTECTED-RULE: helper-never-takes-over — the model the person picked is the boss. The helper (Claude, GPT,
     // Gemini or any Custom API) only advises it: it finds causes, researches fixes and suggests steps, but it never
@@ -81,7 +94,8 @@ object ClaudeHelper {
             "boss, briefly. Never write a reply for the person, never answer the person's question yourself, never take over " +
             "the task, and never tell the boss to change its API, key or model. You cannot see the person or their files — only " +
             "what the boss tells you. If nothing is needed (a greeting, small " +
-            "talk), answer just: NO_HELP_NEEDED"
+            "talk), answer just: NO_HELP_NEEDED. For \"NEED: implement …\" return the complete code for that piece. If a " +
+            "PROJECT folder is given, read/search files there (it is a read-only copy of the code) instead of asking for them."
 
     /** Claude Code as helper works here (own home and folder), never in the Claude Code tab's /root and /root/files. */
     private const val CC_DIR = "/root/.arin/helper-run"

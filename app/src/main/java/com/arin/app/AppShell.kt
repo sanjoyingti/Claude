@@ -78,6 +78,7 @@ fun AppShell(vm: ChatViewModel) {
         Screen.MovieMaker -> "movie"
         else -> screen.name.lowercase()
     }
+    androidx.compose.runtime.LaunchedEffect(helperTab) { vm.enterModelTab(helperTab) } // each tab keeps its own model
     androidx.compose.runtime.CompositionLocalProvider(com.arin.selffix.LocalHelperTab provides helperTab) {
     when (screen) {
         Screen.Chat -> ChatScreen(
