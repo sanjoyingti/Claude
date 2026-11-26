@@ -254,28 +254,36 @@ object Linux {
 
     private val dpkgRepairScript = """
         #!/bin/bash
-        # Written by Arin. Under PRoot there is no systemd or D-Bus, so the setup scripts of those packages
-        # (and of the desktop packages that need them) always fail, and every later apt install then fails with
-        # "Sub-process /usr/bin/dpkg returned an error code (1)". This turns just those setup scripts into
-        # no-ops and finishes the stuck install. Java, the SDK and everything else are set up normally.
+        # Written by Arin. Under PRoot there is no systemd or D-Bus, so those packages (and the desktop packages
+        # that need them: GTK, the full desktop Java, apt's apksigner) can never finish installing, and every later
+        # apt install then fails with "Sub-process /usr/bin/dpkg returned an error code (1)".
+        # Arin needs none of them (it uses the headless JDK and the Android SDK's own apksigner), so this removes
+        # the unfinished ones, blocks them from coming back, and finishes the rest.
         export DEBIAN_FRONTEND=noninteractive
-        dpkg --audit 2>/dev/null | grep -q . || exit 0
+        mkdir -p /etc/apt/preferences.d
+        cat > /etc/apt/preferences.d/arin-no-desktop <<'PIN'
+        Package: apksigner default-jre openjdk-*-jre dbus-user-session libgtk-3-0t64 libgtk-3-bin libgtk-3-common libdecor-0-plugin-1-gtk systemd-resolved networkd-dispatcher
+        Pin: version *
+        Pin-Priority: -1
+        PIN
+        pending() { dpkg-query -W -f='${'$'}{db:Status-Abbrev} ${'$'}{binary:Package}\n' 2>/dev/null | awk '{s=substr(${'$'}1,2,1)} s!="i" && s!="n" && s!="c" {print ${'$'}2}'; }
+        [ -n "${'$'}(pending)" ] || { dpkg --audit 2>/dev/null | grep -q . || exit 0; }
         echo "Repairing an unfinished package install (systemd/D-Bus can't run inside the phone's Linux)…"
-        stub() {
-          dpkg-query -W -f='${'$'}{db:Status-Abbrev} ${'$'}{binary:Package}\n' 2>/dev/null | awk '${'$'}1!="ii" && ${'$'}1!="rc" {print ${'$'}2}' |
-          while read -r p; do
-            case "${'$'}{p%%:*}" in
-              dbus|dbus-*|systemd|systemd-*|libpam-systemd|networkd-dispatcher|udev|polkitd|policykit-1|dconf-service|at-spi2-core)
-                for f in "/var/lib/dpkg/info/${'$'}p.postinst" "/var/lib/dpkg/info/${'$'}{p%%:*}.postinst"; do
-                  [ -f "${'$'}f" ] && printf '#!/bin/sh\nexit 0\n' > "${'$'}f"
-                done ;;
-            esac
-          done
-        }
-        stub
-        dpkg --configure -a >/dev/null 2>&1 || { stub; dpkg --configure -a; }
-        apt-get -f install -y >/dev/null 2>&1 || true
-        if dpkg --audit 2>/dev/null | grep -q .; then echo "Some packages are still not set up:"; dpkg --audit | head -20
+        CORE='^(dbus|dbus-[a-z-]+|systemd|systemd-[a-z-]+|libpam-systemd|networkd-dispatcher|udev|polkitd|policykit-1|dconf-service|dconf-gsettings-backend|at-spi2-core)${'$'}'
+        DESK='^(apksigner|default-jre|openjdk-[0-9]+-jre|dbus-user-session|systemd-resolved|networkd-dispatcher|libgtk-3-[a-z0-9-]+|libgtk-3-0t64|gsettings-desktop-schemas|libdecor-0-plugin-1-gtk|at-spi2-core|dconf-service|dconf-gsettings-backend|libatk-bridge[a-z0-9.-]*|libatk[a-z0-9.-]*)${'$'}'
+        stub() { for s in postinst prerm postrm; do for f in "/var/lib/dpkg/info/${'$'}1.${'$'}s" "/var/lib/dpkg/info/${'$'}{1%%:*}.${'$'}s"; do [ -f "${'$'}f" ] && printf '#!/bin/sh\nexit 0\n' > "${'$'}f"; done; done; }
+        for p in ${'$'}(pending); do echo "${'$'}{p%%:*}" | grep -Eq "${'$'}CORE|${'$'}DESK" && stub "${'$'}p"; done
+        RM=""; for p in ${'$'}(pending); do echo "${'$'}{p%%:*}" | grep -Eq "${'$'}DESK" && RM="${'$'}RM ${'$'}p"; done
+        if [ -n "${'$'}RM" ]; then
+          echo "Removing desktop packages that can't work here:${'$'}RM"
+          dpkg --purge --force-depends --force-remove-reinstreq ${'$'}RM 2>&1 | tail -3
+        fi
+        dpkg --configure -a 2>&1 | tail -5
+        # Anything still stuck: skip just its setup script (only the systemd/D-Bus kind gets here).
+        for p in ${'$'}(pending); do echo "${'$'}{p%%:*}" | grep -Eq "${'$'}CORE" && stub "${'$'}p"; done
+        dpkg --configure -a >/dev/null 2>&1
+        apt-get -f install -y 2>&1 | tail -3
+        if [ -n "${'$'}(pending)" ]; then echo "Still not set up:"; pending | head -20
         else echo "Package install repaired."; fi
         exit 0
     """.trimIndent() + "\n"
