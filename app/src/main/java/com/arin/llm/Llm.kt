@@ -48,7 +48,8 @@ object Llm {
             // OpenAI's newer models take max_completion_tokens; leave ChatGPT on its default.
             Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, system, turns)
             Provider.Claude -> anthropicStream("$ANTHROPIC_BASE/messages", anthropicHeaders(key), key, model, system, turns, maxTokens, cache)
-            Provider.ClaudeCode -> com.arin.claudecode.ClaudeCodeModel.stream(model, system, turns)
+            // ARIN-PROTECTED: claude-harness — one running Claude Code session per conversation (cached, low usage).
+            Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns)
             Provider.Custom -> (endpoint ?: CustomApi.current()).let { ep ->
                 when (ep.format) {
                     ApiFormat.OpenAI -> lessThinking { low -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }

@@ -17,6 +17,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 object ClaudeCode {
     private const val TOKEN_FILE = "/root/.cc_token"
+
+    /** Where the signed-in Claude account's token is kept (inside Arin's Linux). */
+    fun tokenFile(): String = TOKEN_FILE
     private const val OUT = "/root/.cc_login_out"
     private const val FIFO = "/root/.cc_login_fifo"
 
@@ -648,8 +651,10 @@ PY
                         status = "Working…"
                     }
                 }
+                "rate_limit_event" -> UsageMeter.fromRateLimit(o.optJSONObject("rate_limit_info")) // real plan usage
                 "result" -> {
                     done = true
+                    UsageMeter.fromResult(o)
                     error = o.optBoolean("is_error")
                     result = o.optString("result").takeIf { it.isNotBlank() }
                 }

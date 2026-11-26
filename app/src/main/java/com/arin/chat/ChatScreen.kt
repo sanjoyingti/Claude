@@ -236,12 +236,16 @@ fun ChatScreen(
             containerColor = MaterialTheme.colorScheme.background,
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
-                TopBar(
-                    vm,
-                    onMenu = { scope.launch { drawer.open() } },
-                    onNew = { vm.newChat(vm.chatProject.takeIf { vm.messages.isEmpty() }); input = "" },
-                    onProject = onOpenProject,
-                )
+                Column {
+                    TopBar(
+                        vm,
+                        onMenu = { scope.launch { drawer.open() } },
+                        onNew = { vm.newChat(vm.chatProject.takeIf { vm.messages.isEmpty() }); input = "" },
+                        onProject = onOpenProject,
+                    )
+                    // Real usage, at the top (away from the message box).
+                    Box(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 2.dp)) { com.arin.claudecode.UsageBar(vm) }
+                }
             },
             bottomBar = {
                 Composer(

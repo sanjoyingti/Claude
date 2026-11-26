@@ -84,6 +84,7 @@ fun ClaudeCodeScreen(vm: ChatViewModel, onBack: () -> Unit, onOpenSettings: () -
             Column(Modifier.weight(1f)) {
                 Text("Claude Code", style = MaterialTheme.typography.titleLarge)
                 if (vm.ccInstalled && vm.ccSignedIn) ModelPicker(vm)
+                if (vm.ccInstalled && vm.ccSignedIn) com.arin.claudecode.UsageBar(vm, claudeLogin = vm.ccBackend == "pro")
             }
             if (vm.ccInstalled && vm.ccSignedIn) {
                 IconButton(onClick = { vm.newCcChat() }, enabled = !vm.ccRunning) { Icon(Icons.Filled.Edit, contentDescription = "New chat") }

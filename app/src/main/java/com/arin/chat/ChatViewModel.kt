@@ -1665,6 +1665,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     init {
+        // The Claude harness (every tab) gets Arin's tools, the person's MCP servers and the GitHub sign-in.
+        com.arin.claudecode.Harness.extras = { val (cfg, names) = ccMcpConfig(); Triple(cfg, names, githubToken()) }
         // Every install shows live progress (what it's doing, MB, %, speed, time left) while it runs.
         viewModelScope.launch {
             androidx.compose.runtime.snapshotFlow { linuxBusy to ccInstalling }.collect { (linux, cc) ->
@@ -2027,6 +2029,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun key(p: Provider): String = settings.key(p)
 
     fun githubToken(): String = settings.secret("GITHUB")
+
+    /** The selected Custom API's key, for its own usage meter only. */
+    fun customKeyForMeter(): String = settings.key(Provider.Custom)
 
     /** Set when chat starts a build, so the screen can switch to Build mode. */
     var openBuild by mutableStateOf(false)
@@ -2947,7 +2952,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         val lastText = turns.last().text
                         val isError = Regex("(?i)(FAILED|error|exception|not found|denied|cannot|can't|unable|traceback|exit code [1-9])").containsMatchIn(lastText.take(4_000))
                         val first = lastGuided == -1
-                        if (first || isError || helperGuides < 15) {
+                        if (first || isError) { // only the start and errors: helping every step used too much
                             helperGuides++
                             lastGuided = turns.size
                             val convo = turns.takeLast(10).joinToString("\n\n") { t -> (if (t.fromUser) "USER / TOOL RESULT:\n" else "ASSISTANT:\n") + t.text.take(3_000) }

@@ -188,6 +188,7 @@ fun ArinUpdateScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     Column {
                         Text("Arin Update")
                         ModelSwitcher(vm) // switch the API or model for this tab (only when you tap)
+                        com.arin.claudecode.UsageBar(vm) // real usage, at the top
                     }
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },

@@ -380,7 +380,7 @@ object ArinUpdateChat {
                         }
                         turns += ChatMessage(Role.ASSISTANT, reply.trim())
                         val isError = ask == null && Regex("(?i)(FAILED|error|exception|not found|denied|couldn't|cannot|unable|exit code: [1-9])").containsMatchIn(result.take(4_000))
-                        val g = if (ask != null) null else if (isError) guide("error") else if (guides < 15) { guides++; guide("next") } else null
+                        val g = if (ask != null) null else if (isError) guide("error") else null // only errors (and the start): saves usage
                         turns += ChatMessage(Role.USER, "[Tool result]\n$result" +
                             (if (g != null) "\n\n[" + (if (isError) "Solution" else "Guidance") + " from the AI helper — use it; you do the work:]\n$g" else "") +
                             "\n\nNow continue.")

@@ -223,7 +223,7 @@ object ClaudeHelper {
         val about = question.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() && !it.startsWith("You are") }.orEmpty().take(90)
         Activity.log(source, "🟣 Asking ${h.label} for help: $about")
         suspend fun via(w: String) = when (w) {
-            "pro" -> viaClaudeCode(context, question, h.model, files)
+            "pro" -> viaClaudeCode(context, question, h.model, files, source)
             else -> viaApi(context, h, w, question, files)
         }
         val answer = runCatching { via(way) }.recoverCatching { first ->
@@ -274,9 +274,15 @@ object ClaudeHelper {
      * Claude Code (Pro login) as helper: runs once in its own folder, never with --continue, and its saved session is
      * deleted afterwards, so it remembers nothing and the Claude Code tab's conversation stays exactly as it was.
      */
-    private suspend fun viaClaudeCode(context: Context, question: String, chosen: String, files: List<com.arin.data.Attachment> = emptyList()): String {
+    /**
+     * The helper through the Claude harness: one running session per tab while a task goes on (cached, so each
+     * question costs little), forgotten after 15 quiet minutes — the helper assists and forgets.
+     */
+    private val helperTalks = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, MutableList<com.arin.llm.Turn>>>()
+
+    private suspend fun viaClaudeCode(context: Context, question: String, chosen: String, files: List<com.arin.data.Attachment> = emptyList(), source: String = "all"): String {
         val s = com.arin.data.Settings(context)
-        val model = chosen.ifBlank { s.ccProModel.ifBlank { "opus" } }.replace("'", "")
+        val model = chosen.ifBlank { s.ccProModel.ifBlank { "sonnet" } }.replace("'", "")
         // The person's files, copied where Claude Code can read them (pictures too).
         val root = com.arin.terminal.Linux.rootfs(context)
         val shared = files.takeLast(12).mapNotNull { f ->
@@ -286,22 +292,16 @@ object ClaudeHelper {
             dst.parentFile?.mkdirs()
             runCatching { src.copyTo(dst, overwrite = true) }.getOrNull()?.let { "/root/.arin/helper-files/" + dst.name }
         }
-        val text = "$SYSTEM\n\n$question" + if (shared.isNotEmpty()) "\n\nThe person's files (read them with the Read tool): " + shared.joinToString(", ") else ""
-        val b64 = android.util.Base64.encodeToString(text.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-        // A throwaway home folder: Claude Code writes its sessions and history there, and it is deleted afterwards.
-        val home = "$CC_DIR/home"
-        val r = com.arin.terminal.Shell.run(
-            context,
-            "rm -rf $CC_DIR; mkdir -p $home/.claude $CC_DIR/work /root/.arin/helper-files; echo '$b64' | base64 -d > $CC_PROMPT; " +
-                "echo '{\"hasCompletedOnboarding\":true}' > $home/.claude.json; cd $CC_DIR/work; " +
-                "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " +
-                "export CLAUDE_CODE_OAUTH_TOKEN=\$(cat /root/.cc_token 2>/dev/null) DISABLE_AUTOUPDATER=1 " +
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1; " +
-                "HOME=$home timeout 900 claude -p --model '$model' --output-format text " +
-                "--add-dir /root/.arin/helper-files --allowedTools 'Read Grep Glob WebFetch WebSearch' < $CC_PROMPT 2>&1 | tail -c 20000; " +
-                "cd /root; rm -rf $CC_DIR $CC_PROMPT /root/.arin/helper-files",
-            16 * 60_000L,
-        )
-        return r.stdout.trim().ifBlank { r.stderr.trim() }
+        val text = question + if (shared.isNotEmpty()) "\n\nThe person's files (read them with the Read tool): " + shared.joinToString(", ") else ""
+        val now = System.currentTimeMillis()
+        val talk = helperTalks[source]?.takeIf { now - it.first < 15 * 60_000L }?.second ?: mutableListOf()
+        talk += com.arin.llm.Turn(fromUser = true, text = text)
+        helperTalks[source] = now to talk
+        val out = StringBuilder()
+        // Errors go up, so the helper can try the Claude key instead.
+        com.arin.claudecode.Harness.stream(model, SYSTEM, talk.toList(), purpose = "helper:$source",
+            tools = "Read,Grep,Glob,WebFetch,WebSearch").collect { if (it is com.arin.llm.Delta.Text) out.append(it.text) }
+        return out.toString().trim()
     }
+
 }

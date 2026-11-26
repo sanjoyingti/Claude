@@ -166,6 +166,7 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        com.arin.claudecode.UsageBar(chat) // real usage, at the top
                     }
                 },
                 navigationIcon = {
