@@ -439,7 +439,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 linuxInstalled = com.arin.terminal.Linux.installed(app)
                 linuxReady = com.arin.terminal.Linux.nodeReady(app)
-                linuxBusy = false
+                toolsVersion++; linuxBusy = false
                 ReplyService.stop(app)
             }
         }
@@ -462,7 +462,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 logLine("Failed: ${e.message}")
                 notice = "REA repair failed: ${e.message}"
             } finally {
-                linuxBusy = false
+                toolsVersion++; linuxBusy = false
                 ReplyService.stop(app)
             }
         }
@@ -526,7 +526,56 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 logLine("Failed: ${e.message}")
                 notice = "Developer tools install failed: ${e.message}"
             } finally {
-                linuxBusy = false
+                toolsVersion++; linuxBusy = false
+                ReplyService.stop(app)
+            }
+        }
+    }
+
+    /** Installed state of each tool, refreshed after every install or uninstall (Settings → Linux). */
+    var toolsVersion by mutableStateOf(0)
+        private set
+
+    fun toolInstalled(tool: com.arin.terminal.Linux.Tool): Boolean {
+        toolsVersion // read so the screen updates
+        return com.arin.terminal.Linux.toolInstalled(getApplication(), tool)
+    }
+
+    /** Uninstalls one tool from Linux (Settings → Linux). */
+    fun uninstallTool(tool: com.arin.terminal.Linux.Tool) = linuxJob("${tool.label} uninstalled", "Uninstall failed") { app ->
+        val r = com.arin.terminal.Linux.uninstallTool(app, tool) { logLine(it) }
+        if (r.exitCode != 0 || r.error != null) throw IllegalStateException(r.error ?: r.combined().takeLast(300))
+    }
+
+    /** Uninstalls REA and removes its connection. */
+    fun uninstallRea() = linuxJob("REA uninstalled", "Uninstall failed") { app ->
+        com.arin.mcp.Mcp.forget(com.arin.mcp.Mcp.REA.name)
+        com.arin.terminal.Linux.uninstallRea(app) { logLine(it) }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+            mcpServers.firstOrNull { it.name == com.arin.mcp.Mcp.REA.name }?.let { removeServer(it) }
+        }
+    }
+
+    private fun linuxJob(done: String, failed: String, work: suspend (Application) -> Unit) {
+        if (linuxBusy) return
+        val app = getApplication<Application>()
+        linuxBusy = true
+        linuxLog.clear()
+        ReplyService.start(app)
+        ArinApp.scope.launch {
+            try {
+                work(app)
+                notice = done
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                logLine("Failed: ${e.message}")
+                notice = "$failed: ${e.message}"
+            } finally {
+                devToolsReady = com.arin.terminal.Linux.devToolsReady(app)
+                androidBuildReady = com.arin.terminal.Linux.androidBuildReady(app)
+                toolsVersion++
+                toolsVersion++; linuxBusy = false
                 ReplyService.stop(app)
             }
         }
@@ -543,7 +592,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             linuxReady = false
             devToolsReady = false
             androidBuildReady = false
-            linuxBusy = false
+            toolsVersion++; linuxBusy = false
             linuxLog.clear()
             notice = "Linux removed"
         }
@@ -1675,7 +1724,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     logLine("Failed: ${e.message}")
                     notice = "REA setup failed: ${e.message}"
                 } finally {
-                    linuxBusy = false
+                    toolsVersion++; linuxBusy = false
                     ReplyService.stop(app)
                 }
             }

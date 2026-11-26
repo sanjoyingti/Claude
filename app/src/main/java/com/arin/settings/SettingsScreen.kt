@@ -529,20 +529,27 @@ private fun LinuxSettings(vm: ChatViewModel) {
         else -> Text("Not installed.", style = MaterialTheme.typography.bodyMedium)
     }
     if (com.arin.terminal.Linux.supported() && !vm.linuxBusy) {
-        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (!vm.linuxReady) androidx.compose.material3.Button(onClick = { vm.installLinux() }) { Text("Install Linux") }
-            if (vm.mcpServers.none { it.name == com.arin.mcp.Mcp.REA.name && com.arin.mcp.Mcp.status(it.name) != null }) {
-                OutlinedButton(onClick = { vm.setUpRea() }) { Text(if (vm.linuxReady) "Install REA" else "Install Linux + REA") }
+        // Every tool: Installed or not, with Install / Uninstall.
+        val reaOn = vm.mcpServers.any { it.name == com.arin.mcp.Mcp.REA.name }
+        ToolRow("Linux", "Ubuntu 24.04 with Node.js, npm, git and Python", vm.linuxReady) {
+            if (!vm.linuxReady) androidx.compose.material3.Button(onClick = { vm.installLinux() }) { Text("Install") }
+            if (vm.linuxInstalled) TextButton(onClick = { confirmRemove = true }) { Text("Uninstall", color = MaterialTheme.colorScheme.error) }
+        }
+        com.arin.terminal.Linux.Tool.entries.forEach { tool ->
+            val on = vm.toolInstalled(tool)
+            ToolRow(tool.label, tool.detail, on) {
+                if (on) TextButton(onClick = { vm.uninstallTool(tool) }) { Text("Uninstall", color = MaterialTheme.colorScheme.error) }
+                else OutlinedButton(onClick = { vm.installDevTools() }) { Text("Install") }
             }
-            if (vm.linuxReady || !vm.androidBuildReady) {
-                OutlinedButton(onClick = { vm.installDevTools() }) {
-                    Text(if (vm.androidBuildReady) "Update all APK & build tools (newest)" else "Install all APK & build tools (JDK, Gradle, SDK, jadx…)")
-                }
-            }
-            if (vm.linuxReady && vm.mcpServers.any { it.name == com.arin.mcp.Mcp.REA.name }) {
-                OutlinedButton(onClick = { vm.repairRea() }) { Text("Repair REA") }
-            }
-            if (vm.linuxInstalled) TextButton(onClick = { confirmRemove = true }) { Text("Remove Linux") }
+        }
+        ToolRow("REA", "Reverse Engineer Anything (AI agent for apps and APKs)", reaOn) {
+            if (reaOn) {
+                TextButton(onClick = { vm.repairRea() }) { Text("Repair") }
+                TextButton(onClick = { vm.uninstallRea() }) { Text("Uninstall", color = MaterialTheme.colorScheme.error) }
+            } else OutlinedButton(onClick = { vm.setUpRea() }) { Text("Install") }
+        }
+        if (vm.linuxReady && com.arin.terminal.Linux.Tool.entries.all { vm.toolInstalled(it) }) {
+            OutlinedButton(onClick = { vm.installDevTools() }) { Text("Update all APK & build tools (newest)") }
         }
     }
     if (vm.linuxBusy) com.arin.selffix.InstallProgressPanel()
@@ -559,11 +566,30 @@ private fun LinuxSettings(vm: ChatViewModel) {
     if (confirmRemove) {
         AlertDialog(
             onDismissRequest = { confirmRemove = false },
-            title = { Text("Remove Linux?") },
+            title = { Text("Uninstall Linux?") },
             text = { Text("Everything installed in it, including REA and files in /root, is deleted. Your chats stay.") },
-            confirmButton = { TextButton(onClick = { vm.removeLinux(); confirmRemove = false }) { Text("Remove") } },
+            confirmButton = { TextButton(onClick = { vm.removeLinux(); confirmRemove = false }) { Text("Uninstall") } },
             dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** One installable tool: name, what it is, ✓ Installed / Not installed, and its buttons. */
+@Composable
+private fun ToolRow(name: String, detail: String, installed: Boolean, buttons: @Composable () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 12.dp, top = 6.dp, bottom = 6.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.bodyLarge)
+                Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (installed) "✓ Installed" else "Not installed",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (installed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) { buttons() }
+        }
     }
 }
 

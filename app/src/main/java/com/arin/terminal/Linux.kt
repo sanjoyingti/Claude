@@ -424,6 +424,60 @@ object Linux {
     }
 
     /** Deletes the Linux system and everything in it. */
+    /** What each installed tool is, for Settings → Linux (Installed / Uninstall). */
+    enum class Tool(val label: String, val detail: String) {
+        JAVA("Java 21, Kotlin & Gradle", "Compile Java and Kotlin programs"),
+        ANDROID_SDK("Android SDK & build tools", "Compile apps into APKs on this phone (aapt2, d8, apksigner, arin-build)"),
+        APK_TOOLKIT("APK toolkit", "jadx, apktool, APKEditor, dex2jar, bundletool, uber-apk-signer, androguard"),
+    }
+
+    fun toolInstalled(context: Context, tool: Tool): Boolean = when (tool) {
+        Tool.JAVA -> devToolsReady(context)
+        Tool.ANDROID_SDK -> androidBuildReady(context)
+        Tool.APK_TOOLKIT -> apkToolkitReady(context)
+    }
+
+    /** Removes one tool from Linux (Linux itself and the other tools stay). */
+    suspend fun uninstallTool(context: Context, tool: Tool, log: (String) -> Unit): Termux.Result {
+        log("Uninstalling ${tool.label}…")
+        val script = when (tool) {
+            Tool.JAVA -> """
+                $DPKG_REPAIR
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get purge -y 'openjdk-21-*' 2>&1 | tail -2
+                apt-get autoremove -y >/dev/null 2>&1
+                rm -rf /opt/kotlinc /opt/gradle-*
+                rm -f /usr/local/bin/kotlinc /usr/local/bin/kotlin /usr/local/bin/kotlinr /usr/local/bin/gradle
+                echo "Removed Java, Kotlin and Gradle."
+            """.trimIndent()
+            Tool.ANDROID_SDK -> """
+                rm -rf /opt/android-sdk /root/.android /etc/profile.d/arin-android.sh
+                rm -f /usr/local/bin/arin-build /usr/local/bin/apksigner /usr/local/bin/d8 /usr/local/bin/r8 /usr/local/bin/dexdump /usr/local/bin/aapt2 /usr/local/bin/zipalign
+                echo "Removed the Android SDK and build tools."
+            """.trimIndent()
+            Tool.APK_TOOLKIT -> """
+                rm -rf /opt/arin-tools /opt/jadx /opt/dex2jar
+                rm -f /opt/rea-android/APKEditor.jar /opt/rea-android/uber-apk-signer.jar
+                rm -f /usr/local/bin/jadx /usr/local/bin/apkeditor /usr/local/bin/uber-apk-signer /usr/local/bin/bundletool /usr/local/bin/arin-tools /usr/local/bin/d2j-*
+                pip3 uninstall -y --break-system-packages androguard >/dev/null 2>&1 || pip3 uninstall -y androguard >/dev/null 2>&1 || true
+                echo "Removed the APK toolkit (apktool stays: REA uses it)."
+            """.trimIndent()
+        }
+        val r = run(context, script, timeoutMs = 15 * 60_000L, onOutput = log)
+        if (r.exitCode == 0 && r.error == null) when (tool) {
+            Tool.JAVA -> { devMarker(context).delete(); androidBuildMarker(context).delete(); toolkitMarker(context).delete() }
+            Tool.ANDROID_SDK -> { androidBuildMarker(context).delete(); toolkitMarker(context).delete() }
+            Tool.APK_TOOLKIT -> toolkitMarker(context).delete()
+        }
+        return r
+    }
+
+    /** Removes REA (the npm package) from Linux. */
+    suspend fun uninstallRea(context: Context, log: (String) -> Unit): Termux.Result {
+        log("Uninstalling REA…")
+        return run(context, "pkill -f mcp-bridge.mjs; npm uninstall --global rea-agents 2>&1 | tail -2; echo 'Removed REA.'", timeoutMs = 10 * 60_000L, onOutput = log)
+    }
+
     suspend fun remove(context: Context) = withContext(Dispatchers.IO) {
         // PRoot may have made folders read-only; make them writable so they can be deleted.
         base(context).walkBottomUp().forEach { runCatching { it.setWritable(true) } }
