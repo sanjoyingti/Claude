@@ -306,6 +306,10 @@ fun SettingsScreen(vm: ChatViewModel, onBack: () -> Unit, openClaudeCode: Boolea
                 vm.mcpServers.takeIf { it.isNotEmpty() }?.joinToString { it.name } ?: "Connect REA or other MCP servers",
             ) { ToolsSettings(vm) }
 
+            FoldSection("Credit saver", when (com.arin.selffix.CreditSaver.mode(androidx.compose.ui.platform.LocalContext.current)) {
+                1 -> "On · your model + Claude"; 2 -> "On · your model + offline model + Claude"; else -> "Off · tap to save credit" }) {
+                com.arin.selffix.CreditSaverSection(vm)
+            }
             FoldSection("Storage", "One protected Arin folder · Free up space · Backup") {
                 com.arin.settings.StorageSection(vm)
             }

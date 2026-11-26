@@ -53,7 +53,7 @@ object ErrorDoctor {
         val system = "You explain app errors to non-programmers, clearly and kindly, using the research given."
         onStep("Working out how to fix it")
         // 1. The tab's own model (the same API and model: never switched).
-        if (brain != null) {
+        if (brain != null && !CreditSaver.on(context)) {
             val text = runCatching {
                 val sb = StringBuilder()
                 streamModel(brain.provider, brain.key, brain.model, listOf(ChatMessage(Role.USER, ask)), system, brain.endpoint)

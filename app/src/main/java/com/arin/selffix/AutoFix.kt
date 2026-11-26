@@ -55,6 +55,10 @@ object AutoFix {
     suspend fun research(query: String, extra: String = "", onStep: (String) -> Unit = {}): String {
         val q = query.trim().ifBlank { extra.trim().lines().lastOrNull { it.isNotBlank() }.orEmpty().take(160) }
         if (q.isBlank()) return "No error text to search for. Search the web yourself with <search>…</search> before fixing."
+        // Credit saver: the same search is never done twice, and pages are cut to the paragraphs that matter.
+        val app = com.arin.ArinApp.instance
+        val saver = CreditSaver.on(app)
+        if (saver) CreditSaver.cachedResearch(q)?.let { onStep("Already researched this error — reusing it"); return it }
         val queries = linkedSetOf(q, "$q fix", "$q site:stackoverflow.com", "$q github issue").take(4)
         val out = StringBuilder()
         val urls = linkedSetOf<String>()
@@ -73,11 +77,12 @@ object AutoFix {
             onStep("Reading " + url.removePrefix("https://").removePrefix("http://").take(60))
             val page = runCatching { WebTools.fetch(url) }.getOrNull().orEmpty()
             if (page.isNotBlank() && !page.startsWith("Couldn't open")) {
-                out.append("Page: ").append(url).append('\n').append(page.take(3_500)).append("\n\n")
+                val body = if (saver) CreditSaver.shorten(app, q, page, 4) else page
+                out.append("Page: ").append(url).append('\n').append(body.take(3_500)).append("\n\n")
             }
         }
         return if (out.isBlank()) "The internet search for \"$q\" found nothing. Search again with other words before fixing."
-        else out.toString().take(14_000)
+        else out.toString().take(if (saver) 7_000 else 14_000).also { if (saver) CreditSaver.cacheResearch(q, it) }
     }
 
     /** Remembers which errors keep coming back, so a repeat gets a new approach (and Claude's help). */

@@ -202,6 +202,8 @@ class BuildAgent(
 
     /** The model's last answer, kept so a failure report can show what it sent. */
     private var lastReply = ""
+    /** Roughly how many tokens of the person's model this task has used (characters / 4). */
+    private var taskTokens = 0L
 
     private var lastThinkingNote = 0L
 
@@ -845,6 +847,15 @@ class BuildAgent(
             }
             val reply = sb.toString()
             lastReply = reply
+            // Credit meter: roughly how much of your model this task has used so far (and today's warning, if set).
+            if (context != null) {
+                val chars = system.length + working.sumOf { it.text.length } + reply.length
+                taskTokens += chars / 4
+                val today = com.arin.selffix.CreditSaver.addUsage(context, chars)
+                val budget = com.arin.selffix.CreditSaver.dailyBudgetK(context) * 1000L
+                step(BuildEvent.Kind.THINKING, "≈ ${"%,d".format(taskTokens)} tokens of ${req.model.substringAfterLast('/')} used in this task" +
+                    if (budget > 0 && today > budget) " · ⚠️ over today's budget (${"%,d".format(today)})" else "")
+            }
             if (steps >= MAX_WEB_STEPS || reply.contains("=== FILE:")) return reply
             val search = WebTools.searchTag.find(reply)?.groupValues?.get(1)?.trim()
             val fetch = WebTools.fetchTag.find(reply)?.groupValues?.get(1)?.trim()
@@ -1013,6 +1024,26 @@ class BuildAgent(
         if (deps.isNotEmpty()) appendLine("Extra dependencies: ${deps.joinToString()}")
     }
 
+    /** Credit saver: the files the errors name, in full; every other file only as a one-line map entry. */
+    private fun StringBuilder.appendFilesLean(hint: String) {
+        val all = prioritized(hint)
+        val named = all.filter { (p, _) -> hint.contains(p.substringAfterLast('/')) || lastReply.contains(p.substringAfterLast('/')) }.take(4)
+        val send = named.ifEmpty { all.take(2) }
+        var budget = 40_000
+        send.forEach { (path, content) ->
+            if (budget <= 0) return@forEach
+            val c = content.take(budget); budget -= c.length
+            appendLine("=== FILE: $path ==="); appendLine(c); appendLine("=== END FILE ===")
+        }
+        appendLine("Other files (map — names and functions only):")
+        all.filter { it !in send }.forEach { (p, c) ->
+            val sig = Regex("(?m)^\\s*(?:@\\w+\\s+)*(?:(?:private|internal|public|override|suspend|data|sealed|abstract|open)\\s+)*(fun|class|object|interface)\\s+[\\w<>.,? ]+").findAll(c)
+                .map { it.value.trim() }.take(12).joinToString("; ")
+            appendLine("- $p" + if (sig.isNotBlank()) ": $sig" else "")
+        }
+        if (deps.isNotEmpty()) appendLine("Extra dependencies: ${deps.joinToString()}")
+    }
+
     private fun changePrompt() = buildString {
         if (self) {
             appendLine("Here is the source of Arin itself: the Android AI assistant app you are running in (package com.arin, Kotlin + Jetpack Compose).")
@@ -1048,8 +1079,35 @@ class BuildAgent(
      * error comes back, Claude is also asked for help (when connected), whatever model this build uses.
      */
     private suspend fun researchFirst(query: String, errors: String): String {
-        var web = com.arin.selffix.AutoFix.research(query, errors) { step(BuildEvent.Kind.WEB, it) }
         val seen = repeats.count(query.ifBlank { errors.take(200) })
+        // ARIN-PROTECTED: credit-saver — 1) a fix that worked before for this exact error (no AI at all); 2) Claude
+        // researches and returns the patch (code-only), so your model reads a short answer instead of web pages.
+        // Your model stays the boss: it makes the change. If Claude can't help, your model researches as before.
+        if (com.arin.selffix.CreditSaver.on(context)) {
+            val ctx = context!!
+            val sig = com.arin.selffix.CreditSaver.signature(errors)
+            if (seen < 2) com.arin.selffix.CreditSaver.rememberedFix(ctx, sig)?.let {
+                step(BuildEvent.Kind.THINKING, "Seen this error before — using the fix that worked (no AI needed)")
+                return "A fix that worked before for this exact error (apply it):\n$it"
+            } else com.arin.selffix.CreditSaver.forgetFix(ctx, sig)
+            if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) != null || com.arin.selffix.ClaudeHelper.route(ctx) != null) {
+                val trimmed = com.arin.selffix.CreditSaver.trimErrors(errors)
+                val code = prioritized(trimmed).filter { (p, _) -> trimmed.contains(p.substringAfterLast('/')) }.take(2)
+                    .joinToString("\n") { (p, c) -> "FILE: $p\nBODY:\n" + c.take(6_000) }
+                step(BuildEvent.Kind.THINKING, "Claude is researching this error and writing the fix")
+                val answer = com.arin.selffix.ClaudeHelper.ask(
+                    context = ctx,
+                    question = code + "\nERROR:\n" + trimmed + (if (seen >= 2) "\nATTEMPT: $seen (the last fix didn't work — take a different approach)" else "") +
+                        "\nNEED: research if needed, then return only the patched code (whole changed functions or files).",
+                    source = helperTab, hard = seen >= 2,
+                ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
+                if (answer.isNotBlank() && !answer.contains("couldn't be reached") && !answer.contains("isn't connected") && !answer.contains("switched off")) {
+                    com.arin.selffix.CreditSaver.rememberFix(ctx, sig, answer)
+                    return "Claude (your helper) researched this error. Its patch — apply it; you make the change:\n" + answer.take(8_000)
+                }
+            }
+        }
+        var web = com.arin.selffix.AutoFix.research(query, errors) { step(BuildEvent.Kind.WEB, it) }
         if (seen >= 2) web += "\n\nThis same error has come back $seen times: use a clearly different approach this time."
         // ARIN-PROTECTED: with the AI helper on, every build error is solved one by one with its help (the model asks,
         // the helper gives the solution, the model makes the fix). With it off, the model works alone.
@@ -1165,7 +1223,7 @@ class BuildAgent(
         appendLine(if (self) req.description else requirements.take(14_000))
         appendLine()
         appendLine("Build errors:")
-        appendLine(errors)
+        appendLine(if (com.arin.selffix.CreditSaver.on(context)) com.arin.selffix.CreditSaver.trimErrors(errors) else errors)
         if (notes.isNotEmpty()) {
             appendLine()
             appendLine("Notes from the build tool:")
@@ -1180,16 +1238,37 @@ class BuildAgent(
             appendLine("Use what fits (you may also <search> or <fetch> for more), and try a different approach than last time.")
         }
         appendLine()
-        appendLine("Current files:")
-        appendFiles(errors)
+        val saver = com.arin.selffix.CreditSaver.on(context)
+        appendLine(if (saver) "Files involved (if you need another file in full, say which and it will be sent):" else "Current files:")
+        if (saver) appendFilesLean(errors) else appendFiles(errors)
         appendLine()
-        appendLine("Reply with every file you change, in full, in the same format. Files you don't send stay as they are.")
+        if (saver) {
+            appendLine("For a small change, reply with EDIT blocks instead of whole files:")
+            appendLine("=== EDIT: path ===\n<<<<<<< SEARCH\n(exact lines now in the file)\n=======\n(new lines)\n>>>>>>> REPLACE\n=== END EDIT ===")
+            appendLine("For bigger changes send the whole file as before.")
+        }
+        appendLine("Reply with every file you change, in full, in the same format (or EDIT blocks). Files you don't send stay as they are.")
         appendLine("To delete a file, send it with the single line: DELETE")
     }
 
     /** Applies the model's output; returns notes to pass back to the model (skipped downloads etc.). */
-    private suspend fun apply(output: String): List<String> {
+    private suspend fun apply(output0: String): List<String> {
         val notes = mutableListOf<String>()
+        // Small edits ("replace these lines with these"): applied to the current file; if one doesn't match, the model is
+        // asked for the whole file instead — nothing breaks to save tokens.
+        var output = output0
+        Regex("(?s)=== EDIT: (.+?) ===\\s*\\n(.*?)=== END EDIT ===").findAll(output0).forEach { m ->
+            val path = normalizePath(m.groupValues[1].trim('`', ' '))
+            var content = files[path]
+            if (content == null) { notes += "Edit for $path: no such file — send it in full."; return@forEach }
+            Regex("(?s)<<<<<<< SEARCH\\n(.*?)\\n=======\\n(.*?)\\n>>>>>>> REPLACE").findAll(m.groupValues[2]).forEach { b ->
+                val from = b.groupValues[1]
+                if (content!!.contains(from)) content = content!!.replaceFirst(from, b.groupValues[2])
+                else notes += "An edit for $path didn't match its current text — send the whole file instead."
+            }
+            if (content != files[path]) { files[path] = content!!; pendingFiles[path] = content!!.toByteArray(); step(BuildEvent.Kind.FILE, "Edited ${path.substringAfterLast('/')}") }
+            output = output.replace(m.value, "")
+        }
         val parsed = parse(output)
         if (parsed.truncated) notes += "Your last reply was cut off. Send fewer or shorter files."
         parsed.files.map { (p, c) -> normalizePath(p) to c }.forEach { (path, content) ->

@@ -68,6 +68,8 @@ class BuildService : Service() {
             var attempt = 0
             var waitingFor: String? = null
             var lastAdvice = ""
+            var lastErrorSig = ""
+            var sameErrorRuns = 0
             fun errKey(t: String) = t.lowercase().replace(Regex("[0-9]+"), "").replace(Regex("\\s+"), " ").take(300)
             var result: BuildResult
             while (true) {
@@ -134,6 +136,17 @@ class BuildService : Service() {
                 if (result.success || result.message == "Stopped." || !com.arin.selffix.AutoFix.UNTIL_FIXED) break
                 attempt++
                 val errText = result.message + "\n" + result.log.take(2_000)
+                // Unlimited tries (changed with the owner's permission): pause and ask when the SAME error has failed 5
+                // times in a row. "Retry" carries on from where it stopped.
+                val sig = com.arin.selffix.CreditSaver.signature(errText).ifBlank { errKey(errText) }
+                sameErrorRuns = if (sig == lastErrorSig) sameErrorRuns + 1 else 1
+                lastErrorSig = sig
+                if (sameErrorRuns >= 5) {
+                    result = BuildResult(false, "⏸ Paused: the same error failed 5 times in a row, so Arin stopped to save your " +
+                        "credit. Tap Retry to keep trying (it carries on from here), or tell it what to change.\n\n" +
+                        com.arin.selffix.CreditSaver.trimErrors(errText, 12), result.repoUrl)
+                    break
+                }
                 // The same error as last time while waiting for the person: just check again quietly (no new research).
                 val sameAsBefore = waitingFor != null && errKey(errText) == waitingFor
                 val advice = if (sameAsBefore) lastAdvice else runCatching {
@@ -145,7 +158,7 @@ class BuildService : Service() {
                     ) { s -> session.timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.WEB, s)) }
                 }.getOrNull().orEmpty()
                 // ARIN-PROTECTED: ai-helper during builds — with the helper on, a failed attempt also gets its solution.
-                val helperFix = if (sameAsBefore || !com.arin.selffix.ClaudeHelper.enabled(this@BuildService, request.helperTab.ifBlank { if (request.selfUpdate) "arin-update" else "build" }) ||
+                val helperFix = if (sameAsBefore || com.arin.selffix.CreditSaver.on(this@BuildService) || !com.arin.selffix.ClaudeHelper.enabled(this@BuildService, request.helperTab.ifBlank { if (request.selfUpdate) "arin-update" else "build" }) ||
                     com.arin.selffix.ClaudeHelper.route(this@BuildService) == null) "" else runCatching {
                     com.arin.selffix.ClaudeHelper.ask(
                         context = this@BuildService,

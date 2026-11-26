@@ -70,6 +70,8 @@ object ClaudeHelper {
     // ARIN-PROTECTED-RULE: helper-never-takes-over — the model the person picked is the boss. The helper (Claude, GPT,
     // Gemini or any Custom API) only advises it: it finds causes, researches fixes and suggests steps, but it never
     // answers the person, never does the boss's work in its place and never changes the boss's API, key or model.
+    @Volatile private var lastLimitWarn = 0L
+
     private const val SYSTEM =
         "You get code-only questions (file, method signature, current body, error). Reply with ONLY the patched code (and " +
             "at most one line saying what was wrong) — no story. " +
@@ -217,12 +219,15 @@ object ClaudeHelper {
         question: String,
         source: String = "all",
         /** Files the person uploaded: the helper can read them (pictures too). */
-        files: List<com.arin.data.Attachment> = emptyList(),
-        onStatus: (String) -> Unit = {
-        // ARIN-PROTECTED-RULE: helper-sees-only-the-boss — the helper never gets the person's messages or files. Only the
-        // model the person picked (the boss) sees them; the boss describes what it needs in its own words.
-        @Suppress("NAME_SHADOWING") val files: List<com.arin.data.Attachment> = emptyList()},
+        @Suppress("UNUSED_PARAMETER") files: List<com.arin.data.Attachment> = emptyList(),
+        /** A hard question (a fix that already failed): the chosen Claude model even when "Haiku first" is on. */
+        hard: Boolean = true,
+        onStatus: (String) -> Unit = {},
     ): String {
+        // ARIN-PROTECTED-RULE: helper-sees-only-the-boss — the helper never gets the person's messages or files. Only the
+        // model the person picked (the boss) sees them; the boss describes what it needs in its own words. (Any files
+        // passed in are dropped here, whatever the caller does.)
+        val files: List<com.arin.data.Attachment> = emptyList()
         if (!enabled(context, source)) {
             // Switched off in this tab: the model works alone — nothing is asked and nothing is shown.
             return "The AI helper is switched off (⋮ menu → AI helper). Continue on your own."
@@ -235,10 +240,21 @@ object ClaudeHelper {
                 "the ⋮ menu.) Continue on your own: research the internet and keep fixing."
         }
         onStatus("Asking ${h.name} for help")
+        // Protect the Claude limit: warn once an hour when the 5-hour session is 80%+ used.
+        if (way == "pro") {
+            val acc = com.arin.claudecode.ClaudeAccounts.accountOf(h.model) ?: "main"
+            val used = com.arin.claudecode.UsageMeter.sessionBy[acc]?.used ?: 0.0
+            if (used >= 0.8 && System.currentTimeMillis() - lastLimitWarn > 3_600_000L) {
+                lastLimitWarn = System.currentTimeMillis()
+                Activity.log(source, "⚠️ Claude's 5-hour limit is ${(used * 100).toInt()}% used — the helper is only asked when your model can't fix it alone")
+            }
+        }
         val about = question.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() && !it.startsWith("You are") }.orEmpty().take(90)
         Activity.log(source, "🟣 Asking ${h.label} for help: $about")
         suspend fun via(w: String) = when (w) {
-            "pro" -> viaClaudeCode(context, question, h.model, files, source)
+            "pro" -> viaClaudeCode(context, question,
+                if (!hard && CreditSaver.haikuFirst(context)) "haiku" + (h.model.substringAfter('@', "").let { if (it.isBlank()) "" else "@$it" }) else h.model,
+                files, source)
             else -> viaApi(context, h, w, question, files)
         }
         val answer = runCatching { via(way) }.recoverCatching { first ->
