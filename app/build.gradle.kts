@@ -15,8 +15,8 @@ android {
         // 28, like Termux: Android blocks running programs from app storage for apps targeting 29+,
         // and the built-in Linux (PRoot) needs that. Arin is installed from GitHub, not the Play Store.
         targetSdk = 28
-        versionCode = 210
-        versionName = "1.4.9"
+        versionCode = 211
+        versionName = "1.5.0"
     }
 
     signingConfigs {

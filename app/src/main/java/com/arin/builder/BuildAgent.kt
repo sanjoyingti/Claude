@@ -432,7 +432,8 @@ class BuildAgent(
                 notes = reviewAgainstRequirements(notes)
             }
         }
-        if ((helperOn() || com.arin.selffix.CreditSaver.on(context)) && !req.resume && pendingFiles.isNotEmpty()) helperReview()
+        // In worker mode your model does ALL the checking (the helper never reads the code).
+        if (!workerOn() && (helperOn() || com.arin.selffix.CreditSaver.on(context)) && !req.resume && pendingFiles.isNotEmpty()) helperReview()
         if (!req.resume) notes = inspect(notes, "the finished code, before building")
         saveProject(repo, null)
         if (req.stopAfterWriting && !self && !(existing == null && req.zipPath != null) && !req.resume) {
@@ -518,8 +519,7 @@ class BuildAgent(
                             val web = researchFirst(query, out.log) // ARIN-PROTECTED: research the internet before every fix
                             val count = out.log.lines().count { it.startsWith("e: ") || it.contains("error:", true) }.coerceAtLeast(1)
                             step(BuildEvent.Kind.ERROR, "Phone build failed with $count error${if (count == 1) "" else "s"}: ${plainError(out.log)}. Fixing on the phone (${com.arin.selffix.AutoFix.roundText(localRounds, if (localOnly) maxFixRounds else baseFixRounds)})")
-                            notes = apply(ask(fixPrompt(out.log, notes, web)))
-                            notes = inspect(notes, "the fix for the build errors")
+                            notes = if (workerOn()) privateFix(out.log, notes, web) else apply(ask(fixPrompt(out.log, notes, web)))
                             continue
                         }
                         if (localOnly) {
@@ -688,8 +688,7 @@ class BuildAgent(
             val count = errors.lines().count { it.startsWith("e: ") || it.contains("error:", true) }.coerceAtLeast(1)
             if (crashLog != null) step(BuildEvent.Kind.ERROR, "Fixing the crash (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)}), then building and testing again")
             else step(BuildEvent.Kind.ERROR, "Build failed with $count error${if (count == 1) "" else "s"}: ${plainError(errors)}. Fixing (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)})")
-            notes = apply(ask(fixPrompt(errors, notes, web)))
-            notes = inspect(notes, "the fix for the build errors")
+            notes = if (workerOn()) privateFix(errors, notes, web) else apply(ask(fixPrompt(errors, notes, web)))
             saveProject(repo, null)
         }
     }
@@ -992,6 +991,127 @@ class BuildAgent(
         return notes
     }
 
+    // ARIN-PROTECTED: worker-mode strict privacy for build errors — once your model approved the code, the worker and the
+    // helper never see the project or your chat. Your model reads the errors and names the broken pieces; Arin itself
+    // (no AI) cuts out ONLY those pieces; the worker (who may ask the helper) returns each piece fixed; your model inspects
+    // the before/after; only then is it built again.
+    private class Piece(val file: String, val start: Int, val end: Int, val text: String, val need: String) { var origin: Piece? = null }
+
+    private suspend fun privateFix(errors: String, notesIn: List<String>, web: String): List<String> {
+        val ctx = context ?: return notesIn
+        val boss = bossName()
+        val trimmed = com.arin.selffix.CreditSaver.trimErrors(errors)
+        step(BuildEvent.Kind.THINKING, "$boss is analysing the build errors")
+        val plan = bossSay(buildString {
+            appendLine("The build failed. ERRORS:")
+            appendLine(trimmed)
+            appendLine()
+            appendLine("CODE AROUND THE ERRORS (numbered lines):")
+            appendLine(errorRegions(trimmed))
+            if (web.isNotBlank()) { appendLine(); appendLine("WEB RESEARCH (short):"); appendLine(web.take(2_500)) }
+            appendLine()
+            appendLine("Analyse the cause. Do NOT write the fix. Name each broken piece for the worker, one block each (max 4):")
+            appendLine("<piece>FILE: path\nFUNCTION: functionName   (or LINES: from-to)\nNEED: one line saying exactly what to fix</piece>")
+        })
+        val pieces = Regex("(?s)<piece>(.*?)</piece>").findAll(plan).mapNotNull { cut(it.groupValues[1]) }.take(4).toList()
+        if (pieces.isEmpty()) {
+            step(BuildEvent.Kind.THINKING, "$boss couldn't point to a piece — $boss fixes it itself this time")
+            return apply(ask(fixPrompt(errors, notesIn, web)))
+        }
+        var current = pieces
+        for (round in 1..2) {
+            val fixed = mutableListOf<Pair<Piece, String>>()
+            for (pc in current) {
+                step(BuildEvent.Kind.THINKING, "$boss is instructing the worker: ${pc.need.take(100)} (${pc.file.substringAfterLast('/')})")
+                val task = "FILE: ${pc.file}\nCODE:\n${pc.text}\nERROR:\n" + trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(8).joinToString("\n").ifBlank { trimmed.take(1_500) } +
+                    "\nNEED: ${pc.need}\nReturn ONLY the fixed CODE above (the same piece, complete), nothing else."
+                val (who, out) = com.arin.selffix.Worker.run(ctx, task, boss) { _, t -> step(BuildEvent.Kind.THINKING, t) }
+                val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
+                if (who.isBlank() || code.isBlank()) { step(BuildEvent.Kind.THINKING, "No worker could fix ${pc.file.substringAfterLast('/')}"); continue }
+                fixed += pc to code
+            }
+            if (fixed.isEmpty()) {
+                step(BuildEvent.Kind.THINKING, "No worker could fix it — $boss fixes it itself this time")
+                return apply(ask(fixPrompt(errors, notesIn, web)))
+            }
+            step(BuildEvent.Kind.THINKING, "$boss is inspecting the worker's fix")
+            val verdict = bossSay(buildString {
+                appendLine("ERRORS:"); appendLine(trimmed.take(2_000)); appendLine()
+                fixed.forEachIndexed { i, (pc, code) ->
+                    appendLine("PIECE ${i + 1} — ${pc.file} — NEED: ${pc.need}"); appendLine("BEFORE:"); appendLine(pc.text); appendLine("AFTER:"); appendLine(code); appendLine()
+                }
+                appendLine("Inspect. Answer just APPROVE, or FIX n: <exact direction> for each piece that is still wrong (max 6 lines).")
+            })
+            val redo = Regex("(?i)FIX\\s*(\\d+)\\s*:\\s*(.+)").findAll(verdict).mapNotNull { m ->
+                fixed.getOrNull((m.groupValues[1].toIntOrNull() ?: 0) - 1)?.let { (pc, code) -> m.groupValues[2] to (pc to code) }
+            }.toList()
+            // Put the approved pieces in place (Arin does it, no AI).
+            val redoFiles = redo.map { it.second.first }.toSet()
+            fixed.filter { it.first !in redoFiles || round == 2 }.forEach { (pc, code) -> replacePiece(pc, code) }
+            if (redo.isEmpty() || round == 2) {
+                step(BuildEvent.Kind.THINKING, "✅ $boss approved the fix — building again")
+                return notesIn
+            }
+            step(BuildEvent.Kind.THINKING, "$boss wants changes: " + redo.joinToString("; ") { it.first }.take(160))
+            current = redo.map { (dir, p) -> Piece(p.first.file, -1, -1, p.second, dir).also { it.origin = p.first } }
+        }
+        return notesIn
+    }
+
+    /** Lines around each error location (numbered), so your model can name the broken pieces. */
+    private fun errorRegions(errors: String): String {
+        val out = StringBuilder()
+        Regex("([\\w./-]+\\.(?:kt|java|xml|kts|gradle))[:(](\\d+)").findAll(errors).map { it.groupValues[1] to it.groupValues[2].toInt() }
+            .distinct().take(6).forEach { (f, line) ->
+                val path = files.keys.firstOrNull { it.endsWith(f.substringAfter("/src/").ifBlank { f }) || it.endsWith("/" + f.substringAfterLast('/')) } ?: return@forEach
+                val lines = files[path].orEmpty().lines()
+                val from = maxOf(0, line - 25); val to = minOf(lines.size, line + 15)
+                out.appendLine("=== $path (lines ${from + 1}-$to) ===")
+                for (i in from until to) out.appendLine("${i + 1}: ${lines[i]}")
+            }
+        return out.toString().take(20_000).ifBlank { "(no file locations in the errors)" }
+    }
+
+    /** Arin (not an AI) cuts out the piece your model named: a whole function, or the lines it gave. */
+    private fun cut(spec: String): Piece? {
+        val file = Regex("FILE:\\s*(\\S+)").find(spec)?.groupValues?.get(1)?.trim('`') ?: return null
+        val need = Regex("NEED:\\s*(.+)").find(spec)?.groupValues?.get(1)?.trim().orEmpty()
+        val path = files.keys.firstOrNull { it == file || it.endsWith("/" + file) || it.endsWith(file) } ?: return null
+        val text = files[path] ?: return null
+        Regex("LINES:\\s*(\\d+)\\s*-\\s*(\\d+)").find(spec)?.let { m ->
+            val lines = text.lines(); val a = (m.groupValues[1].toInt() - 1).coerceIn(0, lines.size); val b = m.groupValues[2].toInt().coerceIn(a, lines.size)
+            val start = lines.take(a).sumOf { it.length + 1 }; val piece = lines.subList(a, b).joinToString("\n")
+            return Piece(path, start, start + piece.length, piece, need)
+        }
+        val fn = Regex("FUNCTION:\\s*([\\w.]+)").find(spec)?.groupValues?.get(1)?.substringAfterLast('.') ?: return null
+        val m = Regex("(?m)^[ \\t]*(?:@[\\w.]+(?:\\([^)]*\\))?\\s*)*(?:(?:private|internal|public|protected|override|suspend|inline|operator|open|abstract)\\s+)*fun\\s+(?:<[^>]+>\\s*)?(?:[\\w.<>?]+\\.)?$fn\\s*\\(").find(text) ?: return null
+        // The parameter list: match its parentheses, then see whether the body is { … } or "= expression".
+        var k = m.range.last; var paren = 0
+        while (k < text.length) { if (text[k] == '(') paren++ else if (text[k] == ')') { paren--; if (paren == 0) break }; k++ }
+        val brace = text.indexOf('{', k).let { if (it < 0) Int.MAX_VALUE else it }
+        val eq = text.indexOf('=', k).let { if (it < 0) Int.MAX_VALUE else it }
+        val end = if (brace < eq) {
+            var depth = 0; var i = brace
+            while (i < text.length) { if (text[i] == '{') depth++ else if (text[i] == '}') { depth--; if (depth == 0) break }; i++ }
+            minOf(i + 1, text.length)
+        } else if (eq != Int.MAX_VALUE) {
+            text.indexOf("\n\n", eq).let { if (it < 0) text.length else it }
+        } else return null
+        return Piece(path, m.range.first, end, text.substring(m.range.first, end), need)
+    }
+
+    /** Puts a fixed piece back exactly where it was cut out. */
+    private fun replacePiece(pc: Piece, code: String) {
+        val src = pc.origin ?: pc
+        val text = files[src.file] ?: return
+        val now = if (src.start >= 0 && src.end <= text.length && text.substring(src.start, src.end) == src.text)
+            text.substring(0, src.start) + code + text.substring(src.end)
+        else if (text.contains(src.text)) text.replaceFirst(src.text, code) else return
+        files[src.file] = now
+        pendingFiles[src.file] = now.toByteArray()
+        step(BuildEvent.Kind.FILE, "Put the fixed piece into ${src.file.substringAfterLast('/')}")
+    }
+
     /** A short answer from your model (the boss), with little thinking, for inspecting. */
     private suspend fun bossSay(prompt: String): String {
         val out = StringBuilder()
@@ -1207,7 +1327,7 @@ class BuildAgent(
         // ARIN-PROTECTED: credit-saver — 1) a fix that worked before for this exact error (no AI at all); 2) Claude
         // researches and returns the patch (code-only), so your model reads a short answer instead of web pages.
         // Your model stays the boss: it makes the change. If Claude can't help, your model researches as before.
-        if (com.arin.selffix.CreditSaver.on(context)) {
+        if (com.arin.selffix.CreditSaver.on(context) && !workerOn()) {
             val ctx = context!!
             val sig = com.arin.selffix.CreditSaver.signature(errors)
             if (seen < 2) com.arin.selffix.CreditSaver.rememberedFix(ctx, sig)?.let {
@@ -1235,7 +1355,7 @@ class BuildAgent(
         if (seen >= 2) web += "\n\nThis same error has come back $seen times: use a clearly different approach this time."
         // ARIN-PROTECTED: with the AI helper on, every build error is solved one by one with its help (the model asks,
         // the helper gives the solution, the model makes the fix). With it off, the model works alone.
-        if (context != null && helperOn() && com.arin.selffix.ClaudeHelper.route(context, helperTab) != null) {
+        if (context != null && !workerOn() && helperOn() && com.arin.selffix.ClaudeHelper.route(context, helperTab) != null) {
             step(BuildEvent.Kind.THINKING, "Asking ${com.arin.selffix.ClaudeHelper.helper(context).name} for the solution to this error")
             val answer = com.arin.selffix.ClaudeHelper.ask(
                 context = context,
@@ -1254,7 +1374,7 @@ class BuildAgent(
     // of the code being built, so the boss doesn't spend its tokens pasting files. Never the person's request or files.
     private fun projectNote(): String {
         val ctx = context ?: return ""
-        if (!com.arin.selffix.CreditSaver.on(ctx) || com.arin.selffix.ClaudeHelper.lastRoute != "pro" || files.isEmpty()) return ""
+        if (workerOn() || !com.arin.selffix.CreditSaver.on(ctx) || com.arin.selffix.ClaudeHelper.lastRoute != "pro" || files.isEmpty()) return ""
         return runCatching {
             val dir = java.io.File(com.arin.terminal.Linux.rootfs(ctx), "root/.arin/helper-work/project")
             dir.deleteRecursively(); dir.mkdirs()
