@@ -17,6 +17,25 @@ object Worker {
     fun task(reply: String): String? = tag.find(reply)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotBlank() }
     fun clean(reply: String): String = reply.replace(tag, "").replace(openTag, "")
 
+    /** A plain name for a model id: "DeepSeek", "GPT-6 Luna", "Claude"… so the steps say who is working. */
+    fun nice(model: String): String {
+        val m = model.lowercase()
+        return when {
+            "luna" in m -> "GPT-6 Luna"
+            "terra" in m -> "GPT Terra"
+            "gpt" in m && "sol" in m -> "GPT Sol"
+            "deepseek" in m -> "DeepSeek"
+            "claude" in m || "sonnet" in m || "opus" in m || "haiku" in m -> "Claude"
+            "gemini" in m -> "Gemini"
+            "glm" in m -> "GLM"
+            "qwen" in m -> "Qwen"
+            "gemma" in m -> "Gemma"
+            m == "local" || m == "offline" -> "Offline model"
+            m.startsWith("gpt") -> "GPT"
+            else -> model.substringAfterLast('/').substringBefore('@')
+        }
+    }
+
     fun on(c: Context?): Boolean = c != null && CreditSaver.on(c) && CreditSaver.workerMode(c) && CreditSaver.workers(c).isNotEmpty()
 
     private fun names(c: Context): String {
@@ -58,9 +77,11 @@ object Worker {
     }
 
     /** Runs [task] on the first worker that accepts it (asking the helper when the worker wants). "" if none could. */
-    suspend fun run(c: Context, task: String, onStatus: (String) -> Unit = {}): Pair<String, String> {
+    suspend fun run(c: Context, task: String, boss: String = "your model", onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
+        val helper = ClaudeHelper.helper(c).name
         for (t in targets(c)) {
-            onStatus("Worker ${t.model} is working on it")
+            val me = nice(t.model)
+            onStatus(me, "$me is following $boss's instructions")
             val turns = mutableListOf(Turn(true, task))
             var asks = 0
             while (true) {
@@ -72,18 +93,20 @@ object Worker {
                 val text = sb.toString()
                 if (!ok || CreditSaver.isRefusal(text)) {
                     if (ok) CreditSaver.noteRefusal(c, t.w, "chat")
-                    onStatus("Worker ${t.model} " + (if (ok) "refused" else "failed") + " — trying the next one")
+                    onStatus(me, "$me " + (if (ok) "refused" else "couldn't do it") + " — passing $boss's task to the next worker")
                     break
                 }
                 val q = ClaudeHelper.question(text)
                 if (q != null && asks < 3) {
                     asks++
-                    onStatus("Worker ${t.model} is asking the helper")
-                    val ans = ClaudeHelper.ask(c, q, source = "chat") { onStatus(it) }
+                    onStatus(helper, "$me asked $helper for help — $helper is helping $me")
+                    val ans = ClaudeHelper.ask(c, q, source = "chat") { }
+                    onStatus(me, "$helper helped; $me is continuing $boss's task")
                     turns += Turn(false, text)
                     turns += Turn(true, "The helper's answer:\n$ans\n\nNow finish the task.")
                     continue
                 }
+                onStatus(boss, "$me finished; $boss is inspecting $me's work")
                 return t.model to ClaudeHelper.clean(text).trim()
             }
         }

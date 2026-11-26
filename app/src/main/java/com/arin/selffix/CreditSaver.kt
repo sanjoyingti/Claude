@@ -11,6 +11,10 @@ import java.util.concurrent.ConcurrentHashMap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 
 /**
  * ARIN-PROTECTED: credit-saver — the person's two modes (only they switch them):
@@ -344,6 +348,12 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
             androidx.compose.material3.Text(n, style = small)
         }
     }
+    var helperModels by androidx.compose.runtime.remember(hp.kind, hp.apiId) { androidx.compose.runtime.mutableStateOf<List<com.arin.llm.ModelOption>?>(null) }
+    androidx.compose.runtime.LaunchedEffect(hp.kind, hp.apiId) {
+        helperModels = runCatching { ClaudeHelper.models(c, hp.kind, vm.savedApis.firstOrNull { it.slotId == hp.apiId }) }.getOrDefault(emptyList())
+    }
+    androidx.compose.material3.Text("Helper model:", style = small)
+    ModelList(helperModels, hp.model) { m -> hp = hp.copy(model = m); vm.setHelper(hp) }
     androidx.compose.material3.OutlinedTextField(hp.model, { v -> hp = hp.copy(model = v.trim()); vm.setHelper(hp) },
         label = { androidx.compose.material3.Text("Helper model (blank = its default)") }, singleLine = true)
     val used = CreditSaver.freePoolUsed(c)
@@ -364,12 +374,41 @@ private fun WorkerModeUi(vm: com.arin.chat.ChatViewModel) {
                             androidx.compose.material3.Text(n, style = small)
                         }
                     }
-                    if (api != "offline") androidx.compose.material3.OutlinedTextField(model, { model = it.trim() },
-                        label = { androidx.compose.material3.Text("Model id (e.g. gpt-6-luna)") }, singleLine = true)
+                    if (api != "offline") {
+                        val savedApi = vm.savedApis.firstOrNull { it.slotId == api }
+                        var list by androidx.compose.runtime.remember(api) { androidx.compose.runtime.mutableStateOf<List<com.arin.llm.ModelOption>?>(null) }
+                        androidx.compose.runtime.LaunchedEffect(api) { list = runCatching { ClaudeHelper.models(c, "custom", savedApi) }.getOrDefault(emptyList()) }
+                        ModelList(list, model) { model = it }
+                        androidx.compose.material3.OutlinedTextField(model, { model = it.trim() },
+                            label = { androidx.compose.material3.Text("Model id (or pick above)") }, singleLine = true)
+                    }
                 }
             },
             confirmButton = { androidx.compose.material3.TextButton({ save(list + CreditSaver.Worker(api, if (api == "offline") "offline" else model)); adding = false }) { androidx.compose.material3.Text("Add") } },
             dismissButton = { androidx.compose.material3.TextButton({ adding = false }) { androidx.compose.material3.Text("Cancel") } },
         )
+    }
+}
+
+
+/** Every model an API offers, to tap one (scrolls when the list is long). */
+@androidx.compose.runtime.Composable
+private fun ModelList(models: List<com.arin.llm.ModelOption>?, selected: String, pick: (String) -> Unit) {
+    val small = androidx.compose.material3.MaterialTheme.typography.bodySmall
+    when {
+        models == null -> androidx.compose.material3.Text("Loading the models…", style = small)
+        models.isEmpty() -> androidx.compose.material3.Text("This API didn't list its models — type the model id below.", style = small)
+        else -> androidx.compose.foundation.lazy.LazyColumn(androidx.compose.ui.Modifier.heightIn(max = 220.dp)) {
+            items(models.size) { i ->
+                val m = models[i]
+                androidx.compose.foundation.layout.Row(
+                    androidx.compose.ui.Modifier.fillMaxWidth().clickable { pick(m.id) }.padding(vertical = 2.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.RadioButton(m.id == selected, { pick(m.id) })
+                    androidx.compose.material3.Text(m.label, style = small)
+                }
+            }
+        }
     }
 }

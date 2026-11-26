@@ -108,7 +108,7 @@ fun ArinMessage(
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             if (showThinking && message.thinking.isNotBlank()) {
-                ThinkingPanel(message.thinking, message.thoughtSeconds, live = false)
+                ThinkingPanel(message.thinking, message.thoughtSeconds, live = false, who = message.by)
                 Spacer(Modifier.size(8.dp))
             }
             message.commands.forEach { CommandCard(it) }
@@ -278,13 +278,14 @@ fun LiveReply(
     status: String?,
     commands: List<com.arin.data.CommandRun> = emptyList(),
     onSummary: (() -> Unit)? = null,
+    who: String = "",
 ) {
     Row(Modifier.fillMaxWidth()) {
         ArinMark(size = 22.dp, modifier = Modifier.padding(top = 2.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             if (showThinking && thinking.isNotBlank()) {
-                ThinkingPanel(thinking, 0, live = text.isEmpty())
+                ThinkingPanel(thinking, 0, live = text.isEmpty(), who = who)
                 Spacer(Modifier.size(8.dp))
             }
             commands.forEach { CommandCard(it) }
@@ -425,7 +426,7 @@ fun plainStep(r: com.arin.data.CommandRun, labelIn: String): Pair<String, StepKi
 
 /** The model's reasoning: open while it streams, then folded to "Reasoned for N s" (tap to open). */
 @Composable
-fun ThinkingPanel(text: String, seconds: Int, live: Boolean) {
+fun ThinkingPanel(text: String, seconds: Int, live: Boolean, who: String = "") {
     var open by remember(live) { mutableStateOf(live) }
     val extras = LocalArinExtras.current
     Column(
@@ -440,9 +441,9 @@ fun ThinkingPanel(text: String, seconds: Int, live: Boolean) {
             Spacer(Modifier.width(8.dp))
             Text(
                 when {
-                    live -> "Reasoning…"
-                    seconds > 0 -> "Reasoned for $seconds s"
-                    else -> "Reasoning"
+                    live -> if (who.isNotBlank()) "$who is reasoning…" else "Reasoning…"
+                    seconds > 0 -> (if (who.isNotBlank()) "$who reasoned" else "Reasoned") + " for $seconds s"
+                    else -> if (who.isNotBlank()) "$who's reasoning" else "Reasoning"
                 } + if (live) "" else if (open) "  ▴" else "  ▾",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

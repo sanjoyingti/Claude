@@ -798,7 +798,7 @@ class BuildAgent(
         var wi = 0
         var target: Target = pool.firstOrNull() ?: bossTarget()
         val workSystem = if (target.worker) workerSystem(system) else system
-        if (target.worker) step(BuildEvent.Kind.THINKING, "Worker ${target.label} is writing the code (your model inspects it after)")
+        if (target.worker) step(BuildEvent.Kind.THINKING, "${nice(target.model)} is following ${bossName()}'s instructions: writing the code (${bossName()} inspects it after)")
         while (true) {
             val sb = StringBuilder()
             val thinking = StringBuilder()
@@ -820,12 +820,12 @@ class BuildAgent(
                     val now = System.currentTimeMillis()
                     if (now - lastThinkingNote > 400) {
                         lastThinkingNote = now
-                        onProgress(-1f, "Thinking: " + proseOnly(thinking.takeLast(1_200).toString()).takeLast(160))
+                        onProgress(-1f, "${nice(target.model)} is thinking: " + proseOnly(thinking.takeLast(1_200).toString()).takeLast(160))
                     }
                     return@collect
                 }
                 if (thinking.isNotEmpty()) {
-                    step(BuildEvent.Kind.THINKING, "Planned it: " + proseOnly(thinking.take(3_000).toString()).trim().take(160) + "…")
+                    step(BuildEvent.Kind.THINKING, "${nice(target.model)} planned it: " + proseOnly(thinking.take(3_000).toString()).trim().take(160) + "…")
                     thinking.clear()
                     onProgress(null, "")
                 }
@@ -862,10 +862,11 @@ class BuildAgent(
                 com.arin.selffix.CreditSaver.noteRefusal(context!!, target.w!!, helperTab)
                 wi++
                 target = pool.getOrNull(wi) ?: bossTarget()
-                step(BuildEvent.Kind.THINKING, "That worker refused — handing the task to " + (if (target.worker) "worker ${target.label}" else "your model"))
+                step(BuildEvent.Kind.THINKING, "${nice(pool[wi - 1].model)} refused — ${bossName()} is passing the task to " + (if (target.worker) nice(target.model) else "itself (${bossName()} writes it)"))
                 continue
             }
             lastReply = reply
+            if (target.worker) lastWorker = nice(target.model)
             // Credit meter: roughly how much of your model this task has used so far (and today's warning, if set).
             if (context != null && !target.worker) {
                 val chars = system.length + working.sumOf { it.text.length } + reply.length
@@ -882,7 +883,8 @@ class BuildAgent(
             val result = when {
                 claudeQ != null -> {
                     claudeAsks++
-                    step(BuildEvent.Kind.THINKING, "Asking ${com.arin.selffix.ClaudeHelper.helper(context!!).name} for help")
+                    val hn = com.arin.selffix.ClaudeHelper.helper(context!!).name
+                    step(BuildEvent.Kind.THINKING, "${nice(target.model)} asked $hn for help — $hn is helping ${nice(target.model)}")
                     "The helper's answer:\n\n" + com.arin.selffix.ClaudeHelper.ask(context!!, projectNote() + claudeQ, source = helperTab).take(12_000)
                 }
                 search != null -> {
@@ -906,6 +908,11 @@ class BuildAgent(
                          val endpoint: com.arin.llm.CustomApi.Endpoint?, val label: String, val w: com.arin.selffix.CreditSaver.Worker? = null) {
         val worker get() = w != null
     }
+
+    private fun nice(model: String) = com.arin.selffix.Worker.nice(model)
+    private fun bossName() = nice(req.model)
+    /** The worker that wrote the latest code (for the steps). */
+    private var lastWorker = ""
 
     private fun bossTarget() = Target(req.provider, req.apiKey, req.model, req.endpoint(), req.model)
 
@@ -961,16 +968,17 @@ class BuildAgent(
                 }
                 if (notes.isNotEmpty()) appendLine("WORKER NOTES: " + notes.joinToString("; ").take(800))
             }
-            step(BuildEvent.Kind.THINKING, "Your model is inspecting the worker's work ($what)")
+            val wn = lastWorker.ifBlank { "the worker" }
+            step(BuildEvent.Kind.THINKING, "${bossName()} is inspecting $wn's work ($what)")
             val verdict = bossSay(summary + "\nYou are the supervisor. Inspect: does this cover the task, and is anything clearly " +
                 "wrong or missing? Answer in at most 6 lines: either just APPROVE, or FIX: <exact directions for the worker>. " +
                 "You may write \"ask Claude\" in a direction.")
             if (verdict.isBlank() || verdict.trim().uppercase().startsWith("APPROVE") || !verdict.contains("FIX", true)) {
-                step(BuildEvent.Kind.THINKING, "✅ Your model approved the work")
+                step(BuildEvent.Kind.THINKING, "✅ ${bossName()} approved $wn's work")
                 approvedSig = sig()
                 return notes
             }
-            step(BuildEvent.Kind.THINKING, "Your model's directions: " + verdict.trim().take(160))
+            step(BuildEvent.Kind.THINKING, "${bossName()} is instructing $wn: " + verdict.trim().removePrefix("FIX:").trim().take(160))
             notes = apply(ask(buildString {
                 appendLine("The supervisor inspected your work and gives these directions. Follow them exactly (ask the helper if it says so " +
                     "or you're stuck):")

@@ -48,6 +48,8 @@ data class Message(
     val text: String,
     val thinking: String = "",
     val thoughtSeconds: Int = 0,
+    /** Which model wrote this reply (shown as "DeepSeek reasoned for 11 s"). */
+    val by: String = "",
     val attachments: List<Attachment> = emptyList(),
     /** Set when the reply failed; the text then holds the error to show. */
     val failed: Boolean = false,

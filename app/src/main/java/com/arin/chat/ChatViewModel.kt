@@ -75,6 +75,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     inner class Run(val chat: String, val chatTitle: String, val base: List<Message>) {
         var liveText by mutableStateOf("")
         var liveThinking by mutableStateOf("")
+        /** Which model is working right now ("DeepSeek", "GPT-6 Luna", "Claude"). */
+        var who by mutableStateOf("")
         /** The person is talking with the AI helper: after the model reads the message and drafts, the helper helps it. */
         var consultHelper = false
         /** The person asked for the helper's help this time ("Talk to"): only then is the boss's draft checked by it. */
@@ -103,6 +105,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val streaming: Boolean get() = runFor() != null
     val liveText: String get() = runFor()?.liveText.orEmpty()
     val liveThinking: String get() = runFor()?.liveThinking.orEmpty()
+    val liveWho: String get() = runFor()?.who.orEmpty()
 
     /** Status outside any reply (e.g. loading a model); a running reply's own status takes precedence. */
     private var idleStatus by mutableStateOf<String?>(null)
@@ -3006,6 +3009,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var helperTakeovers = 0
                 var helperConsulted = false
                 var workerAsks = 0
+                val bossName = com.arin.selffix.Worker.nice(m)
                 var lastWorkerResult = ""
                 var helperGuides = 0
                 var lastGuided = -1
@@ -3095,6 +3099,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                     }
                                 }
                                 try {
+                                    run.who = bossName
+                                    if (run.status == null) run.status = "$bossName is working on your message"
                                     Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
@@ -3320,8 +3326,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (claudeQ != null) {
                         claudeAsks++
                         run.liveText = ""
-                        run.status = "Asking ${helperLabel} for help"
-                        val answer = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question = claudeQ) { run.status = it }
+                        run.status = "$bossName asked ${com.arin.selffix.ClaudeHelper.helper(app).name} for help — ${com.arin.selffix.ClaudeHelper.helper(app).name} is helping $bossName"
+                        run.who = com.arin.selffix.ClaudeHelper.helper(app).name
+                        val answer = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question = claudeQ) { }
+                        run.who = bossName
+                        run.status = "${com.arin.selffix.ClaudeHelper.helper(app).name} helped; $bossName is continuing"
                         run.status = null
                         val step = com.arin.data.CommandRun("ask ${helperLabel}: ${claudeQ.take(80)}", answer.take(2_000), 0, kind = "tool")
                         ran += step
@@ -3335,7 +3344,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (workerTask != null) {
                         workerAsks++
                         run.liveText = ""
-                        val (who, result) = com.arin.selffix.Worker.run(app, workerTask) { run.status = it }
+                        run.status = "$bossName is instructing the worker: " + workerTask.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().removePrefix("TASK:").trim().take(90)
+                        val (who, result) = com.arin.selffix.Worker.run(app, workerTask, bossName) { w, s -> run.who = w; run.status = s }
+                        run.who = bossName
                         run.status = null
                         val step = com.arin.data.CommandRun("worker ${who.ifBlank { "(none)" }}: ${workerTask.take(80)}", result.take(2_000), 0, kind = "tool")
                         ran += step
@@ -3586,6 +3597,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             "\n\n⚠️ **Stopped:** ${failure!!.take(300)}",
                         thinking = thinking.toString(),
                         thoughtSeconds = seconds,
+                        by = com.arin.selffix.Worker.nice(m),
                         sources = sources,
                         commands = ran.toList(),
                         media = foundMedia.toList(),
@@ -3598,6 +3610,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         text = shown.ifBlank { if (ran.isNotEmpty()) "Ran ${ran.size} command${if (ran.size == 1) "" else "s"}." else "(Stopped)" },
                         thinking = thinking.toString(),
                         thoughtSeconds = seconds,
+                        by = com.arin.selffix.Worker.nice(m),
                         sources = sources,
                         commands = ran.toList(),
                         media = foundMedia.toList(),

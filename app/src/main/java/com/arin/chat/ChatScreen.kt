@@ -544,7 +544,7 @@ private fun Conversation(vm: ChatViewModel, onEdit: (Int) -> Unit) {
                 )
             }
             if (vm.streaming) {
-                item(key = "live") { LiveReply(vm.liveText, vm.liveThinking, vm.showThinking, vm.status, vm.liveCommands.toList(), onSummary = { stepsFor = "live" }) }
+                item(key = "live") { LiveReply(vm.liveText, vm.liveThinking, vm.showThinking, vm.status, vm.liveCommands.toList(), onSummary = { stepsFor = "live" }, who = vm.liveWho) }
             }
         }
         androidx.compose.animation.AnimatedVisibility(
