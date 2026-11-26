@@ -105,6 +105,14 @@ object CreditSaver {
         val path = offlineModel(c).ifBlank { return@withContext null }
         val file = File(com.arin.terminal.Linux.rootfs(c), path.removePrefix("/"))
         if (!file.exists()) return@withContext null
+        // Loading a model takes about its file size in memory: only when the phone has that much free (plus 1.5 GB),
+        // otherwise the plain rules do the job — Android would close Arin for using too much memory.
+        val loaded = com.arin.llm.LocalModel.isUp() && com.arin.llm.LocalModel.lastModel(c)?.name == file.name
+        if (!loaded) {
+            val mi = android.app.ActivityManager.MemoryInfo()
+            (c.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+            if (mi.availMem < file.length() + 1_500_000_000L) return@withContext null
+        }
         withTimeoutOrNull(25_000) {
             if (!com.arin.llm.LocalModel.isUp() || com.arin.llm.LocalModel.lastModel(c)?.name != file.name) {
                 if (com.arin.llm.LocalModel.start(c, file, 4096) != null) return@withTimeoutOrNull null

@@ -27,7 +27,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object Harness {
     private const val BASE = "/root/.arin/h"
-    private const val MAX_LIVE = 3
+    /** Claude sessions running at once (each uses 200–400 MB): more stay saved and resume when needed. */
+    private const val MAX_LIVE = 2
     private const val TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch,TodoWrite"
 
     /** Arin's tools + the person's MCP servers (config JSON, server names) and GitHub token; set by the app. */
@@ -335,7 +336,8 @@ object Harness {
     /** Sessions not used for 30 minutes stop (they resume if the conversation continues). */
     private suspend fun trim() {
         val now = System.currentTimeMillis()
-        sessions.values.filter { now - it.lastUse > 30 * 60_000L && !it.lock.isLocked && alive(it) }.forEach { stop(it, keepSession = true) }
+        // Idle for 10 minutes: its process stops to free memory (the conversation resumes when you continue).
+        sessions.values.filter { now - it.lastUse > 10 * 60_000L && !it.lock.isLocked && alive(it) }.forEach { stop(it, keepSession = true) }
         sessions.values.filter { now - it.lastUse > 24 * 3_600_000L }.forEach { stop(it) }
     }
 

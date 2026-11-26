@@ -1702,6 +1702,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     init {
+        // An offline model download that was cut off (Android closed Arin): resume it.
+        settings.secret("OFFLINE_PENDING").takeIf { it.contains('\n') }?.let { p ->
+            viewModelScope.launch { kotlinx.coroutines.delay(4_000); setUpOfflineModel(p.substringBefore('\n'), p.substringAfter('\n')) }
+        }
+    }
+
+    init {
         // The Claude harness (every tab) gets Arin's tools, the person's MCP servers and the GitHub sign-in.
         com.arin.claudecode.Harness.extras = { val (cfg, names) = ccMcpConfig(); Triple(cfg, names, githubToken()) }
         // Every install shows live progress (what it's doing, MB, %, speed, time left) while it runs.
@@ -4120,6 +4127,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setUpOfflineModel(repo: String, label: String) {
         if (offlineBusy) return
+        // Remembered until it finishes: if Android closes Arin mid-download, it carries on when Arin opens again.
+        settings.setSecret("OFFLINE_PENDING", "$repo\n$label")
         val app = getApplication<Application>()
         if (!com.arin.terminal.Linux.installed(app)) {
             offlineStatus = "Install Linux first: Settings → Linux → Install Linux. Then come back here."
@@ -4142,6 +4151,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val i = savedApis.indexOfFirst { it.slotId == api.slotId }
                 if (i >= 0) savedApis[i] = api else savedApis.add(0, api)
                 settings.savedApis = savedApis.toList()
+                settings.setSecret("OFFLINE_PENDING", "")
                 kotlinx.coroutines.withContext(Dispatchers.Main) { useSavedApi(api) }
             } catch (e: Exception) {
                 offlineStatus = "Stopped: ${e.message ?: e.javaClass.simpleName}. Tap the model again to resume the download."
