@@ -2712,6 +2712,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Thrown inside a stream to stop it when the person steers. */
     private class SteerInterrupt : Exception()
 
+    /** The reply already holds a complete tool step: stop reading and act on it now (speed). */
+    private class StepReady : Exception()
+
     fun send(text: String) {
         // Talking with the AI helper: the chat's own model reads the whole message first and drafts its answer; then the
         // helper helps it, and the model gives the final answer (see consultHelper in the reply loop).
@@ -3106,7 +3109,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
-                                    Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint).collect { d ->
+                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
                                         val nowMs = System.currentTimeMillis()
@@ -3116,6 +3119,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                         when (d) {
                                             is Delta.Text -> {
                                                 text.append(d.text)
+                                                // Speed: act on a finished tool step at once, without waiting for the rest of the reply.
+                                                if (d.text.contains('>') && com.arin.selffix.TeamWork.stepComplete(text.toString())) throw StepReady()
                                                 if (redraw) {
                                                     lastUi = nowMs
                                                     val now = text.toString()
@@ -3129,7 +3134,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                                 if (redraw) { lastUi = nowMs; run.liveThinking = thinking.toString() }
                                             }
                                         }
-                                    }
+                                    } } catch (e: StepReady) { /* the step is complete: go on with it now */ }
                                 } finally {
                                     waitJob.cancel()
                                     if (run.status?.startsWith("Waiting for ") == true) run.status = null

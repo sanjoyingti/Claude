@@ -34,7 +34,8 @@ object TeamWork {
     fun instructions(c: Context): String {
         if (!on(c)) return ""
         return "TEAM MODE IS ON (saves your tokens — follow it strictly). You are the boss: you direct and check; you do NOT " +
-            "write terminal commands or long files yourself. For each terminal step write <worker_do>one short direction: what " +
+            "write long commands, scripts or files yourself. A SHORT one-line look-around command (ls, grep, head, sed -n, wc, " +
+            "cat of a small file) you may write yourself with <run> — that is fastest. For anything longer write <worker_do>one short direction: what " +
             "to find, run or change, with the paths and names you know</worker_do> as the LAST thing in your reply and stop. " +
             "The worker writes the command without seeing any file or output; Arin runs it and gives you a shortened result " +
             "(ask for narrower steps — grep, line ranges — if you need more). For a new file or a long rewrite write " +
@@ -46,6 +47,20 @@ object TeamWork {
     }
 
     // ---- Arin itself, no AI ----
+
+    private val toolEnd = Regex("""</(run|worker_do|worker_write|write|edit|install|tool|ask_worker|ask_helper|fetch|download|search|read_source|read)>\s*$|<read\s+path\s*=\s*"[^"]+"[^>]*/>\s*$""")
+
+    /**
+     * Speed: true as soon as the reply ends with a complete tool step (outside a code block), so Arin can act on it at
+     * once instead of waiting for the model to finish writing.
+     */
+    fun stepComplete(reply: String): Boolean {
+        val tail = reply.takeLast(200)
+        if (!toolEnd.containsMatchIn(tail)) return false
+        if (Regex("```").findAll(reply).count() % 2 == 1) return false
+        val i = reply.lastIndexOf("</")
+        return i < 0 || i == 0 || reply[i - 1] != '`'
+    }
 
     private val ansi = Regex("\u001B\\[[0-9;?]*[A-Za-z]")
     private val errLine = Regex("(?i)(error|exception|failed|fatal|denied|not found|cannot|can't|unable|invalid|missing|warning|traceback|exit code)")
@@ -123,7 +138,9 @@ object TeamWork {
      * could. The worker sees only the direction (code blocks removed).
      */
     suspend fun command(c: Context, direction: String, boss: String, onStatus: (String, String) -> Unit): Pair<String, String> {
-        val (who, out) = Worker.run(c, "DIRECTION FROM THE SUPERVISOR:\n" + safeDirection(direction), boss, COMMAND_SYSTEM, onStatus)
+        val (who, out) = kotlinx.coroutines.withTimeoutOrNull(45_000) {
+            Worker.run(c, "DIRECTION FROM THE SUPERVISOR:\n" + safeDirection(direction), boss, COMMAND_SYSTEM, onStatus)
+        } ?: ("" to "")
         if (who.isBlank()) return "" to ""
         val tag = Regex("""(?s)<run>.*?</run>|<install>.*?</install>""").find(out)?.value
             ?: out.replace(Regex("(?s)^.*?```(?:bash|sh|shell)?\\n"), "").substringBefore("```").trim()
@@ -133,7 +150,9 @@ object TeamWork {
 
     /** The worker writes the file [path] from the boss's [spec]. Returns (worker model, content) or ("", ""). */
     suspend fun write(c: Context, path: String, spec: String, boss: String, onStatus: (String, String) -> Unit): Pair<String, String> {
-        val (who, out) = Worker.run(c, "FILE: ${path.substringAfterLast('/')}\nWHAT IT MUST CONTAIN:\n" + safeDirection(spec), boss, WRITE_SYSTEM, onStatus)
+        val (who, out) = kotlinx.coroutines.withTimeoutOrNull(150_000) {
+            Worker.run(c, "FILE: ${path.substringAfterLast('/')}\nWHAT IT MUST CONTAIN:\n" + safeDirection(spec), boss, WRITE_SYSTEM, onStatus)
+        } ?: ("" to "")
         if (who.isBlank() || out.isBlank()) return "" to ""
         val body = if (out.contains("```")) out.substringAfter("```").substringAfter('\n').substringBeforeLast("```") else out
         return Worker.nice(who) to body.trimEnd() + "\n"
@@ -145,7 +164,10 @@ object TeamWork {
      */
     suspend fun digest(c: Context, about: String, web: String, boss: String, scrubAbout: Boolean = true, onStatus: (String, String) -> Unit = { _, _ -> }): String {
         if (web.isBlank()) return web
-        val (who, out) = Worker.run(c, "ABOUT: ${if (scrubAbout) scrub(about) else about.take(400)}\n\nRESEARCH:\n" + web.take(16_000), boss, DIGEST_SYSTEM, onStatus)
+        // Speed: the worker gets 30 s; if it's slower, Arin shortens the research itself instead.
+        val (who, out) = kotlinx.coroutines.withTimeoutOrNull(30_000) {
+            Worker.run(c, "ABOUT: ${if (scrubAbout) scrub(about) else about.take(400)}\n\nRESEARCH:\n" + web.take(16_000), boss, DIGEST_SYSTEM, onStatus)
+        } ?: ("" to "")
         return if (who.isBlank() || out.isBlank()) shrink(web, 3_000) else "[Research read and summarised by ${Worker.nice(who)}:]\n" + out.take(2_500)
     }
 }

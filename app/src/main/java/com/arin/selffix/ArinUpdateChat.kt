@@ -338,12 +338,16 @@ object ArinUpdateChat {
                     }
                     status = if (steps == 0) "Thinking" else status
                     val sb = StringBuilder()
-                    streamModel(provider, key, model, turns.toList(), sys, endpoint).collect { chunk ->
-                        if (chunk.startsWith(THOUGHT)) return@collect
-                        sb.append(chunk)
-                        live = cleanTags(sb.toString())
-                        status = null
-                    }
+                    try {
+                        streamModel(provider, key, model, turns.toList(), sys, endpoint).collect { chunk ->
+                            if (chunk.startsWith(THOUGHT)) return@collect
+                            sb.append(chunk)
+                            live = cleanTags(sb.toString())
+                            status = null
+                            // Speed: act on a finished tool step at once, without waiting for the rest of the reply.
+                            if (chunk.contains('>') && TeamWork.stepComplete(sb.toString())) throw StepReady()
+                        }
+                    } catch (e: StepReady) { /* go on with the step now */ }
                     var reply = sb.toString()
                     // ARIN-PROTECTED: team-work in every tab — the boss directs; the worker writes the command without seeing
                     // the owner's messages, Arin's files or any output; Arin runs it and shrinks the result for the boss.
@@ -482,4 +486,7 @@ object ArinUpdateChat {
         .replace(readTag, "").replace(updateTag, "").replace(approvalTag, "").replace(runTag, "")
         .replace(WebTools.searchTag, "").replace(WebTools.fetchTag, "")
         .replace(Regex("""<(read_source|update_arin|search|fetch|ask_approval|run)>[\s\S]*$"""), "")
+
+    /** The reply already holds a complete tool step: stop reading and act on it now (speed). */
+    private class StepReady : Exception()
 }
