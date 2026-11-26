@@ -1099,8 +1099,8 @@ class BuildAgent(
             }
             val wn = lastWorker.ifBlank { "the worker" }
             step(BuildEvent.Kind.THINKING, "${bossName()} is inspecting $wn's work ($what)")
-            val verdict = bossSay(summary + "\nYou are the supervisor. Inspect: does this cover the task, and is anything clearly " +
-                "wrong or missing? Answer in at most 6 lines: either just APPROVE, or FIX: <exact directions for the worker>. " +
+            val verdict = bossSay(summary + "\nYou are the supervisor. Inspect: is this EXACTLY the app/change the owner asked for, " +
+                "with every feature and detail (nothing different, simplified or dropped), and is anything wrong or missing? Answer in at most 6 lines: either just APPROVE, or FIX: <exact directions for the worker>. " +
                 "You may write \"ask Claude\" in a direction.")
             if (verdict.isBlank() || verdict.trim().uppercase().startsWith("APPROVE") || !verdict.contains("FIX", true)) {
                 step(BuildEvent.Kind.THINKING, "✅ ${bossName()} approved $wn's work")
@@ -1350,6 +1350,8 @@ class BuildAgent(
                 appendLine()
                 appendLine("Go through the requirements one at a time and look for:")
                 appendLine("- anything asked for that is missing or only partly done;")
+                appendLine("- anything DIFFERENT from what was asked (ARIN-PROTECTED: exact-request): a different app, renamed, swapped, " +
+                    "simplified or extra-limited features, other colours/layout/behaviour than described — make it exactly as asked;")
                 appendLine("- placeholders, TODOs, empty click handlers, buttons that do nothing, sample data where real behaviour was asked for;")
                 appendLine("- screens that can't be reached, settings that aren't saved, data that is lost when the app restarts (if it should be kept);")
                 appendLine("- code that won't compile: missing imports, classes, functions or resources, wrong API names, missing manifest permissions.")
