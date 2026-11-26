@@ -209,6 +209,7 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
                                 Column(Modifier.padding(start = 30.dp)) { UploadBar(BuildRunner.progressText.ifBlank { "Working…" }, prog) }
                             }
                         }
+                        is TimelineItem.Plan -> PlanCard(item, canWrite = isLast && item.done && !vm.running) { BuildPlanner.writeAsked++ }
                         is TimelineItem.Result -> ResultCard(
                             item,
                             onRetry = if (!item.success && isLast && !vm.running && vm.project != null) {
@@ -350,6 +351,34 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
     var unpacking by rememberSaveable { mutableStateOf(false) }
 
     val attached = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateListOf<com.arin.data.Attachment>() }
+    // "Write the code" on the plan: start writing (stop after writing, then Arin asks where to build).
+    androidx.compose.runtime.LaunchedEffect(BuildPlanner.writeAsked) {
+        if (BuildPlanner.writeAsked == 0 || vm.running) return@LaunchedEffect
+        if (chat.githubToken().isBlank()) { problem = "Sign in with GitHub in Settings first."; return@LaunchedEffect }
+        if (android.os.Build.VERSION.SDK_INT >= 33) notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        vm.start(
+                                BuildRequest(
+                                    description = BuildPlanner.writeDescription(),
+                                    appName = name.trim(),
+                                    provider = chat.provider,
+                                    model = chat.model,
+                                    apiKey = chat.key(chat.provider),
+                                    customBaseUrl = if (chat.provider == com.arin.llm.Provider.Custom) chat.customBaseUrl else "",
+                                    customFormat = chat.customFormat.name,
+                                    testApp = chat.testApps,
+                                    effort = chat.effort,
+                                    githubToken = chat.githubToken(),
+                                    allowOtherSites = allowOther,
+                                    project = project,
+                                    attachments = BuildPlanner.files.toList(),
+                                    stopAfterWriting = true,
+                                    // With the helper on: the model writes first, then the helper reviews and the model fixes.
+                                    consultHelper = chat.helperOn("build"),
+                                    // Everything asked for so far in this Build chat counts, not only this message.
+                                    requirements = BuildPlanner.requirements(),
+                                ),
+                            )
+    }
     var attaching by rememberSaveable { mutableStateOf(false) }
     var attachPct by remember { mutableStateOf(0f) }
     fun importAll(uris: List<android.net.Uri>) {
@@ -532,7 +561,7 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                 )
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = {
-                    // A build is running: what you type steers it (followed at its next step).
+                    // A build is running: what you type steers it right away.
                     if (vm.running) {
                         if (text.isNotBlank()) { BuildRunner.current.steer(text); text = "" }
                         return@Button
@@ -583,38 +612,13 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                         else -> null
                     }
                     if (problem == null) {
-                        if (android.os.Build.VERSION.SDK_INT >= 33) {
-                            notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                        vm.start(
-                            BuildRequest(
-                                description = text.trim(),
-                                appName = name.trim(),
-                                provider = chat.provider,
-                                model = chat.model,
-                                apiKey = chat.key(chat.provider),
-                                customBaseUrl = if (chat.provider == com.arin.llm.Provider.Custom) chat.customBaseUrl else "",
-                                customFormat = chat.customFormat.name,
-                                testApp = chat.testApps,
-                                effort = chat.effort,
-                                githubToken = chat.githubToken(),
-                                allowOtherSites = allowOther,
-                                project = project,
-                                attachments = attached.toList(),
-                                stopAfterWriting = true,
-                                // With the helper on: the model writes first, then the helper reviews and the model fixes.
-                                consultHelper = chat.helperOn("build"),
-                                // Everything asked for so far in this Build chat counts, not only this message.
-                                requirements = if (project == null) {
-                                    (BuildRunner.timeline.filterIsInstance<TimelineItem.User>().map { it.text.trim() } + text.trim())
-                                        .filter { it.isNotBlank() && !resumeWords.containsMatchIn(it) }.distinct().joinToString("\n\n")
-                                } else "",
-                            ),
-                        )
+                        // ARIN-PROTECTED: plan-improve-build-where — first a plan (improve it by replying), then
+                        // "Write the code", then Arin asks where to build. Never straight to building.
+                        BuildPlanner.plan(context, chat, project?.appName ?: name.trim(), text.trim(), attached.toList())
                         text = ""
                         attached.clear()
                     }
-                }) { Text(if (vm.running) "Steer" else if (project == null) "Build" else "Send") }
+                }) { Text(if (vm.running) "Steer" else if (BuildPlanner.busy) "…" else if (vm.timeline.lastOrNull() is TimelineItem.Plan) "Improve" else "Plan") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -843,6 +847,68 @@ fun UploadBar(label: String, progress: Float, detail: String = "") {
         }
         if (detail.isNotBlank()) {
             Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+
+/** Plan → improve → write the code → where to build (the Arin Update tab's way, here too). */
+object BuildPlanner {
+    var busy by androidx.compose.runtime.mutableStateOf(false)
+    var writeAsked by androidx.compose.runtime.mutableStateOf(0)
+    val files = mutableListOf<com.arin.data.Attachment>()
+    private const val SYSTEM = "You are planning an Android app (Kotlin, Jetpack Compose) with the person, BEFORE any code is written. " +
+        "Write a short, clear plan in plain English: what the app does, its screens, how each feature works, what it saves, " +
+        "permissions and libraries. If something important is unclear, end with up to 3 short questions. Do NOT write code. " +
+        "The person will improve the plan by replying, then tap \"Write the code\"."
+
+    fun lastPlan(): String = BuildRunner.timeline.filterIsInstance<TimelineItem.Plan>().lastOrNull { it.done }?.text.orEmpty()
+
+    fun requirements(): String = (BuildRunner.timeline.filterIsInstance<TimelineItem.User>().map { it.text.trim() }.filter { it.isNotBlank() } +
+        listOf("THE AGREED PLAN (follow it):\n" + lastPlan())).distinct().joinToString("\n\n")
+
+    fun writeDescription(): String = "Write the code exactly as in the agreed plan below (and everything the person asked).\n\n" + requirements()
+
+    fun plan(context: android.content.Context, chat: ChatViewModel, appName: String, text: String, attached: List<com.arin.data.Attachment>) {
+        if (busy) return
+        files += attached
+        BuildRunner.timeline += TimelineItem.User(text.ifBlank { "(files attached)" } + if (attached.isNotEmpty()) "\n📎 " + attached.joinToString(", ") { it.name } else "")
+        val idx = BuildRunner.timeline.size
+        BuildRunner.timeline += TimelineItem.Plan("", done = false)
+        busy = true
+        val prompt = buildString {
+            append("App: ").append(appName.ifBlank { "(no name yet)" }).append("\n\nWhat the person asked so far:\n")
+            BuildRunner.timeline.filterIsInstance<TimelineItem.User>().forEach { append("- ").append(it.text).append('\n') }
+            lastPlan().takeIf { it.isNotBlank() }?.let { append("\nYOUR PREVIOUS PLAN (improve it with the newest message):\n").append(it) }
+        }
+        com.arin.ArinApp.scope.launch {
+            val sb = StringBuilder()
+            try {
+                streamModel(chat.provider, chat.key(chat.provider), chat.model, listOf(ChatMessage(com.arin.builder.Role.USER, prompt, files.toList())), SYSTEM)
+                    .collect { if (!it.startsWith(THOUGHT)) { sb.append(it); kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { if (idx < BuildRunner.timeline.size) BuildRunner.timeline[idx] = TimelineItem.Plan(sb.toString(), false) } } }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                sb.append("\n\n(Couldn't make the plan: ${e.message?.take(200)})")
+            }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (idx < BuildRunner.timeline.size) BuildRunner.timeline[idx] = TimelineItem.Plan(sb.toString().trim(), true)
+                busy = false
+                BuildRunner.save(context)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanCard(p: TimelineItem.Plan, canWrite: Boolean, onWrite: () -> Unit) {
+    androidx.compose.material3.Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("📝 Plan", style = MaterialTheme.typography.titleSmall)
+            Text(p.text.ifBlank { "Planning…" }, style = MaterialTheme.typography.bodyMedium)
+            if (canWrite) {
+                Text("Reply below to improve it, or:", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = onWrite) { Text("✍️ Write the code") }
+            }
         }
     }
 }

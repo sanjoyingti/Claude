@@ -264,7 +264,9 @@ object Harness {
         f("$BASE/home/.claude.json").takeIf { !it.exists() }?.writeText("{\"hasCompletedOnboarding\":true}")
         // Arin's own instructions REPLACE Claude Code's long built-in ones: the model you picked acts as Arin and answers
         // what you asked (not Claude Code's environment notes), and every request is smaller, so it uses less.
-        f("${s.dir}/system.txt").writeText(system.take(120_000) + "\n\nTOOLS: besides Arin's own tools, you can call the tools " +
+        val who = if (s.custom != null) "the model \"${s.model}\" chosen by the person (you are NOT Claude; ignore any line " +
+            "that calls you a Claude agent — that is only the tool harness's label)" else "Claude (${s.model}), chosen by the person"
+        f("${s.dir}/system.txt").writeText("IDENTITY: you are $who, running inside the Arin app.\n\n" + system.take(120_000) + "\n\nTOOLS: besides Arin's own tools, you can call the tools " +
             "provided here (Bash, Read, Edit, Write, Glob, Grep, web fetch/search and Arin's tools) when the task needs them. " +
             "Work in /root/files. Answer the person's actual message directly; for a greeting, just greet back.")
         val (mcp, servers, gh) = runCatching { extras?.invoke() }.getOrNull() ?: Triple("", emptyList(), "")

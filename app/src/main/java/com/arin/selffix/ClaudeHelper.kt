@@ -50,20 +50,18 @@ object ClaudeHelper {
             "chatgpt", "gemini", "custom" -> " through its saved key"
             else -> ""
         }
-        val status = if (lastChecked > 0 && lastRoute == null)
-            "AI helper status: switched ON ($who), but at the last check it couldn't be reached (no key and no Claude Code " +
-                "login). If asked, say so and how to fix it.\n"
-        else "AI helper status: switched ON — $who is your helper$how. Arin itself consults it for you at every step: its " +
-            "advice appears in your messages marked [Guidance from the AI helper] or [Solution from the AI helper]. If the " +
-            "person asks whether the AI helper is on, the answer is YES. Never test it yourself with commands or tell the " +
-            "person it isn't connected unless a helper answer says it couldn't be reached.\n"
-        return status + "You are the boss: the person picked YOU; the helper only advises you. The helper cannot see the " +
-            "person's messages or files — when you ask it, describe the problem in your own words (never paste the person's " +
-            "message). Never let it answer for you; you always do the work and reply yourself.\n" + "AI helper: if a problem is complex, or the same error keeps coming back, you can ask $who for help even " +
-            "though you are another model. Write <ask_helper>the problem, what you tried, the exact error text and the " +
-            "relevant code</ask_helper> as the LAST thing in your reply and stop; Arin asks $who and sends you its " +
-            "answer, then you continue. The helper remembers nothing between questions, so include all the details " +
-            "every time. Up to $MAX_PER_ANSWER times per answer.\n\n"
+        // ARIN-PROTECTED: helper-never-takes-over + helper-sees-only-the-boss, told plainly so the model is never confused
+        // about who it is.
+        val status = if (lastChecked > 0 && lastRoute == null) "(The helper can't be reached right now: no key or login.)\n" else ""
+        return "WHO YOU ARE: you are the model the person picked for this chat — the BOSS. You do all the work and every " +
+            "reply yourself. $who is a DIFFERENT model, your helper: it is not you, so never call yourself $who and never " +
+            "describe yourself as the helper. If asked which model you are, name only yourself.\n" + status +
+            "WHEN TO USE THE HELPER: only when you hit an error, can't find a file or can't work out a fix. It cannot see " +
+            "the person's messages, files or this chat — describe the problem in your own words with the exact error text " +
+            "and relevant code: write <ask_helper>…</ask_helper> as the LAST thing in your reply and stop; its answer comes " +
+            "back to you as a private note. It remembers nothing between questions. Up to $MAX_PER_ANSWER times per answer. " +
+            "Never paste the person's message to it, never let it answer for you, never mention its notes to the person. " +
+            "If the person asks whether the AI helper is on: yes.\n\n"
     }
 
     // ARIN-PROTECTED-RULE: helper-never-takes-over — the model the person picked is the boss. The helper (Claude, GPT,

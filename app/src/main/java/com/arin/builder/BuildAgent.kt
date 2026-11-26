@@ -117,6 +117,8 @@ class BuildAgent(
     /** Every direction the person sent while this build ran: kept in every later prompt, in the order sent. */
     private val steered = mutableListOf<String>()
 
+    private class SteerNow : RuntimeException()
+
     private fun steeringNote(): String {
         val fresh = takeSteering()
         fresh.forEach { step(BuildEvent.Kind.THINKING, "Following your direction: ${it.take(140)}") }
@@ -789,12 +791,15 @@ class BuildAgent(
             val thinking = StringBuilder()
             var scanned = 0
             var about: String? = null
-            resilient(
+            // ARIN-PROTECTED: steer-immediately — a direction sent while the model writes stops this answer at once, and the
+            // model starts again WITH the direction (not queued for later).
+            val steeredNow = try { resilient(
                 attempt = { model -> streamModel(req.provider, req.apiKey, model, working.toList(), system, req.endpoint()) },
                 model = req.model,
                 fallback = { if (req.provider != com.arin.llm.Provider.Free) null else alternativeModel(req.provider, req.apiKey, req.model) }, // ARIN-PROTECTED: never change the Custom API — nor Claude, GPT or the Claude Code login: only the person switches them
                 onRetry = { step(BuildEvent.Kind.STEP, it) },
             ).collect { raw ->
+                if (hasSteering()) throw SteerNow()
                 if (raw.startsWith(THOUGHT)) {
                     // Show what the model is thinking, live, under the current step.
                     thinking.append(raw.substring(1))
@@ -829,6 +834,14 @@ class BuildAgent(
                     }
                     scanned = nl
                 }
+            }; false } catch (e: SteerNow) { true }
+            if (steeredNow) {
+                step(BuildEvent.Kind.THINKING, "Changing course now with your direction")
+                onProgress(null, "")
+                val base = working[0].text.substringBefore("\n\nTHE OWNER'S DIRECTIONS")
+                working.clear()
+                working += ChatMessage(Role.USER, base + steeringNote(), seenFiles)
+                continue
             }
             val reply = sb.toString()
             lastReply = reply

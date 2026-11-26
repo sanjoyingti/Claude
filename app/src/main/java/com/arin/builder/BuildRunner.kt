@@ -53,7 +53,7 @@ class BuildSession(val id: String) {
         val t = text.trim()
         if (t.isEmpty()) return
         steering += t
-        timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.STEP, "↪ Your direction (followed at the next step): $t"))
+        timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.STEP, "↪ Your direction — following it now: $t"))
     }
 }
 

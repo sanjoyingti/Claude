@@ -18,6 +18,10 @@ sealed class TimelineItem {
     @Serializable
     data class Event(val event: BuildEvent) : TimelineItem()
 
+    /** The model's plan for the app (before any code): improve it by replying, then "Write the code". */
+    @Serializable
+    data class Plan(val text: String, val done: Boolean = true) : TimelineItem()
+
     @Serializable
     data class Result(val success: Boolean, val message: String, val apkUrl: String? = null, val repoUrl: String? = null) : TimelineItem()
 }
