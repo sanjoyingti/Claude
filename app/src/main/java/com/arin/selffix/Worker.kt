@@ -106,7 +106,7 @@ object Worker {
 
     private suspend fun targets(c: Context): List<Target> {
         return CreditSaver.workers(c).mapNotNull { w -> targetFor(c, w) }
-        }.sortedBy { if (CreditSaver.refused(c, it.w, "chat")) 1 else 0 }
+            .sortedBy { if (CreditSaver.refused(c, it.w, "chat")) 1 else 0 }
     }
 
     /** Runs [task] on the first worker that accepts it (asking the helper when the worker wants). "" if none could. */

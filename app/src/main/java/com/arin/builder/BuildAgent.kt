@@ -251,6 +251,7 @@ class BuildAgent(
     // after every piece of coding, the owner gets a detailed plain-English explanation of what was made or changed, then
     // suggestions to change, improve or update it, and the offer to build. Only the owner can change this rule.
     suspend fun run(): BuildResult {
+        if (!self && !imported) runCatching { stabilizeDeps() }
         val result = runBuild()
         if (!codedThisRun || result.message == "Stopped.") return result
         val text = runCatching { explainForOwner(result) }.getOrDefault("")
@@ -309,6 +310,41 @@ class BuildAgent(
                 "2. Ask me to add a feature or change the design.\n\n**What next:** " +
                 (if (result.message.startsWith(CODE_READY)) "pick where to build it below, or ask for a change first." else "ask for any change.")
         }
+    }
+
+    // ARIN-PROTECTED: complete-project — owner's strict rule (only the owner can change it): every project must contain all
+    // the files it needs to compile into an APK in Android Studio and on GitHub, with stable library versions that work
+    // with the project's compileSdk, and every resource the code uses.
+    /** Libraries saved earlier with a pre-release version (alpha/beta/RC) are moved to their newest stable release. */
+    private suspend fun stabilizeDeps() {
+        val unstable = deps.filter { d -> !d.startsWith("plugin:") && !stableVersion(d.substringAfterLast(':')) }
+        unstable.forEach { d ->
+            val ksp = d.startsWith("ksp:")
+            val stable = resolveDependency(d.removePrefix("ksp:").substringBeforeLast(':') + ":latest") ?: return@forEach
+            deps.remove(d)
+            deps += if (ksp) "ksp:$stable" else stable
+            depsChanged = true
+            step(BuildEvent.Kind.LIBRARY, "Using the stable ${stable.substringAfterLast(':')} of ${stable.substringBeforeLast(':')} instead of ${d.substringAfterLast(':')} (pre-releases break builds)")
+        }
+    }
+
+    /** Resources the code uses (R.string.x, R.drawable.x…) that no file in the project provides. */
+    private fun missingResources(): List<String> {
+        if (imported || self) return emptyList()
+        val all = files + (ProjectTemplate.files(appName, packageName, deps.toList()) - files.keys)
+        val code = all.filterKeys { it.endsWith(".kt") || it.endsWith(".java") || it.endsWith(".xml") }.values.joinToString("\n")
+        val used = Regex("""(?<![\w.])R\.(string|drawable|mipmap|raw|font|color|dimen|xml|array|plurals)\.(\w+)""").findAll(code)
+            .map { it.groupValues[1] to it.groupValues[2] }.toSet() +
+            Regex("""@(string|drawable|mipmap|raw|font|color|dimen|xml|array|plurals)/(\w+)""").findAll(code)
+                .map { it.groupValues[1] to it.groupValues[2] }.toSet()
+        val values = all.filterKeys { it.contains("/res/values") }.values.joinToString("\n")
+        return used.filter { (type, name) ->
+            when (type) {
+                "string", "color", "dimen", "array", "plurals" -> !Regex("""name="${Regex.escape(name)}"""").containsMatchIn(values) &&
+                    !(type == "color" && all.keys.any { it.contains("/res/color/") && it.substringAfterLast('/').substringBefore('.') == name })
+                else -> all.keys.none { k -> k.contains("/res/$type") && k.substringAfterLast('/').substringBefore('.') == name }
+            }
+        }.map { (t, n) -> "R.$t.$n" }.filter { !it.startsWith("R.mipmap.ic_launcher") }
     }
 
     private var lastChanged = mutableListOf<String>()
@@ -507,6 +543,13 @@ class BuildAgent(
         // In worker mode your model does ALL the checking (the helper never reads the code).
         if (!workerOn() && (helperOn() || com.arin.selffix.CreditSaver.on(context)) && !req.resume && pendingFiles.isNotEmpty()) helperReview()
         if (!req.resume) notes = inspect(notes, "the finished code, before building")
+        // ARIN-PROTECTED: complete-project — before building, every resource the code uses must exist (Arin checks, no AI).
+        missingResources().takeIf { it.isNotEmpty() }?.let { miss ->
+            step(BuildEvent.Kind.STEP, "The code uses ${miss.size} resource(s) that don't exist yet (${miss.take(5).joinToString()}). Adding them before building")
+            notes = apply(ask("These resources are used in the code but no file provides them, so the app would not compile: " +
+                miss.joinToString() + ".\nWrite the missing resource files now (res/values/strings.xml entries in full, vector drawables " +
+                "as XML in res/drawable, etc.), or change the code to not need them. Reply with every file you change, in full."))
+        }
         saveProject(repo, null)
         if (req.stopAfterWriting && !self && !(existing == null && req.zipPath != null) && !req.resume) {
             step(BuildEvent.Kind.DONE, "The code is written (${pendingFiles.size} file(s)). Waiting for you to choose where to build")
@@ -1553,6 +1596,12 @@ class BuildAgent(
         appendLine()
         appendLine("Build errors:")
         appendLine(if (com.arin.selffix.CreditSaver.on(context)) com.arin.selffix.CreditSaver.trimErrors(errors) else errors)
+        if (errors.contains("AarMetadata", true) || errors.contains("compileSdk", true) && errors.contains("depend", true)) {
+            appendLine()
+            appendLine("HOW TO FIX THIS KIND OF ERROR: a library needs a newer compileSdk than this project (compileSdk ${ProjectTemplate.SDK}). Do NOT raise " +
+                "compileSdk. Write that library's DEPENDENCY line again with version latest (Arin then uses its newest STABLE release), " +
+                "or remove it if Compose/material3 already covers it (androidx.compose.material:material is the OLD Material 2: use material3).")
+        }
         if (notes.isNotEmpty()) {
             appendLine()
             appendLine("Notes from the build tool:")
@@ -1704,21 +1753,37 @@ class BuildAgent(
         }.getOrNull()
     }
 
-    /** Checks the library exists; replaces "latest", "+" or a missing version with the newest release. */
+    /** A finished release: not alpha, beta, RC, dev, milestone, EAP or snapshot. */
+    private fun stableVersion(v: String) = !Regex("(?i)(alpha|beta|rc|dev|eap|snapshot|preview|-m\\d|\\.m\\d)").containsMatchIn(v)
+
+    private val versionOrder = Comparator<String> { a, b ->
+        val x = a.split(Regex("[.\\-]")); val y = b.split(Regex("[.\\-]"))
+        for (i in 0 until maxOf(x.size, y.size)) {
+            val p = x.getOrNull(i).orEmpty(); val q = y.getOrNull(i).orEmpty()
+            val c = (p.toIntOrNull() ?: -1).compareTo(q.toIntOrNull() ?: -1).takeIf { it != 0 } ?: p.compareTo(q)
+            if (c != 0) return@Comparator c
+        }
+        0
+    }
+
+    /** Checks the library exists; replaces "latest", "+", a missing version or a pre-release with the newest stable release. */
     private suspend fun resolveDependency(coord: String): String? {
         val parts = coord.trim().split(":")
         if (parts.size < 2) return null
         val (group, artifact) = parts
-        val version = parts.getOrNull(2)?.trim().orEmpty()
+        val version = parts.getOrNull(2)?.trim().orEmpty().let { if (it.isNotEmpty() && !stableVersion(it)) "latest" else it }
         val path = group.replace('.', '/') + "/" + artifact
         for (base in repos) {
             if (version.isNotEmpty() && version != "latest" && !version.contains('+')) {
                 if (httpText("$base/$path/$version/$artifact-$version.pom") != null) return "$group:$artifact:$version"
             }
             val meta = httpText("$base/$path/maven-metadata.xml") ?: continue
-            val latest = Regex("<release>([^<]+)</release>").find(meta)?.groupValues?.get(1)
-                ?: Regex("<latest>([^<]+)</latest>").find(meta)?.groupValues?.get(1)
-                ?: Regex("<version>([^<]+)</version>").findAll(meta).lastOrNull()?.groupValues?.get(1)
+            // ARIN-PROTECTED: complete-project — "latest" means the newest STABLE release (alphas, betas and RCs often need
+            // a newer compileSdk or Gradle than the project has, and break the build: checkDebugAarMetadata).
+            val all = Regex("<version>([^<]+)</version>").findAll(meta).map { it.groupValues[1].trim() }.toList()
+            val latest = all.filter { stableVersion(it) }.maxWithOrNull(versionOrder)
+                ?: Regex("<release>([^<]+)</release>").find(meta)?.groupValues?.get(1)
+                ?: all.lastOrNull()
             if (latest != null) return "$group:$artifact:$latest"
         }
         return null

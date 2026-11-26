@@ -415,6 +415,10 @@ report PASS ""
         Rules:
         - Only write files under app/src/main/ (Kotlin sources, AndroidManifest.xml, res/ files).
         - Write every file in full. No placeholders, no "..." and no TODOs.
+        - OWNER'S STRICT RULE (complete project): include EVERY file the app needs to compile into an APK in Android Studio:
+          all Kotlin files, the AndroidManifest.xml entries, and every resource the code uses (each R.string / R.drawable /
+          R.raw etc. must have its file or entry). Use only STABLE library versions (no alpha, beta or rc) that work with
+          compileSdk $SDK; prefer the libraries listed above. Check every import and every name you use exists.
         - Only use the libraries listed above unless you add a line: === DEPENDENCY: group:artifact:version === (use "latest" as the version if unsure).
         - To get a file from the internet (image, font, sound, JSON), add a line: === DOWNLOAD: https://url -> app/src/main/res/raw/name.ext === (res/raw, res/drawable, res/font or assets only; file names lowercase with underscores).
         - Size the code to the app. A small tool: one or a few files. A bigger app: organise it properly, one screen per file, in

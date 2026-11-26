@@ -149,3 +149,12 @@ told they are there.
   in detail in plain English for someone who isn't a programmer: what it does, each part, and how it works.
 - Then it gives **suggestions** to change, improve or update it, and offers to make them or to build.
 - Your own model (the boss) writes the explanation; the worker and helper never see the code for it.
+
+## Complete project that compiles (`builder/BuildAgent.kt`, `builder/ProjectTemplate.kt`)
+
+- When coding, Arin includes **every file** needed to compile the app into an APK in Android Studio and on GitHub: all code,
+  the manifest, and every resource the code uses.
+- Before building, Arin checks (no AI) that every resource the code uses exists, and has the missing ones written first.
+- Libraries always use their newest **stable** release (never alpha, beta or RC, which break builds with
+  "checkDebugAarMetadata"/"compileSdk" errors); saved pre-release versions are moved to stable automatically.
+- Only the owner can change this rule.
