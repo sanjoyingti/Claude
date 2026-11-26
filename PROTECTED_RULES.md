@@ -121,3 +121,15 @@ Build tab shows it on every build result.
 
 **No one may change or remove this rule — no self-update, model, tool, app or assistant (including Claude) — unless
 the owner says so directly.** The GitHub build refuses to make an APK if it is missing.
+
+## 7. Every task stays in its own tab (`selffix/TabIsolation.kt`)
+
+Set by the owner. Each tab (each chat, Reverse engineering, Rebuild, Build, Arin Update, Claude Code…) follows ONLY the
+task the owner gave in that tab:
+
+- Other chats are not listed or searched, unless the owner's own message in that tab asks for an earlier chat.
+- Memory keeps only lasting facts and preferences about the owner — never tasks, apps or projects.
+- Every chat has its own model session; one chat never reuses another chat's session.
+- Every model is told: never continue or mention a task from another tab.
+
+No self-update, model, tool or app may remove or weaken this without the owner's approval.

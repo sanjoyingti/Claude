@@ -462,6 +462,7 @@ object Prompt {
         append(runCatching { com.arin.selffix.Worker.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: worker-mode
         append(runCatching { com.arin.selffix.TeamWork.instructions(com.arin.ArinApp.instance) }.getOrDefault("")) // ARIN-PROTECTED: team-work in every tab
         append(com.arin.selffix.TaskSummary.RULE).append('\n') // ARIN-PROTECTED: task-summary in every tab
+        append(com.arin.selffix.TabIsolation.RULE).append('\n') // ARIN-PROTECTED: tab-isolation
         append(com.arin.selffix.AutoFix.RULE_GENERAL).append("\n\n") // ARIN-PROTECTED: research-first auto-fix rule for every model
 
         if (!need("build")) {
@@ -507,6 +508,7 @@ object Prompt {
         if (memoryOn) {
             append("Memory: when the person tells you a lasting fact about themselves or a preference for how you should ")
             append("answer, add <remember>the fact, in a short sentence</remember> at the end of your reply. ")
+            append(com.arin.selffix.TabIsolation.MEMORY_RULE) // ARIN-PROTECTED: tab-isolation
             append("Never remember passwords, card or ID numbers, or health, money or other sensitive details. ")
             append("Don't mention this tag in your answer.\n")
             if (memories.isNotEmpty()) {

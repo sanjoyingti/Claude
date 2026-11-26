@@ -304,7 +304,7 @@ object Harness {
         val cmd = "mkdir -p ${s.dir} $work; cd $work; rm -f ${s.dir}/in ${s.dir}/out.jsonl ${s.dir}/pid; mkfifo ${s.dir}/in; " +
             "setsid bash -c \"exec 3<>${s.dir}/in; echo \\$\\$ > ${s.dir}/pid; " +
             "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " + brainEnv(s, token) +
-            "export HOME=$BASE/home DISABLE_AUTOUPDATER=1 " +
+            "export HOME=$BASE/home DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 " + // ARIN-PROTECTED: tab-isolation
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 " +
             "BASH_MAX_OUTPUT_LENGTH=8000 MAX_MCP_OUTPUT_TOKENS=6000 CLAUDE_CODE_MAX_RETRIES=2 API_TIMEOUT_MS=180000; $ghEnv" +
             "claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages " +

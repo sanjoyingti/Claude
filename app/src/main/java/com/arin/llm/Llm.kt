@@ -37,7 +37,9 @@ object Llm {
      */
     @Volatile var thinkLess: Boolean = false
 
-    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null, cache: Boolean = false, endpoint: CustomApi.Endpoint? = null): Flow<Delta> {
+    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null, cache: Boolean = false, endpoint: CustomApi.Endpoint? = null, conv: String = ""): Flow<Delta> {
+        // ARIN-PROTECTED: tab-isolation — each chat gets its own Claude Code session; one chat never reuses another's.
+        val purpose = if (conv.isBlank()) "chat" else "chat:$conv"
         if (provider.needsKey && key.isBlank()) {
             throw LlmException("Add your ${provider.label} API key in Settings, or switch to Free models.")
         }
@@ -49,7 +51,7 @@ object Llm {
             Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, system, turns)
             Provider.Claude -> anthropicStream("$ANTHROPIC_BASE/messages", anthropicHeaders(key), key, model, system, turns, maxTokens, cache)
             // ARIN-PROTECTED: claude-harness — one running Claude Code session per conversation (cached, low usage).
-            Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns)
+            Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns, purpose = purpose)
             Provider.Custom -> (endpoint ?: CustomApi.current()).let { ep ->
                 val direct0 = when (ep.format) {
                     ApiFormat.OpenAI -> lessThinking { low -> withUsage(ep.chatUrl()) { u -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low, usage = u) } }
@@ -69,7 +71,7 @@ object Llm {
                 else kotlinx.coroutines.flow.flow {
                     var started = false
                     try {
-                        com.arin.claudecode.Harness.stream(model, system, turns,
+                        com.arin.claudecode.Harness.stream(model, system, turns, purpose = purpose,
                             custom = com.arin.claudecode.Harness.Custom(ep.baseUrl, key, ep.format == ApiFormat.Anthropic))
                             .collect { started = true; emit(it) }
                     } catch (e: Exception) {

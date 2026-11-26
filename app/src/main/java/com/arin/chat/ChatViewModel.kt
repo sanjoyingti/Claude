@@ -2979,7 +2979,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var system = if (offline) Prompt.localSystem(memoryList, aboutYou, howToAnswer, replyStyle) else Prompt.system(
                     searchFlag, memoryFlag, memoryList, project, useTerminal, com.arin.mcp.Mcp.promptSection(activeNames, compact = saveCredits || com.arin.selffix.CreditSaver.on(getApplication())),
                     terminalInfo = com.arin.terminal.Shell.describe(app),
-                    pastChats = if (memoryFlag) withContext(Dispatchers.IO) { runCatching { store.recentTitles(run.chat) }.getOrDefault("") } else "",
+                    // ARIN-PROTECTED: tab-isolation — other chats are listed only when the owner asks for an earlier chat here.
+                    pastChats = if (memoryFlag && com.arin.selffix.TabIsolation.asksPastChats(userSaid)) withContext(Dispatchers.IO) { runCatching { store.recentTitles(run.chat) }.getOrDefault("") } else "",
                     aboutPerson = aboutYou,
                     howToAnswer = howToAnswer,
                     style = replyStyle,
@@ -3109,7 +3110,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
-                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint).collect { d ->
+                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
                                         val nowMs = System.currentTimeMillis()
@@ -3409,7 +3410,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         continue
                     }
                     // Past chats: read what was said before.
-                    val recallQuery = if (memoryFlag && recalls < 4) Prompt.recall(full) else null
+                    // ARIN-PROTECTED: tab-isolation — other chats are read only when the owner's message here asks for them.
+                    val recallQuery = if (memoryFlag && recalls < 4 && com.arin.selffix.TabIsolation.asksPastChats(userSaid)) Prompt.recall(full) else null
+                    // ARIN-PROTECTED: tab-isolation — asked to read other chats without the owner asking: refused, stay on this tab's task.
+                    if (recallQuery == null && memoryFlag && recalls < 4 && Prompt.recall(full) != null) {
+                        recalls++
+                        turns += Turn(false, full)
+                        turns += Turn(true, "[Arin: other chats are not read here — each tab keeps only its own task. Continue with " +
+                            "ONLY the task the person gave in this conversation.]")
+                        run.liveText = ""
+                        continue
+                    }
                     if (recallQuery != null) {
                         recalls++
                         run.liveText = ""
