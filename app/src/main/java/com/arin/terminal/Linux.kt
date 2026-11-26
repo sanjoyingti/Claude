@@ -138,6 +138,7 @@ object Linux {
      */
     suspend fun installDevTools(context: Context, log: (String) -> Unit): Termux.Result {
         log("Installing Java 21, Kotlin $KOTLINC_VERSION and Gradle $GRADLE_VERSION…")
+        configure(context) // also writes the apt repair script this step runs first
         val script = """
             [ -f $DPKG_REPAIR_SCRIPT ] && bash $DPKG_REPAIR_SCRIPT
             set -e
@@ -549,7 +550,8 @@ object Linux {
         val root = rootfs(context)
         // Installs from older Arin versions get the newer fixes too.
         if (File(root, "etc/profile.d/arin.sh").let { !it.exists() || !it.readText().contains("COLUMNS") } ||
-            !File(root, ANDROID_TOOLS_SCRIPT.removePrefix("/")).exists()
+            !File(root, ANDROID_TOOLS_SCRIPT.removePrefix("/")).exists() ||
+            !File(root, DPKG_REPAIR_SCRIPT.removePrefix("/")).exists()
         ) runCatching { configure(context) }
         val id = UUID.randomUUID().toString().replace("-", "").take(12)
         val done = "__ARIN_DONE_${id}__"
