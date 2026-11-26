@@ -2989,8 +2989,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 .take(40).joinToString("\n").take(4_000)
                             val bossStep = turns.lastOrNull { !it.fromUser }?.text.orEmpty().take(3_000)
                             val guide = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question =
-                                "I (the boss model) ran this step:\n$bossStep\n\nIt failed with:\n$errLines\n\n" +
-                                    "Find the real cause and give me the exact fix (commands, code or settings) so I can carry on.") { run.status = it }
+                                "STEP:\n$bossStep\nERROR:\n$errLines\nReturn the fixed step or patched code only.") { run.status = it }
                             run.status = null
                             if (guide.isNotBlank() && !guide.contains("NO_HELP_NEEDED") && !guide.contains("couldn't be reached") && !guide.contains("isn't connected") && !guide.contains("switched off")) {
                                 val i = turns.lastIndex

@@ -323,8 +323,7 @@ object ArinUpdateChat {
                     val errLines = errorText.lines().filter { Regex("(?i)(FAILED|error|exception|not found|denied|couldn't|cannot|unable|exit code|warning|at )").containsMatchIn(it) }
                         .take(40).joinToString("\n").take(4_000)
                     val bossStep = turns.lastOrNull { it.role == Role.ASSISTANT }?.text.orEmpty().take(3_000)
-                    val q = "I (the developer model, the boss) ran this step while updating the Arin app:\n$bossStep\n\nIt failed with:\n$errLines\n\n" +
-                        "Find the real cause and give me the exact fix (commands, code or settings) so I can carry on. Be brief."
+                    val q = "STEP:\n$bossStep\nERROR:\n$errLines\nReturn the fixed step or patched code only."
                     val a = ClaudeHelper.ask(app, q, source = "arin-update") { status = it }
                     return a.takeIf { it.isNotBlank() && !it.contains("NO_HELP_NEEDED") && !it.contains("couldn't be reached") && !it.contains("isn't connected") && !it.contains("switched off") }
                 }
