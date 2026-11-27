@@ -92,6 +92,8 @@ jobs:
           grep -q "ARIN-PROTECTED: git-in-repo" $D/claudecode/Harness.kt
           grep -q "ARIN-PROTECTED: syntax-guard" $D/builder/KotlinSyntax.kt
           grep -q "ARIN-PROTECTED: syntax-guard" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: import-guard" $D/builder/KotlinImports.kt
+          grep -q "ARIN-PROTECTED: import-guard" $D/builder/BuildAgent.kt
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"

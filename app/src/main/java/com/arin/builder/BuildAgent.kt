@@ -750,6 +750,7 @@ class BuildAgent(
           } else {
             if (!self) runCatching { normalizeToolchain() }
             if (!self) runCatching { syntaxGuard() }
+            if (!self) runCatching { importGuard() }
             if (depsChanged) {
                 val gradle = ProjectTemplate.files(appName, packageName, deps.toList())
                 pendingFiles["app/build.gradle.kts"] = gradle.getValue("app/build.gradle.kts").toByteArray()
@@ -820,7 +821,7 @@ class BuildAgent(
                             val web = researchFirst(query, out.log) // ARIN-PROTECTED: research the internet before every fix
                             val count = out.log.lines().count { it.startsWith("e: ") || it.contains("error:", true) }.coerceAtLeast(1)
                             step(BuildEvent.Kind.ERROR, "Phone build failed with $count error${if (count == 1) "" else "s"}: ${plainError(out.log)}. Fixing on the phone (${com.arin.selffix.AutoFix.roundText(localRounds, if (localOnly) maxFixRounds else baseFixRounds)})")
-                            notes = if (workerOn()) privateFix(out.log, notes, web) else apply(ask(fixPrompt(out.log, notes, web)))
+                            notes = if (quickFix(out.log)) notes else if (workerOn()) privateFix(out.log, notes, web) else apply(ask(fixPrompt(out.log, notes, web)))
                             continue
                         }
                         if (localOnly) {
@@ -1040,7 +1041,9 @@ class BuildAgent(
             // ARIN-PROTECTED: whole-problem-consultation — your model sends the helper (Claude) ONE complete technical package
             // (the full error report, the code at every error site, versions, libraries, what was already tried) and asks for
             // a root-cause diagnosis and a coherent fix. A refusal is noted and work goes on; the same request is never resent.
-            val consult = consultHelper(errors, same)
+            // Arin's own fixes first (brackets, imports — no AI): when they cover every error, no model is asked.
+            val quick = quickFix(errors)
+            val consult = if (quick) "" else consultHelper(errors, same)
             val known = mem?.knownAbout(sig).orEmpty()
             if (known.contains("WAS FIXED BEFORE")) step(BuildEvent.Kind.DONE, "This project hit this exact error before — reusing the fix that worked then")
             val impact = relatedFiles(errorFiles(errors)).takeIf { it.isNotEmpty() }?.let {
@@ -1048,7 +1051,7 @@ class BuildAgent(
             }.orEmpty()
             val guide = listOf(known, impact, web, consult).filter { it.isNotBlank() }.joinToString("\n\n")
             val before = files.toMap()
-            notes = if (workerOn() && same < 2) privateFix(errors, notes, guide) else apply(ask(fixPrompt(errors, notes, guide)))
+            notes = if (quick) notes else if (workerOn() && same < 2) privateFix(errors, notes, guide) else apply(ask(fixPrompt(errors, notes, guide)))
             // Remember what this round changed, so the next round doesn't repeat a fix that didn't work.
             val changedNow = files.keys.filter { files[it] != before[it] }
             tried += "Round $round (" + plainError(errors).take(80) + "): changed " +
@@ -1525,6 +1528,55 @@ class BuildAgent(
             text.indexOf("\n\n", eq).let { if (it < 0) text.length else it }
         } else return null
         return Piece(path, m.range.first, end, text.substring(m.range.first, end), need)
+    }
+
+    /**
+     * ARIN-PROTECTED: import-guard — adds forgotten imports and the Material 3 opt-in (no AI). With [errors], also the
+     * names the compiler reported unresolved. Returns how many files were changed.
+     */
+    private fun importGuard(errors: String = ""): Int {
+        val missing = KotlinImports.unresolved(errors)
+        val targets = (pendingFiles.keys + missing.keys.mapNotNull { f -> files.keys.firstOrNull { it.endsWith("/$f") || it == f } })
+            .filter { it.endsWith(".kt") && files[it] != null }.distinct()
+        if (targets.isEmpty()) return 0
+        val own = KotlinImports.declared(files)
+        var changed = 0
+        for (p in targets) {
+            val t = files[p] ?: continue
+            val must = missing[p.substringAfterLast('/')].orEmpty().filter { KotlinImports.knows(it) && it !in own }.toSet()
+            val (out, notes) = runCatching { KotlinImports.fix(p, t, own, must) }.getOrElse { t to emptyList() }
+            if (out == t) continue
+            files[p] = out; pendingFiles[p] = out.toByteArray(); changed++
+            step(BuildEvent.Kind.FILE, "Arin fixed ${p.substringAfterLast('/')} itself: " + notes.joinToString("; ").take(200) + " (no AI needed)")
+            ledger("Imports: ${p.substringAfterLast('/')}", "FIXED by Arin — " + notes.joinToString("; ").take(150))
+        }
+        return changed
+    }
+
+    /**
+     * Fixes Arin can make by itself before any model is asked: broken brackets (syntax errors) and missing imports.
+     * True when that covers every reported error, so the next build goes ahead with no AI credit used.
+     */
+    private suspend fun quickFix(errors: String): Boolean {
+        if (self) return false
+        val errLines = errors.lines().filter { it.startsWith("e: ") }
+        var changed = 0
+        if (KotlinSyntax.isSyntaxError(errors)) {
+            val broken = errorFiles(errors).filter { it.endsWith(".kt") || it.endsWith(".kts") }.toSet()
+            changed += runCatching { syntaxGuard(force = broken, errors = errors) }.getOrDefault(0)
+            if (changed > 0) return true // everything after the first syntax error is a follow-on error
+        }
+        changed += runCatching { importGuard(errors) }.getOrDefault(0)
+        val allImports = errLines.isNotEmpty() && errLines.all { l ->
+            Regex("""Unresolved reference:?\s*'?`?(\w+)""").find(l)?.groupValues?.get(1)?.let { KotlinImports.knows(it) } == true ||
+                l.contains("ExperimentalMaterial3Api") || l.contains("This material API is experimental") ||
+                l.contains("getValue") || l.contains("setValue")
+        }
+        if (changed > 0 && allImports) {
+            step(BuildEvent.Kind.DONE, "Arin fixed all ${errLines.size} error(s) itself (missing imports) — building again, no AI used")
+            return true
+        }
+        return false
     }
 
     /** Files a rejected piece-fix left for a whole-file repair. */
