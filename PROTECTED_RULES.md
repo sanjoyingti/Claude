@@ -208,3 +208,15 @@ told they are there.
 - When the same error comes back: Arin fixes build-tool versions by itself (KSP, library versions), searches with new
   words, sends every file in full, and tells the model to change method completely (never by dropping a feature).
 - Only the owner can change this rule.
+
+## Engineering completion engine (`builder/BuildAgent.kt`, `selffix/TaskSummary.kt`)
+
+- Every build error: your main model sends the helper (Claude) ONE whole-problem consultation — the full error report with
+  the root-cause line, the code at every error site, toolchain versions, libraries, project files and what was already
+  tried — and asks for root cause, exact changes, compatibility, regressions and a test. The fix is then applied, rebuilt
+  and the new error compared with the old one ("Progress: the previous error is fixed").
+- If the helper declines or can't answer, that is noted, nothing useful is lost, the same request is never sent again,
+  and work carries on (web research + worker). No request is ever disguised to get around a refusal.
+- A task ledger (COMPLETED / IN PROGRESS / BLOCKED / TESTING / VERIFIED) is shown in the steps and with every result.
+- No build or test is ever reported as successful unless it really was.
+- Only the owner can change this rule.

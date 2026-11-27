@@ -27,7 +27,19 @@ object TaskSummary {
         "any other way (terminal, rebuild, phone) must go through it before you share it. If it wasn't tested, say so and " +
         "offer to build and test it on GitHub — don't share the file or link.\n"
 
-    const val RULE = EXACT_REQUEST + TESTED_LINKS + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
+    /** ARIN-PROTECTED: whole-problem-consultation — how every model works through problems (owner's rule). */
+    const val ENGINEERING = "OWNER'S STRICT RULE — ENGINEERING (only the owner can change it): make every reasonable effort to " +
+        "complete what the owner asked. A failed build, a missing library, a failed patch, a repeated error or a helper that " +
+        "declines is an obstacle to investigate, not a reason to stop. For every error: find the FIRST root-cause error, the " +
+        "files it involves, the libraries and versions; consult the helper with the WHOLE problem in one request (full error " +
+        "report, code at the error sites, versions, what was tried) and ask for root cause, exact changes, compatibility, " +
+        "regressions and a test; evaluate its answer, apply a verified fix, rebuild and compare the new error with the old. If " +
+        "the same error returns, widen the investigation — never repeat the same patch. If the helper declines, note why, keep " +
+        "what was useful, never resend the same request and never disguise or reframe a request to get around a refusal; carry " +
+        "on with what is allowed. Never claim a build or test succeeded unless it really did. Keep a ledger of what is " +
+        "COMPLETED, IN PROGRESS, BLOCKED, ALTERNATIVE IMPLEMENTATION, TESTING and VERIFIED.\n"
+
+    const val RULE = EXACT_REQUEST + TESTED_LINKS + ENGINEERING + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
         "where you ran commands, used tools, changed files or built something), END your final reply with two short " +
         "sections in plain English:\n**Summary — what I did:** the main things done and their result (and anything that " +
         "failed).\n**What to do next:** the next step(s) for the owner.\n" +

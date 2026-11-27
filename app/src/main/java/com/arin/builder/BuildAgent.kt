@@ -257,9 +257,11 @@ class BuildAgent(
     suspend fun run(): BuildResult {
         if (!self && !imported) runCatching { stabilizeDeps() }
         val result = runBuild()
-        if (!codedThisRun || result.message == "Stopped.") return result
+        val withLedger = if (ledgerItems.isEmpty() || result.message.startsWith(CODE_READY)) result
+            else result.copy(message = result.message + "\n\n" + ledgerText())
+        if (!codedThisRun || result.message == "Stopped.") return withLedger
         val text = runCatching { explainForOwner(result) }.getOrDefault("")
-        return if (text.isBlank()) result else result.copy(explanation = text)
+        return if (text.isBlank()) withLedger else withLedger.copy(explanation = text)
     }
 
     /**
@@ -712,6 +714,7 @@ class BuildAgent(
                 }
             }
             onProgress(null, "")
+            ledger("Code written and uploaded to GitHub", "COMPLETED")
             step(BuildEvent.Kind.DONE, "Upload finished: $total file${if (total == 1) "" else "s"} (${mb(pendingFiles.values.sumOf { (it?.size ?: 0).toLong() } + pendingDisk.values.sumOf { it.length() })})")
             pendingFiles.clear()
             pendingDisk.values.forEach { it.delete() }
@@ -745,6 +748,7 @@ class BuildAgent(
                 )
 
             var crashLog: String? = null
+            ledger("Build on GitHub", if (run.conclusion == "success") "COMPLETED" else "IN PROGRESS — fixing errors")
             if (run.conclusion == "success") {
                 step(BuildEvent.Kind.STEP, "Build succeeded. Getting the download link")
                 // Only hand over a link once the APK file is really there.
@@ -765,6 +769,7 @@ class BuildAgent(
                 var testNote = ""
                 var shot: String? = null
                 if (testing) {
+                    ledger("Emulator test (open + tap around)", "TESTING")
                     val tag = if (self) "$SELF_TAG_PREFIX${run.number}" else "build-${run.number}"
                     val report = gh.releaseText(repo, tag, "arin-test-report.txt")
                     shot = gh.releaseAssetLink(repo, tag, "arin-test-screen.png")
@@ -774,6 +779,8 @@ class BuildAgent(
                         "PASS" -> {
                             testNote = "Tested on an Android emulator: it opens, and tapping around didn't crash it."
                             step(BuildEvent.Kind.DONE, testNote)
+                            ledger("Emulator test (open + tap around)", "VERIFIED")
+                            ledger("APK handed over", "COMPLETED")
                         }
                         "CRASH", "NOT_RUNNING", "INSTALL_FAILED" -> {
                             val plain = when (result) {
@@ -785,6 +792,7 @@ class BuildAgent(
                                 crashLog = "RUNTIME PROBLEM (the app builds, but fails when it runs on an Android emulator).\n" +
                                     "ERROR: $plain\n\nTest report and crash log:\n" + report.orEmpty().take(8_000)
                                 step(BuildEvent.Kind.ERROR, "$plain. Fixing it")
+                                ledger("Emulator test (open + tap around)", "IN PROGRESS — fixing a crash")
                             } else {
                                 testNote = "⚠️ $plain. The APK is ready, but say \"fix the crash\" to keep fixing it."
                                 step(BuildEvent.Kind.ERROR, testNote)
@@ -793,6 +801,7 @@ class BuildAgent(
                         else -> {
                             // ARIN-PROTECTED: test-before-handover — not tested = not handed over.
                             step(BuildEvent.Kind.ERROR, "The app built, but GitHub's Android emulator couldn't run the crash test this time")
+                            ledger("Emulator test (open + tap around)", "BLOCKED — the emulator couldn't run; say \"try again\"")
                             saveProject(repo, apk)
                             return BuildResult(
                                 false,
@@ -861,8 +870,21 @@ class BuildAgent(
             if (crashLog != null) step(BuildEvent.Kind.ERROR, "Fixing the crash (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)}), then building and testing again")
             else step(BuildEvent.Kind.ERROR, "Build failed with $count error${if (count == 1) "" else "s"}: ${plainError(errors)}. Fixing (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)})")
             if (same >= 3) step(BuildEvent.Kind.THINKING, "The same error came back $same times — trying a completely different method this time")
+            // Fingerprint compared with last round's: progress, or the same problem back again?
+            lastFingerprint?.let { prev ->
+                if (prev != sig) {
+                    ledger("Fixing build errors", "IN PROGRESS")
+                    step(BuildEvent.Kind.DONE, "Progress: the previous error is fixed — now a different one: ${plainError(errors).take(100)}")
+                }
+            }
+            lastFingerprint = sig
+            // ARIN-PROTECTED: whole-problem-consultation — your model sends the helper (Claude) ONE complete technical package
+            // (the full error report, the code at every error site, versions, libraries, what was already tried) and asks for
+            // a root-cause diagnosis and a coherent fix. A refusal is noted and work goes on; the same request is never resent.
+            val consult = consultHelper(errors, same)
+            val guide = listOf(web, consult).filter { it.isNotBlank() }.joinToString("\n\n")
             val before = files.toMap()
-            notes = if (workerOn() && same < 6) privateFix(errors, notes, web) else apply(ask(fixPrompt(errors, notes, web)))
+            notes = if (workerOn() && same < 2) privateFix(errors, notes, guide) else apply(ask(fixPrompt(errors, notes, guide)))
             // Remember what this round changed, so the next round doesn't repeat a fix that didn't work.
             val changedNow = files.keys.filter { files[it] != before[it] }
             tried += "Round $round (" + plainError(errors).take(80) + "): changed " +
@@ -1659,6 +1681,82 @@ class BuildAgent(
             .replace(Regex("""file:///\S+?:\d+:\d+\s*"""), "")
             .replace(Regex("""(/[\w.@+-]+){2,}"""), " ")
             .replace(Regex("""\s+"""), " ").trim().take(150)
+    }
+
+    private var lastFingerprint: String? = null
+    /** Consultations the helper declined or couldn't answer (by error fingerprint): never sent again. */
+    private val declined = mutableSetOf<String>()
+
+    /**
+     * The task ledger (COMPLETED / IN PROGRESS / BLOCKED / ALTERNATIVE IMPLEMENTATION / TESTING / VERIFIED), shown in the
+     * steps and with the result, so the owner sees honestly where everything stands.
+     */
+    private val ledgerItems = linkedMapOf<String, String>()
+    private fun ledger(item: String, status: String) {
+        if (ledgerItems[item] == status) return
+        ledgerItems[item] = status
+        step(BuildEvent.Kind.STEP, "Ledger · $item: $status")
+    }
+    fun ledgerText(): String = if (ledgerItems.isEmpty()) "" else
+        "**Task ledger**\n" + ledgerItems.entries.joinToString("\n") { (k, v) -> "- $k — $v" }
+
+    /**
+     * One whole-problem consultation with the helper: the complete error report and everything needed to judge it.
+     * Returns its diagnosis for the fixer, or "" (no helper, declined, or nothing useful).
+     */
+    private suspend fun consultHelper(errors: String, same: Int): String {
+        val ctx = context ?: return ""
+        if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) == null) return ""
+        val fp = com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) } + "#" + (same >= 3)
+        if (fp in declined) return ""
+        val h = com.arin.selffix.ClaudeHelper.helper(ctx)
+        step(BuildEvent.Kind.THINKING, "${bossName()} is sending ${h.name} the whole problem: the full error report, the code at each error, versions and what was tried")
+        val pkg = buildString {
+            appendLine("You are a senior Android/Kotlin build engineer, consulted on a failing Gradle build of an Android app.")
+            appendLine("APP: " + (if (self) "Arin (an Android AI assistant app) — an update to it" else "$appName ($packageName)"))
+            appendLine("WHAT IT MUST DO (summary): " + (if (self) req.description else requirements).take(1_500))
+            appendLine("TOOLCHAIN: Kotlin ${ProjectTemplate.KOTLIN}, Gradle ${ProjectTemplate.GRADLE}, JDK ${ProjectTemplate.JDK}, " +
+                "compileSdk/targetSdk ${ProjectTemplate.SDK}, Compose BOM ${ProjectTemplate.COMPOSE_BOM}")
+            if (deps.isNotEmpty()) appendLine("EXTRA LIBRARIES/PLUGINS: " + deps.joinToString())
+            appendLine("FILES IN THE PROJECT: " + files.keys.filter { !it.startsWith(".github") }.take(80).joinToString())
+            appendLine()
+            appendLine("FULL ERROR REPORT (root cause first):")
+            appendLine("Root-cause line: " + realErrorLine(errors))
+            appendLine(errors.take(12_000))
+            appendLine()
+            appendLine("CODE AT EACH ERROR SITE (numbered lines):")
+            appendLine(errorRegions(errors).take(10_000))
+            if (tried.isNotEmpty()) {
+                appendLine()
+                appendLine("ALREADY TRIED (did not work — this error came back ${same} time(s)):")
+                tried.takeLast(8).forEach { appendLine("- $it") }
+            }
+            appendLine()
+            appendLine("Give ONE coherent engineering solution for the whole problem (not piece by piece):")
+            appendLine("1. ROOT CAUSE — what is really wrong and why (all related errors).")
+            appendLine("2. REQUIRED CHANGES — the exact edits, file by file (code for the changed parts; Gradle/library/version lines in full).")
+            appendLine("3. COMPATIBILITY — versions and APIs that must match.")
+            appendLine("4. REGRESSIONS — what else the change could break, and how to avoid it.")
+            appendLine("5. TEST — how to confirm it's fixed.")
+            appendLine("Keep every feature the app must have. If part of this is something you can't help with, say which part and why, " +
+                "help with the rest, and suggest a legitimate alternative.")
+        }
+        val answer = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(300_000) {
+                com.arin.selffix.ClaudeHelper.ask(ctx, pkg, helperTab, hard = true) { s -> step(BuildEvent.Kind.THINKING, s) }
+            }
+        }.getOrNull().orEmpty().trim()
+        val useless = answer.length < 80 || answer.contains("isn't connected", true) || answer.contains("switched off", true)
+        if (useless || com.arin.selffix.CreditSaver.isRefusal(answer.take(600))) {
+            declined += fp
+            val why = if (useless) "no answer" else answer.lines().firstOrNull { it.isNotBlank() }.orEmpty().take(140)
+            step(BuildEvent.Kind.THINKING, "${h.name} couldn't help with this one ($why) — ${bossName()} carries on without it, and won't ask the same again")
+            ledger("Helper consultation", "BLOCKED for this error — carrying on with web research and the worker")
+            // Keep anything useful from a partial answer.
+            return if (!useless && answer.length > 400) "HELPER'S PARTIAL ANSWER (it declined some of it — use what is useful):\n" + answer.take(6_000) else ""
+        }
+        step(BuildEvent.Kind.DONE, "${h.name} sent a root-cause diagnosis and a fix plan")
+        return "CONSULTANT'S WHOLE-PROBLEM DIAGNOSIS (${h.name}). Evaluate it against the code, then apply the correct fix:\n" + answer.take(10_000)
     }
 
     /** How many times each error has come back (by signature), and what each fix round changed. */
