@@ -46,8 +46,7 @@ object Llm {
                /** A big problem or puzzle: the main model thinks fully, even in worker mode (smart thinking). */
                hard: Boolean = false): Flow<Delta> {
         // ARIN-PROTECTED: tab-isolation — each chat gets its own Claude Code session; one chat never reuses another's.
-        // A call without its own conversation id gets a one-off session (strict-tab-scope), never a shared "chat" one.
-        val purpose = if (conv.isBlank()) "chat:oneoff-" + System.nanoTime() else "chat:$conv"
+        val purpose = if (conv.isBlank()) "chat:oneoff-" + System.nanoTime() else "chat:$conv" // no conv id: a one-off session, never a shared one
         if (provider.needsKey && key.isBlank()) {
             throw LlmException("Add your ${provider.label} API key in Settings, or switch to Free models.")
         }
