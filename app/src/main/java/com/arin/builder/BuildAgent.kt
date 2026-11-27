@@ -749,6 +749,7 @@ class BuildAgent(
             sha = resumeSha
           } else {
             if (!self) runCatching { normalizeToolchain() }
+            if (!self) runCatching { syntaxGuard() }
             if (depsChanged) {
                 val gradle = ProjectTemplate.files(appName, packageName, deps.toList())
                 pendingFiles["app/build.gradle.kts"] = gradle.getValue("app/build.gradle.kts").toByteArray()
@@ -1394,6 +1395,13 @@ class BuildAgent(
         // ARIN-PROTECTED: boss-minimum-credit — Arin itself (no AI) cuts the code around every error site; the helper's
         // whole-problem diagnosis says what to change; the worker fixes each piece. Your model is only asked when Arin
         // can't find an error site. The rebuild checks the fix (no extra inspection by your model).
+        // ARIN-PROTECTED: syntax-guard — a typing mistake (missing/extra bracket, text left in the code) breaks the
+        // whole file and causes dozens of follow-on errors: every broken file is repaired whole, all in one go, instead
+        // of patching cut-out pieces (which is how brackets got lost before).
+        if (!self && KotlinSyntax.isSyntaxError(errors)) {
+            val broken = errorFiles(errors).mapNotNull { f -> files.keys.firstOrNull { it == f || it.endsWith("/" + f.substringAfterLast('/')) } }.filter { it.endsWith(".kt") || it.endsWith(".kts") }.toSet()
+            if (syntaxGuard(force = broken, errors = errors) > 0) return notesIn
+        }
         val diagnosis = web.substringAfter("CONSULTANT'S WHOLE-PROBLEM DIAGNOSIS", "").let { if (it.isBlank()) "" else it.take(3_500) }
         val sites = Regex("([\\w./-]+\\.(?:kt|java|xml|kts))[:(](\\d+)").findAll(errors)
             .map { it.groupValues[1] to it.groupValues[2].toInt() }.distinct().toList()
@@ -1519,13 +1527,83 @@ class BuildAgent(
         return Piece(path, m.range.first, end, text.substring(m.range.first, end), need)
     }
 
+    /** Files a rejected piece-fix left for a whole-file repair. */
+    private val syntaxBroken = linkedSetOf<String>()
+
+    /**
+     * ARIN-PROTECTED: syntax-guard — before every build: the Kotlin files changed in this build are checked (no AI);
+     * fences/prose and stray or missing closing braces are repaired by Arin itself. Files it can't repair (and files
+     * the compiler reported a syntax error in: [force]) are rewritten whole, all in one batch, and each rewrite is
+     * checked before it is used. Returns how many files were changed.
+     */
+    private suspend fun syntaxGuard(force: Set<String> = emptySet(), errors: String = ""): Int {
+        val candidates = (pendingFiles.keys + force + syntaxBroken).filter { (it.endsWith(".kt") || it.endsWith(".kts")) && files[it] != null }.distinct()
+        var changed = 0
+        val rewrite = mutableListOf<Pair<String, String>>() // path to the problem
+        for (p in candidates) {
+            val t = files[p] ?: continue
+            val r = KotlinSyntax.scan(t)
+            val fenced = Regex("""(?m)^\s*```""").containsMatchIn(t)
+            if (r.ok && !fenced && p !in force && p !in syntaxBroken) continue
+            val fixed = if (!r.ok || fenced) KotlinSyntax.repair(p, t) else null
+            if (fixed != null && fixed != t) {
+                files[p] = fixed; pendingFiles[p] = fixed.toByteArray(); changed++
+                step(BuildEvent.Kind.FILE, "Arin repaired a typing mistake in ${p.substringAfterLast('/')} (${if (fenced) "text/fences left in the code, " else ""}${r.describe()}) — no AI needed")
+                ledger("Syntax check: ${p.substringAfterLast('/')}", "FIXED by Arin (${r.describe()})")
+                syntaxBroken -= p; continue
+            }
+            if (fixed == null && !r.ok || p in force || p in syntaxBroken) rewrite += p to (if (!r.ok) r.describe() else "the compiler reports a syntax error")
+        }
+        if (rewrite.isEmpty()) return changed
+        val ctx = context
+        step(BuildEvent.Kind.THINKING, "Repairing ${rewrite.size} file(s) whole in one go: " + rewrite.joinToString { it.first.substringAfterLast('/') })
+        for ((p, problem) in rewrite.take(4)) {
+            val t = files[p] ?: continue
+            val errLines = errors.lines().filter { it.contains(p.substringAfterLast('/')) }.take(6).joinToString("\n")
+            val task = "FILE: $p\nPROBLEM: the file's structure is broken: $problem. " +
+                (if (errLines.isNotBlank()) "Compiler (the FIRST error is the real one; the rest follow from it):\n$errLines\n" else "") +
+                "Fix every bracket, brace, parenthesis, quote and misplaced line so the whole file compiles. Keep every feature " +
+                "and all other code exactly as it is.\nWHOLE FILE (numbered for you; don't include the numbers):\n" +
+                t.lines().mapIndexed { i, l -> "${i + 1}: $l" }.joinToString("\n") +
+                "\nReturn ONLY the COMPLETE corrected file, every line from the first to the last, no explanation, no ``` fences."
+            val out = if (ctx != null && workerOn()) com.arin.selffix.Worker.run(ctx, task, bossName()) { _, s -> step(BuildEvent.Kind.THINKING, s) }.second else ask(task)
+            val code = KotlinSyntax.clean(p, out.replace(Regex("(?s)^.*?```[\\w-]*\n"), "").substringBeforeLast("```").let { if (it.isBlank()) out else it })
+                .lines().joinToString("\n") { it.replace(Regex("^\\d+: "), "") }
+            val r = KotlinSyntax.scan(code)
+            val shrunk = code.length < t.length * 0.6
+            if (code.isBlank() || shrunk || !r.ok) {
+                step(BuildEvent.Kind.THINKING, "The rewrite of ${p.substringAfterLast('/')} wasn't safe to use (${if (shrunk) "parts of the file were missing" else r.describe()}) — keeping the original")
+                ledger("Syntax repair: ${p.substringAfterLast('/')}", "FAILED — rewrite rejected")
+                continue
+            }
+            files[p] = code; pendingFiles[p] = code.toByteArray(); changed++; syntaxBroken -= p
+            step(BuildEvent.Kind.FILE, "Repaired ${p.substringAfterLast('/')} whole (brackets checked by Arin before use)")
+            ledger("Syntax repair: ${p.substringAfterLast('/')}", "FIXED — whole file rewritten and checked")
+        }
+        return changed
+    }
+
     /** Puts a fixed piece back exactly where it was cut out. */
     private fun replacePiece(pc: Piece, code: String) {
         val src = pc.origin ?: pc
         val text = files[src.file] ?: return
-        val now = if (src.start >= 0 && src.end <= text.length && text.substring(src.start, src.end) == src.text)
+        val now0 = if (src.start >= 0 && src.end <= text.length && text.substring(src.start, src.end) == src.text)
             text.substring(0, src.start) + code + text.substring(src.end)
         else if (text.contains(src.text)) text.replaceFirst(src.text, code) else return
+        var now = now0
+        // ARIN-PROTECTED: syntax-guard — a fixed piece must not break the file's brackets.
+        if (src.file.endsWith(".kt") || src.file.endsWith(".kts")) {
+            val before = KotlinSyntax.scan(text); val after = KotlinSyntax.scan(now)
+            if (!after.ok && (before.ok || Math.abs(after.braces) + Math.abs(after.parens) > Math.abs(before.braces) + Math.abs(before.parens))) {
+                val repaired = KotlinSyntax.repair(src.file, now)
+                if (repaired == null) {
+                    step(BuildEvent.Kind.THINKING, "The fix for ${src.file.substringAfterLast('/')} would break its brackets (${after.describe()}) — not used; the whole file gets repaired instead")
+                    syntaxBroken += src.file
+                    return
+                }
+                now = repaired
+            }
+        }
         files[src.file] = now
         pendingFiles[src.file] = now.toByteArray()
         step(BuildEvent.Kind.FILE, "Put the fixed piece into ${src.file.substringAfterLast('/')}")

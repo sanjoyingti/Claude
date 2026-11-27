@@ -296,3 +296,4 @@ told they are there.
 - **research-fallback** — an empty answer, "no usable files", a failed git/search command (exit 128) or a helper usage limit is recorded, and the work moves to the next source; the same failed request is not repeated in that build.
 - **batch-fix** — the fixing model is told to fix every listed error in one pass.
 - **git-in-repo** — the helper's work folder is a git repository, and the helper is told not to repeat a failed command.
+- **syntax-guard** (1.15.2) — before every build Arin (no AI) checks the brackets of every changed Kotlin file and removes ``` fences / explanation text; stray or missing closing braces are repaired directly. A syntax error from the compiler gets the broken file(s) repaired whole, all in one batch, and every rewrite or piece-fix is bracket-checked before it is used (a fix that would break the file is rejected).
