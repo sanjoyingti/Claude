@@ -25,7 +25,14 @@ object KotlinSyntax {
     }
 
     /** Counts brackets outside strings, chars and comments (string templates ${…} are code). */
-    fun scan(text: String): Report {
+    /** Bracket depth ({ ( [ together) at the start of every line, ignoring strings and comments. */
+    fun lineDepths(text: String): IntArray {
+        val d = mutableListOf(0)
+        scan(text) { depth -> d += depth }
+        return d.toIntArray()
+    }
+
+    fun scan(text: String, onNewLine: ((Int) -> Unit)? = null): Report {
         var braces = 0; var parens = 0; var brackets = 0; var stray = -1; var line = 1
         var i = 0; val n = text.length
         // Stack of string kinds we're inside: 1 = "…", 3 = """…""". A template ${ pushes 0 (code) with its own brace depth.
@@ -33,7 +40,7 @@ object KotlinSyntax {
         var unclosed = false
         while (i < n) {
             val c = text[i]
-            if (c == '\n') line++
+            if (c == '\n') { line++; onNewLine?.invoke(maxOf(0, braces) + maxOf(0, parens) + maxOf(0, brackets)) }
             val mode = modes.lastOrNull()
             if (mode == 1 || mode == 3) {
                 when {
@@ -53,7 +60,7 @@ object KotlinSyntax {
                 text.startsWith("/*", i) -> {
                     var depth = 1; i += 2
                     while (i < n && depth > 0) {
-                        if (text[i] == '\n') line++
+                        if (text[i] == '\n') { line++; onNewLine?.invoke(maxOf(0, braces) + maxOf(0, parens) + maxOf(0, brackets)) }
                         if (text.startsWith("/*", i)) { depth++; i += 2 } else if (text.startsWith("*/", i)) { depth--; i += 2 } else i++
                     }
                     continue

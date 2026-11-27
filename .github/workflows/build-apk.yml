@@ -94,6 +94,8 @@ jobs:
           grep -q "ARIN-PROTECTED: syntax-guard" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/KotlinImports.kt
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: duplicate-guard" $D/builder/KotlinDuplicates.kt
+          grep -q "ARIN-PROTECTED: duplicate-guard" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/Delegation.kt
           grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/Worker.kt
           grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/ClaudeHelper.kt

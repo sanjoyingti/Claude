@@ -754,6 +754,7 @@ class BuildAgent(
             if (!self) runCatching { normalizeToolchain() }
             if (!self) runCatching { syntaxGuard() }
             if (!self) runCatching { importGuard() }
+            if (!self) runCatching { duplicateGuard() }
             if (depsChanged) {
                 val gradle = ProjectTemplate.files(appName, packageName, deps.toList())
                 pendingFiles["app/build.gradle.kts"] = gradle.getValue("app/build.gradle.kts").toByteArray()
@@ -1547,13 +1548,29 @@ class BuildAgent(
         for (p in targets) {
             val t = files[p] ?: continue
             val must = missing[p.substringAfterLast('/')].orEmpty().filter { KotlinImports.knows(it) && it !in own }.toSet()
-            val (out, notes) = runCatching { KotlinImports.fix(p, t, own, must) }.getOrElse { t to emptyList() }
+            val (out, notes) = runCatching { KotlinImports.fix(p, t, own, must, rPackage = packageName.takeIf { !self && it.isNotBlank() }) }.getOrElse { t to emptyList() }
             if (out == t) continue
             files[p] = out; pendingFiles[p] = out.toByteArray(); changed++
             step(BuildEvent.Kind.FILE, "Arin fixed ${p.substringAfterLast('/')} itself: " + notes.joinToString("; ").take(200) + " (no AI needed)")
             ledger("Imports: ${p.substringAfterLast('/')}", "FIXED by Arin — " + notes.joinToString("; ").take(150))
         }
         return changed
+    }
+
+    /**
+     * ARIN-PROTECTED: duplicate-guard — the same function/class/value written twice (in one file or in two) is reduced
+     * to one copy (no AI). [errors]: only the names the compiler reported; none = every exact same-signature copy.
+     */
+    private fun duplicateGuard(errors: String = ""): Int {
+        val names = KotlinDuplicates.reported(errors)
+        if (errors.isNotBlank() && names.isEmpty()) return 0
+        val (updated, notes) = runCatching { KotlinDuplicates.fix(files.filterKeys { it.endsWith(".kt") }, names, pendingFiles.keys) }.getOrElse { return 0 }
+        updated.forEach { (p, t) -> files[p] = t; pendingFiles[p] = t.toByteArray() }
+        if (notes.isNotEmpty()) {
+            step(BuildEvent.Kind.FILE, "Arin fixed \"two things have the same name\" itself: " + notes.joinToString("; ").take(300) + " (no AI needed)")
+            ledger("Duplicates", "FIXED by Arin — " + notes.joinToString("; ").take(200))
+        }
+        return updated.size
     }
 
     /**
@@ -1570,13 +1587,16 @@ class BuildAgent(
             if (changed > 0) return true // everything after the first syntax error is a follow-on error
         }
         changed += runCatching { importGuard(errors) }.getOrDefault(0)
+        val dups = runCatching { duplicateGuard(errors) }.getOrDefault(0)
+        changed += dups
         val allImports = errLines.isNotEmpty() && errLines.all { l ->
+            (dups > 0 && (KotlinDuplicates.isDuplicateError(l) || l.contains("ambiguity", true))) ||
             Regex("""Unresolved reference:?\s*'?`?(\w+)""").find(l)?.groupValues?.get(1)?.let { KotlinImports.knows(it) } == true ||
                 l.contains("ExperimentalMaterial3Api") || l.contains("This material API is experimental") ||
                 l.contains("getValue") || l.contains("setValue")
         }
         if (changed > 0 && allImports) {
-            step(BuildEvent.Kind.DONE, "Arin fixed all ${errLines.size} error(s) itself (missing imports) — building again, no AI used")
+            step(BuildEvent.Kind.DONE, "Arin fixed all ${errLines.size} error(s) itself (imports / duplicate names) — building again, no AI used")
             return true
         }
         return false

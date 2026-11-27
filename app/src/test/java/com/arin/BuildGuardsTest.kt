@@ -40,3 +40,37 @@ class BuildGuardsTest {
         assertFalse(out.contains("import androidx.compose.material3.Text"))
     }
 }
+
+class DuplicateGuardTest {
+    private val main = "package com.example.app\n\nval Purple80 = Color(0xFFD0BCFF)\n\n/** Says hello. */\n@Composable\n" +
+        "fun Greeting(name: String, modifier: Modifier = Modifier) {\n    Text(\"Hello\")\n}\n\n@Composable\nfun Greeting(count: Int) { Text(\"x\") }\n"
+    private val greet = "package com.example.app\n\n@Composable\nfun Greeting(name: String, modifier: Modifier = Modifier) {\n    Text(\"Hi\")\n}\n"
+    private val color = "package com.example.app\n\nval Purple80 = Color(0xFFD0BCFF)\n"
+    private val files = linkedMapOf("a/MainActivity.kt" to main, "a/Greeting.kt" to greet, "a/ui/theme/Color.kt" to color)
+
+    @Test fun copiesAreRemovedFromTheWrongFileAndOverloadsKept() {
+        val (out, notes) = com.arin.builder.KotlinDuplicates.fix(files)
+        val m = out.getValue("a/MainActivity.kt")
+        org.junit.Assert.assertEquals(2, notes.size)
+        org.junit.Assert.assertFalse(m.contains("Purple80")); org.junit.Assert.assertFalse(m.contains("Says hello"))
+        org.junit.Assert.assertFalse(m.contains("fun Greeting(name"))
+        org.junit.Assert.assertTrue(m.contains("fun Greeting(count: Int)"))
+        org.junit.Assert.assertTrue(com.arin.builder.KotlinSyntax.scan(m).ok)
+        org.junit.Assert.assertFalse(out.containsKey("a/Greeting.kt")); org.junit.Assert.assertFalse(out.containsKey("a/ui/theme/Color.kt"))
+    }
+
+    @Test fun privateCopiesInDifferentFilesAreAllowed() {
+        val (out, _) = com.arin.builder.KotlinDuplicates.fix(mapOf("a/A.kt" to "package a\n\nprivate fun helper() = 1\n", "a/B.kt" to "package a\n\nprivate fun helper() = 1\n"))
+        org.junit.Assert.assertTrue(out.isEmpty())
+    }
+
+    @Test fun compilerMessagesAreRead() = org.junit.Assert.assertEquals(setOf("Greeting", "Purple80", "MainActivity"),
+        com.arin.builder.KotlinDuplicates.reported("e: x.kt:1:1 Conflicting overloads: [fun Greeting(name: String): Unit]\n" +
+            "e: y.kt:3:5 Conflicting declarations: [val Purple80: Color]\ne: z.kt:1:1 Redeclaration: class MainActivity : ComponentActivity"))
+
+    @Test fun rImportIsAddedOutsideTheMainPackage() {
+        val src = "package com.example.app.ui\n\n@Composable\nfun T() { Text(stringResource(R.string.app_name)) }\n"
+        val (out, _) = com.arin.builder.KotlinImports.fix("T.kt", src, emptySet(), rPackage = "com.example.app")
+        org.junit.Assert.assertTrue(out.contains("import com.example.app.R"))
+    }
+}

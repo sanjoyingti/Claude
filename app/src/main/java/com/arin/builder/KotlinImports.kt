@@ -148,7 +148,7 @@ object KotlinImports {
      * Returns the file with the missing imports (and the Material 3 opt-in) added, or the same text. [mustHave]: names
      * the compiler reported unresolved in this file. [own]: names the project declares itself.
      */
-    fun fix(path: String, text: String, own: Set<String>, mustHave: Set<String> = emptySet()): Pair<String, List<String>> {
+    fun fix(path: String, text: String, own: Set<String>, mustHave: Set<String> = emptySet(), rPackage: String? = null): Pair<String, List<String>> {
         if (!path.endsWith(".kt")) return text to emptyList()
         val code = codeOnly(text)
         val compose = code.contains("@Composable") || code.contains("setContent")
@@ -172,6 +172,11 @@ object KotlinImports {
             val imp = "androidx.compose.material.icons." + (if (m.groupValues[1].isNotEmpty()) "automirrored." else "") + style + "." + m.groupValues[3]
             if (!imported(text, imp) && !Regex("""(?m)^\s*import\s+${Regex.escape(imp)}\s*$""").containsMatchIn(text)) add += imp
         }
+        // R.string.x in a file outside the app's main package needs `import <package>.R` ("Unresolved reference 'R'").
+        val filePkg = Regex("""(?m)^\s*package\s+([\w.]+)""").find(text)?.groupValues?.get(1)
+        if (rPackage != null && filePkg != null && filePkg != rPackage &&
+            (Regex("""(?<![\w.])R\.(string|drawable|mipmap|color|raw|id|layout|font|xml|dimen|style|array|menu|anim|plurals|integer|bool)\b""").containsMatchIn(code) || "R" in mustHave) &&
+            !Regex("""(?m)^\s*import\s+[\w.]+\.R\s*$""").containsMatchIn(text)) add += "$rPackage.R"
         // `by remember { … }` / `by viewModel.state.collectAsState()` needs getValue (and setValue for var).
         if (Regex("""\bby\s+(remember|rememberSaveable|mutableStateOf|mutable\w*StateOf|derivedStateOf|[\w.]+\.collectAsState|[\w.]+\.collectAsStateWithLifecycle|produceState)""").containsMatchIn(code) || "getValue" in mustHave) {
             if (!imported(text, "$RT.getValue")) add += "$RT.getValue"
@@ -204,5 +209,5 @@ object KotlinImports {
             .groupBy({ it.groupValues[1] }, { it.groupValues[2] }).mapValues { it.value.toSet() }
 
     /** Names this fixer knows. */
-    fun knows(name: String): Boolean = name in byName || name == "getValue" || name == "setValue"
+    fun knows(name: String): Boolean = name in byName || name == "getValue" || name == "setValue" || name == "R"
 }
