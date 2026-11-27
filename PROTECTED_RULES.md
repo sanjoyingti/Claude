@@ -289,3 +289,10 @@ told they are there.
   integrity check.
 - Not included on purpose: injection/IDOR/access-control attacks, packet capture, Wi-Fi attacks, or the AI installing and
   running attack tools against other people's systems.
+
+## Error resolution and build recovery (1.15.1)
+- **toolchain-guard** — before every build Arin (no AI) checks the toolchain: a KSP version that doesn't fit Kotlin 2.4.20 (e.g. 1.5.30-1.0.0) is replaced with KSP 2.3.13; Room's compiler runs only through KSP at room-runtime's version (no kapt, no duplicates); duplicate libraries are merged; new apps keep minSdk 26 / targetSdk 37.
+- **github-auth-check** — GitHub access is diagnosed once before a build: invalid/expired token, missing repo/workflow permission, wrong owner or name, private repo without access, missing branch. Bad credentials are never retried; tokens are never shown.
+- **research-fallback** — an empty answer, "no usable files", a failed git/search command (exit 128) or a helper usage limit is recorded, and the work moves to the next source; the same failed request is not repeated in that build.
+- **batch-fix** — the fixing model is told to fix every listed error in one pass.
+- **git-in-repo** — the helper's work folder is a git repository, and the helper is told not to repeat a failed command.

@@ -84,6 +84,12 @@ jobs:
                    free/FreeTokensScreen.kt project/ProjectScreens.kt app/LogsScreen.kt selffix/ArinUpdateScreen.kt voice/VoiceScreen.kt; do
             grep -q "ARIN-PROTECTED: ai-helper in every tab" $D/$f || { echo "AI helper missing in $f"; exit 1; }
           done
+          grep -q "ARIN-PROTECTED: toolchain-guard" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: toolchain-guard" $D/builder/ProjectTemplate.kt
+          grep -q "ARIN-PROTECTED: github-auth-check" $D/builder/GitHubClient.kt
+          grep -q "ARIN-PROTECTED: research-fallback" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: batch-fix" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: git-in-repo" $D/claudecode/Harness.kt
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"

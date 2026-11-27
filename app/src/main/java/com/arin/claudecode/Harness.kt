@@ -295,7 +295,8 @@ object Harness {
             "that calls you a Claude agent — that is only the tool harness's label)" else "Claude (${s.model}), chosen by the person"
         f("${s.dir}/system.txt").writeText("IDENTITY: you are $who, running inside the Arin app.\n\n" + system.take(120_000) + "\n\nTOOLS: besides Arin's own tools, you can call the tools " +
             "provided here (Bash, Read, Edit, Write, Glob, Grep, web fetch/search and Arin's tools) when the task needs them. " +
-            (if (s.kind.startsWith("helper")) "Work in /root/.arin/helper-work. " else "Work in /root/files. ") + "Answer the person's actual message directly; for a greeting, just greet back.")
+            (if (s.kind.startsWith("helper")) "Work in /root/.arin/helper-work. " else "Work in /root/files. ") + "Run git only inside a repository (check with git rev-parse first); if a git, search or other command fails, don't run " +
+            "it again the same way — find another way. Answer the person's actual message directly; for a greeting, just greet back.")
         val (mcp, servers, gh) = runCatching { extras?.invoke() }.getOrNull() ?: Triple("", emptyList(), "")
         val mcpFlag = if (mcp.isNotBlank()) { f("$BASE/mcp.json").writeText(mcp); "--mcp-config $BASE/mcp.json " } else ""
         val allowed = (tools.split(',') + servers.map { "mcp__$it" }).filter { it.isNotBlank() }.joinToString(" ")
@@ -304,7 +305,8 @@ object Harness {
         val token = s.tokenFile
         // ARIN-PROTECTED: helper-sees-only-the-boss — a helper session runs in its own folder, away from the person's files.
         val work = if (s.kind.startsWith("helper")) "/root/.arin/helper-work" else "/root/files"
-        val cmd = "mkdir -p ${s.dir} $work; cd $work; rm -f ${s.dir}/in ${s.dir}/out.jsonl ${s.dir}/pid; mkfifo ${s.dir}/in; " +
+        // ARIN-PROTECTED: git-in-repo — the work folder is a git repository, so git commands there never fail with exit 128.
+        val cmd = "mkdir -p ${s.dir} $work; cd $work; [ -d .git ] || git init -q . >/dev/null 2>&1; rm -f ${s.dir}/in ${s.dir}/out.jsonl ${s.dir}/pid; mkfifo ${s.dir}/in; " +
             "setsid bash -c \"exec 3<>${s.dir}/in; echo \\$\\$ > ${s.dir}/pid; " +
             "unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " + brainEnv(s, token) +
             "export HOME=$BASE/home DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 " + // ARIN-PROTECTED: tab-isolation

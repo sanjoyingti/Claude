@@ -391,6 +391,81 @@ class BuildAgent(
         }
     }
 
+    // ARIN-PROTECTED: toolchain-guard — before every build Arin itself (no AI, no credit) checks the whole toolchain and
+    // repairs it in one go: a KSP version that doesn't match Kotlin 2.4.x is replaced with the
+    // compatible one, Room's compiler always runs through KSP at the same version as room-runtime (never kapt, never
+    // twice), duplicate libraries are merged, and new apps keep minSdk 26 / targetSdk 37.
+    private fun normalizeToolchain() {
+        val fixes = mutableListOf<String>()
+        // 1) KSP plugin version.
+        deps.filter { it.startsWith("plugin:com.google.devtools.ksp:") }.forEach { d ->
+            val v = d.substringAfterLast(':')
+            if (!ProjectTemplate.kspFits(v)) {
+                deps.remove(d); deps += "plugin:com.google.devtools.ksp:" + ProjectTemplate.KSP; depsChanged = true
+                fixes += "KSP $v doesn't work with Kotlin ${ProjectTemplate.KOTLIN} → KSP ${ProjectTemplate.KSP}"
+            }
+        }
+        // 2) No kapt: kapt entries become ksp.
+        deps.filter { it.startsWith("kapt:") }.forEach { d ->
+            deps.remove(d); deps += "ksp:" + d.removePrefix("kapt:"); depsChanged = true
+            fixes += "${d.removePrefix("kapt:").substringBeforeLast(':')} moved from kapt to KSP"
+        }
+        // 3) Room: the compiler only as ksp(...), at room-runtime's version.
+        val room = deps.firstOrNull { it.startsWith("androidx.room:room-runtime:") }?.substringAfterLast(':')
+        val compilers = deps.filter { it.removePrefix("ksp:").startsWith("androidx.room:room-compiler:") }
+        if (room != null) {
+            val want = "ksp:androidx.room:room-compiler:$room"
+            if (compilers != listOf(want)) {
+                compilers.forEach { deps.remove(it) }; deps += want; depsChanged = true
+                fixes += "Room compiler set to ksp(room-compiler:$room), matching room-runtime"
+            }
+            deps.filter { it.startsWith("androidx.room:") && !it.startsWith("androidx.room:room-compiler") && it.substringAfterLast(':') != room }.forEach { d ->
+                deps.remove(d); deps += d.substringBeforeLast(':') + ":" + room; depsChanged = true
+                fixes += "${d.substringBeforeLast(':')} aligned to Room $room"
+            }
+        } else if (compilers.isNotEmpty() && compilers.any { !it.startsWith("ksp:") }) {
+            compilers.filter { !it.startsWith("ksp:") }.forEach { deps.remove(it); deps += "ksp:$it" }; depsChanged = true
+            fixes += "Room compiler moved to KSP"
+        }
+        // 4) Duplicates: the same library twice → keep the newest version.
+        deps.groupBy { it.substringBeforeLast(':') }.filterValues { it.size > 1 }.forEach { (key, list) ->
+            val keep = list.maxWith { a, b -> versionOrder.compare(a.substringAfterLast(':'), b.substringAfterLast(':')) }
+            list.filter { it != keep }.forEach { deps.remove(it) }; depsChanged = true
+            fixes += "${key.removePrefix("ksp:").removePrefix("plugin:")} was listed ${list.size} times — kept ${keep.substringAfterLast(':')}"
+        }
+        if (fixes.any { it.contains("KSP") || it.contains("Room") } && deps.any { it.startsWith("ksp:") } &&
+            deps.none { it.startsWith("plugin:com.google.devtools.ksp:") }) {
+            deps += "plugin:com.google.devtools.ksp:" + ProjectTemplate.KSP; depsChanged = true
+        }
+        // 5) Gradle files the model or an imported project wrote.
+        files.keys.filter { it.endsWith(".gradle.kts") || it.endsWith(".gradle") || it.endsWith("libs.versions.toml") }.toList().forEach { p ->
+            val old = files[p] ?: return@forEach
+            var t = old
+            t = Regex("""(id\s*\(?\s*["']com\.google\.devtools\.ksp["']\s*\)?\s*version\s*["'])([^"']+)(["'])""").replace(t) { m ->
+                if (ProjectTemplate.kspFits(m.groupValues[2])) m.value else m.groupValues[1] + ProjectTemplate.KSP + m.groupValues[3]
+            }
+            if (p.endsWith(".toml")) t = Regex("""(?m)^(\s*ksp\s*=\s*")([^"]+)(")""").replace(t) { m ->
+                if (ProjectTemplate.kspFits(m.groupValues[2])) m.value else m.groupValues[1] + ProjectTemplate.KSP + m.groupValues[3]
+            }
+            if (!p.endsWith(".toml")) {
+                if (t.contains("com.google.devtools.ksp")) t = t.lines().filterNot { Regex("""^\s*(id\s*\(\s*["']kotlin-kapt["']\s*\)|kotlin\s*\(\s*["']kapt["']\s*\)|apply\s+plugin:\s*["']kotlin-kapt["'])""").containsMatchIn(it) }.joinToString("\n")
+                if (t.contains("com.google.devtools.ksp")) t = Regex("""(?m)^(\s*)kapt\s*\(""").replace(t) { it.groupValues[1] + "ksp(" }
+                if (!imported) {
+                    t = Regex("""minSdk\s*=\s*\d+""").replace(t, "minSdk = 26")
+                    t = Regex("""targetSdk\s*=\s*\d+""").replace(t, "targetSdk = ${ProjectTemplate.SDK}")
+                }
+            }
+            if (t != old) {
+                files[p] = t; pendingFiles[p] = t.toByteArray()
+                fixes += "$p: toolchain lines repaired (KSP / kapt / SDK levels)"
+            }
+        }
+        if (fixes.isNotEmpty()) {
+            step(BuildEvent.Kind.LIBRARY, "Toolchain check fixed ${fixes.size} problem(s) before building: " + fixes.joinToString("; ").take(400))
+            ledger("Toolchain check", "FIXED — " + fixes.joinToString("; ").take(300))
+        }
+    }
+
     /** Resources the code uses (R.string.x, R.drawable.x…) that no file in the project provides. */
     private fun missingResources(): List<String> {
         if (imported || self) return emptyList()
@@ -440,10 +515,13 @@ class BuildAgent(
             step(BuildEvent.Kind.STEP, "Checking your GitHub token")
             try {
                 if (req.githubToken.isBlank()) throw ProviderException(401, "Not signed in to GitHub")
-                gh.login()
+                val p = req.project?.takeIf { it.owner != LOCAL_OWNER && it.repo.isNotBlank() }
+                gh.diagnose(p?.owner, p?.repo, p?.branch)
+                ledger("GitHub access", "OK")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                ledger("GitHub access", "BLOCKED — " + (e.message ?: "unknown").take(200))
                 if (!phoneCan || req.project != null && req.project.owner != LOCAL_OWNER) throw e
                 step(BuildEvent.Kind.STEP, "GitHub isn't available (${e.message}); building on this phone only")
                 localOnly = true
@@ -670,6 +748,7 @@ class BuildAgent(
             checkSha = null
             sha = resumeSha
           } else {
+            if (!self) runCatching { normalizeToolchain() }
             if (depsChanged) {
                 val gradle = ProjectTemplate.files(appName, packageName, deps.toList())
                 pendingFiles["app/build.gradle.kts"] = gradle.getValue("app/build.gradle.kts").toByteArray()
@@ -1071,7 +1150,7 @@ class BuildAgent(
                     "\n\nWrite to the model, not to the person. Be brief.",
                 source = helperTab,
             ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
-            if (plan.isNotBlank() && !plan.contains("couldn't be reached") && !plan.contains("isn't connected") && !plan.contains("switched off")) {
+            if (usableHelp(plan)) {
                 helperPlan = "\n\n[Plan from the AI helper — use it where right; you write the code:]\n" + plan.take(6_000)
                 step(BuildEvent.Kind.THINKING, "🟣 Got the helper's plan; the model writes the code")
             }
@@ -1686,7 +1765,7 @@ class BuildAgent(
                 step(BuildEvent.Kind.THINKING, "Seen this error before — using the fix that worked (no AI needed)")
                 return "A fix that worked before for this exact error (apply it):\n$it"
             } else com.arin.selffix.CreditSaver.forgetFix(ctx, sig)
-            if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) != null || com.arin.selffix.ClaudeHelper.route(ctx) != null) {
+            if (helperDown == null && (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) != null || com.arin.selffix.ClaudeHelper.route(ctx) != null)) {
                 val trimmed = com.arin.selffix.CreditSaver.trimErrors(errors)
                 val code = prioritized(trimmed).filter { (p, _) -> trimmed.contains(p.substringAfterLast('/')) }.take(2)
                     .joinToString("\n") { (p, c) -> "FILE: $p\nBODY:\n" + c.take(6_000) }
@@ -1697,7 +1776,7 @@ class BuildAgent(
                         "\nNEED: research if needed, then return only the patched code (whole changed functions or files).",
                     source = helperTab, hard = seen >= 2,
                 ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
-                if (answer.isNotBlank() && !answer.contains("couldn't be reached") && !answer.contains("isn't connected") && !answer.contains("switched off")) {
+                if (usableHelp(answer)) {
                     com.arin.selffix.CreditSaver.rememberFix(ctx, sig, answer)
                     return "Claude (your helper) researched this error. Its patch — apply it; you make the change:\n" + answer.take(8_000)
                 }
@@ -1707,7 +1786,7 @@ class BuildAgent(
         if (seen >= 2) web += "\n\nThis same error has come back $seen times: use a clearly different approach this time."
         // ARIN-PROTECTED: with the AI helper on, every build error is solved one by one with its help (the model asks,
         // the helper gives the solution, the model makes the fix). With it off, the model works alone.
-        if (context != null && !workerOn() && helperOn() && com.arin.selffix.ClaudeHelper.route(context, helperTab) != null) {
+        if (context != null && helperDown == null && !workerOn() && helperOn() && com.arin.selffix.ClaudeHelper.route(context, helperTab) != null) {
             step(BuildEvent.Kind.THINKING, "Asking ${com.arin.selffix.ClaudeHelper.helper(context).name} for the solution to this error")
             val answer = com.arin.selffix.ClaudeHelper.ask(
                 context = context,
@@ -1716,7 +1795,7 @@ class BuildAgent(
                     "\n\nWhat is the real cause, and exactly what should be changed (files and code) to fix it? Write to the model.",
                 source = helperTab,
             ) { step(BuildEvent.Kind.THINKING, it.take(120)) }
-            if (answer.isNotBlank() && !answer.contains("couldn't be reached") && !answer.contains("isn't connected") && !answer.contains("switched off"))
+            if (usableHelp(answer))
                 web += "\n\nThe AI helper's solution (use it; you make the fix):\n" + answer.take(8_000)
         }
         return web
@@ -1791,7 +1870,7 @@ class BuildAgent(
             projectNote() + "NEED: review this code before the build: list only real bugs/build errors, each as FILE + the " +
                 "patched code. If it's all right, answer just: OK\n\nCODE:\n$code",
             source = helperTab)
-        if (help.contains("couldn't be reached") || help.contains("isn't connected") || help.contains("switched off")) return
+        if (!usableHelp(help)) return
         if (help.trim().let { it == "OK" || it.startsWith("OK.") || it.contains("NO_HELP_NEEDED") }) return
         step(BuildEvent.Kind.THINKING, "Fixing what the AI helper found")
         apply(ask(buildString {
@@ -1850,9 +1929,33 @@ class BuildAgent(
      * One whole-problem consultation with the helper: the complete error report and everything needed to judge it.
      * Returns its diagnosis for the fixer, or "" (no helper, declined, or nothing useful).
      */
+    // ARIN-PROTECTED: research-fallback — a failed source is recorded and never asked the same thing again in this build:
+    // an empty answer, "no usable files", a git/search command that failed (exit code 128), or the helper's usage
+    // limit (e.g. Claude's 5-hour limit) moves the work to the next source (web research, the worker, your model).
+    private var helperDown: String? = null
+    private fun usableHelp(answer: String): Boolean {
+        val a = answer.trim()
+        val why = when {
+            a.isBlank() -> "empty answer"
+            a.contains("couldn't be reached") || a.contains("isn't connected") || a.contains("switched off") -> "not reachable"
+            com.arin.claudecode.ClaudeLimit.isLimit(a.take(800)) -> "usage limit reached"
+            Regex("(?i)no usable (files|answer)|returned nothing usable").containsMatchIn(a.take(600)) -> "no usable files"
+            Regex("(?i)exit(ed)? (with )?code 128|not a git repository").containsMatchIn(a.take(1_500)) && a.length < 1_500 -> "git/search command failed (exit 128)"
+            else -> null
+        } ?: return true
+        if (why == "usage limit reached" || why == "not reachable") {
+            if (helperDown == null) {
+                helperDown = why
+                step(BuildEvent.Kind.STEP, "The helper is unavailable ($why) — switching to web research and the other models for the rest of this build")
+                ledger("Helper", "BLOCKED — $why; using other sources")
+            }
+        } else ledger("Research source", "FAILED — $why; trying the next source")
+        return false
+    }
+
     private suspend fun consultHelper(errors: String, same: Int): String {
         val ctx = context ?: return ""
-        if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) == null) return ""
+        if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) == null || helperDown != null) return ""
         if (consultUsed >= budget("consult", 8)) return ""
         consultUsed++
         val fp = com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) } + "#" + (same >= 3)
@@ -1896,7 +1999,7 @@ class BuildAgent(
                 com.arin.selffix.ClaudeHelper.ask(ctx, pkg, helperTab, hard = true) { s -> step(BuildEvent.Kind.THINKING, s) }
             }
         }.getOrNull().orEmpty().trim()
-        val useless = answer.length < 80 || answer.contains("isn't connected", true) || answer.contains("switched off", true)
+        val useless = answer.length < 80 || !usableHelp(answer)
         if (useless || com.arin.selffix.CreditSaver.isRefusal(answer.take(600))) {
             declined += fp
             val why = if (useless) "no answer" else answer.lines().firstOrNull { it.isNotBlank() }.orEmpty().take(140)
@@ -1921,7 +2024,7 @@ class BuildAgent(
     private suspend fun autoRepair(errors: String): String? {
         val e = errors.lowercase()
         if ("ksp" in e && deps.any { it.startsWith("plugin:com.google.devtools.ksp:") }) {
-            val newest = resolveDependency("com.google.devtools.ksp:symbol-processing-gradle-plugin:latest")?.substringAfterLast(':') ?: return null
+            val newest = resolveDependency("com.google.devtools.ksp:symbol-processing-gradle-plugin:latest")?.substringAfterLast(':')?.takeIf { ProjectTemplate.kspFits(it) } ?: ProjectTemplate.KSP
             val now = deps.first { it.startsWith("plugin:com.google.devtools.ksp:") }
             if (now.endsWith(":$newest")) return null
             deps.remove(now); deps += "plugin:com.google.devtools.ksp:$newest"; depsChanged = true
@@ -1951,6 +2054,11 @@ class BuildAgent(
         appendLine()
         appendLine("Build errors:")
         appendLine(if (com.arin.selffix.CreditSaver.on(context)) com.arin.selffix.CreditSaver.trimErrors(errors) else errors)
+        // ARIN-PROTECTED: batch-fix — every listed error is fixed in this one pass, not one per build.
+        appendLine()
+        appendLine("FIX ALL OF THE ERRORS ABOVE IN THIS ONE PASS (group related ones, fix the root cause of each). Don't fix one and leave " +
+            "the rest for another build. Keep Kotlin ${ProjectTemplate.KOTLIN}, KSP ${ProjectTemplate.KSP} (code generators like Room's compiler only " +
+            "through ksp(...), never kapt), minSdk 26, targetSdk ${ProjectTemplate.SDK}.")
         if (errors.contains("AarMetadata", true) || errors.contains("compileSdk", true) && errors.contains("depend", true)) {
             appendLine()
             appendLine("HOW TO FIX THIS KIND OF ERROR: a library needs a newer compileSdk than this project (compileSdk ${ProjectTemplate.SDK}). Do NOT raise " +
@@ -2063,7 +2171,7 @@ class BuildAgent(
             if (generator && deps.none { it.startsWith("plugin:com.google.devtools.ksp:") }) {
                 val ksp = resolveDependency("com.google.devtools.ksp:symbol-processing-gradle-plugin:latest")?.substringAfterLast(':')
                     ?.takeIf { v -> v.none { it.isLetter() } } // a finished release, not a beta or RC
-                deps += "plugin:com.google.devtools.ksp:" + (ksp ?: ProjectTemplate.KSP)
+                deps += "plugin:com.google.devtools.ksp:" + (ksp?.takeIf { ProjectTemplate.kspFits(it) } ?: ProjectTemplate.KSP)
                 depsChanged = true
             }
             if (resolved.startsWith("androidx.room:room-compiler:")) {

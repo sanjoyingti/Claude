@@ -30,8 +30,18 @@ object ProjectTemplate {
     val kspArtifacts = listOf("room-compiler")
 
     private fun kspDeps(extraDeps: List<String>) = extraDeps.filter { it.startsWith("ksp:") }.map { it.removePrefix("ksp:") }
+    // ARIN-PROTECTED: toolchain-guard — a KSP version that doesn't work with Kotlin $KOTLIN (an old "1.5.30-1.0.0"-style
+    // version tied to another Kotlin, or anything older than KSP 2.3) is never used: the compatible KSP is used instead.
     private fun kspVersion(extraDeps: List<String>) =
-        extraDeps.firstOrNull { it.startsWith("plugin:com.google.devtools.ksp:") }?.substringAfterLast(':') ?: KSP
+        extraDeps.firstOrNull { it.startsWith("plugin:com.google.devtools.ksp:") }?.substringAfterLast(':')?.takeIf { kspFits(it) } ?: KSP
+
+    /** True when this KSP version works with the template's Kotlin: KSP 2.3+ (no Kotlin prefix), or "<KOTLIN>-x". */
+    fun kspFits(v: String): Boolean {
+        if (v.startsWith("$KOTLIN-")) return true
+        val m = Regex("""^(\d+)\.(\d+)\.(\d+)$""").matchEntire(v.trim()) ?: return false
+        val (a, b) = m.destructured
+        return a.toInt() > 2 || a.toInt() == 2 && b.toInt() >= 3
+    }
     private fun plainDeps(extraDeps: List<String>) = extraDeps.filter { !it.startsWith("ksp:") && !it.startsWith("plugin:") }
 
     /**
