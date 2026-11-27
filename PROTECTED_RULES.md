@@ -280,3 +280,12 @@ told they are there.
   and newest only when the emulator test passes.
 - **Signing:** private key from GitHub Secrets when set; otherwise the bundled (public) key so updates keep working —
   see SIGNING.md for the one-time safe migration.
+- **Security Agent** (first tab of Security): plain-English requests ("analyse this APK", "check example.com", "audit my
+  Wi-Fi", "collect evidence", "fix my project") are understood by Arin's own rules (no AI credit) and run the right check.
+  Simple mode shows what was found and what to do; Expert mode shows the full report.
+- **Vulnerability intelligence:** software versions seen in websites and device services are looked up in the US NVD,
+  with CVSS scores and a 🚨 flag for anything on CISA's "exploited in the wild" list.
+- **Evidence:** files copied to a private store, hashed (SHA-256/SHA-1/MD5), typed, with a chain-of-custody log and an
+  integrity check.
+- Not included on purpose: injection/IDOR/access-control attacks, packet capture, Wi-Fi attacks, or the AI installing and
+  running attack tools against other people's systems.

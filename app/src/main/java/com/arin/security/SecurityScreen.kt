@@ -64,6 +64,9 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
     var report by rememberSaveable { mutableStateOf("") }
     var target by rememberSaveable { mutableStateOf("") }
     var allowed by rememberSaveable { mutableStateOf(false) }
+    var expert by rememberSaveable { mutableStateOf(false) }
+    var ask by rememberSaveable { mutableStateOf("") }
+    var agentNote by rememberSaveable { mutableStateOf("") }
 
     fun run(what: String, scopeTarget: String?, work: suspend ((String) -> Unit) -> String) {
         if (busy) return
@@ -86,28 +89,70 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
         }
     }
 
+    val pickEvidence = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        run("Evidence", null) { onStep -> Forensics.collect(ctx, uri, onStep) }
+    }
+
+    /** The Security Agent: understands a plain-English request (Arin's own rules, no AI credit) and runs the right check. */
+    fun agent(text: String) {
+        val t = text.lowercase()
+        val url = Regex("""(https?://\S+|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b)""").find(text)?.value
+        val ip = Regex("""\b\d{1,3}(\.\d{1,3}){3}\b""").find(text)?.value
+        agentNote = when {
+            Regex("evidence|hash|forensic|integrity|custody").containsMatchIn(t) -> { pickEvidence.launch(arrayOf("*/*")); "Collecting evidence: pick the file. I'll hash it and log the chain of custody." }
+            Regex("""\bapk\b|application|this app|suspicious app""").containsMatchIn(t) && url == null -> { pickApk.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")); "APK analysis: pick the APK and I'll check permissions, components, signing, secrets, libraries and more." }
+            Regex("fix|my project|my code|source").containsMatchIn(t) -> {
+                vm.newChat(); vm.send(text + "\n\n(From the Security Agent: find the affected files and every file that uses them, propose minimal fixes, and ask me before building.)"); vm.openChat = true
+                "Opened a chat to fix it in your project (it asks before building)."
+            }
+            ip != null -> { target = ip; tab = 3; if (allowed) run("Host scan", ip) { s -> NetAudit.scanHost(ip, onStep = s) }; if (allowed) "Scanning $ip…" else "Tick the permission box below, then tap Scan host." }
+            Regex("router").containsMatchIn(t) -> { run("Router check", NetAudit.gateway(ctx) ?: "router") { s -> NetAudit.routerCheck(ctx, s) }; "Checking your router…" }
+            Regex("devices|who is on|what is on").containsMatchIn(t) -> { tab = 3; "Tap \"Find devices\" to list what's on this network." }
+            Regex("wi-?fi|network|dns|internet").containsMatchIn(t) -> { run("Network info", null) { NetAudit.networkInfo(ctx) }; "Checking this network…" }
+            url != null -> { target = url; tab = 2; if (allowed) run("Web check", url) { s -> WebAudit.analyse(url, s) }; if (allowed) "Checking $url…" else "Tick the permission box below, then tap Check it." }
+            else -> "I can: analyse an APK, check a website or API, check this Wi-Fi network, your router or a device, collect evidence, or fix problems in your own project. Say which — for example \"analyse this APK\" or \"check example.com\"."
+        }
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text("Security", style = MaterialTheme.typography.titleLarge)
         }
         TabRow(selectedTabIndex = tab) {
-            listOf("APK", "Web / API", "Network").forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i; report = "" }, text = { Text(t) }) }
+            listOf("Agent", "APK", "Web", "Network", "Evidence").forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i; report = "" }, text = { Text(t, maxLines = 1) }) }
         }
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val small = MaterialTheme.typography.bodySmall
             when (tab) {
                 0 -> {
+                    Text("Security Agent — tell me what you want in plain English. I pick the right check and run it, then explain what " +
+                        "it found. Everything runs on this phone; checks are safe (no attacks).", style = small)
+                    OutlinedTextField(ask, { ask = it }, label = { Text("e.g. analyse this APK · check example.com · audit my Wi-Fi") }, modifier = Modifier.fillMaxWidth())
+                    Permission(allowed) { allowed = it }
+                    Button(onClick = { agent(ask) }, enabled = !busy && ask.isNotBlank()) { Text("Go") }
+                    if (agentNote.isNotBlank()) Text(agentNote, style = small, color = MaterialTheme.colorScheme.primary)
+                }
+                1 -> {
                     Text("Check an APK for security problems: permissions, components open to other apps, signing, debug flags, " +
                         "plain-HTTP, WebView risks, storage, libraries and secrets left inside (shown redacted). Runs on the phone; nothing is uploaded.", style = small)
                     Button(onClick = { pickApk.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream", "*/*")) }, enabled = !busy) { Text("Choose an APK") }
                 }
-                1 -> {
+                2 -> {
                     Text("Passive check of a website or API: security headers, cookies, CORS, HTTPS redirect, TLS certificate and " +
                         "API descriptions. Only normal requests — no attacks, no password guessing.", style = small)
                     OutlinedTextField(target, { target = it.trim() }, label = { Text("Website or API address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Permission(allowed) { allowed = it }
                     Button(onClick = { run("Web check", target) { WebAudit.analyse(target, it) } }, enabled = !busy && allowed && target.isNotBlank()) { Text("Check it") }
+                }
+                4 -> {
+                    Text("Evidence: copy a file into Arin's private evidence store, record its SHA-256/SHA-1/MD5 hashes, type and size, " +
+                        "and log every action (chain of custody). Verify proves the stored copies haven't changed.", style = small)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { pickEvidence.launch(arrayOf("*/*")) }, enabled = !busy) { Text("Collect a file") }
+                        OutlinedButton(onClick = { run("Evidence check", null) { Forensics.verifyAll(ctx) } }, enabled = !busy) { Text("Verify evidence") }
+                    }
                 }
                 else -> {
                     Text("Check this Wi-Fi network, the devices on it, your router, or the services open on a host you choose. " +
@@ -131,6 +176,10 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
             }
             if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(step, style = small) }
             if (report.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Switch(expert, { expert = it })
+                    Text(if (expert) "  Expert: full technical report" else "  Simple: what it found and what to do", style = small)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = {
                         val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -150,11 +199,20 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
                     }) { Text("Ask Arin to fix") }
                 }
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.medium) {
-                    SelectionContainer { Text(report, style = small, modifier = Modifier.padding(12.dp)) }
+                    SelectionContainer { Text(if (expert) report else simple(report), style = small, modifier = Modifier.padding(12.dp)) }
                 }
             }
         }
     }
+}
+
+/** Simple mode: the title, the summary of findings and the next step — the full report stays one switch away. */
+private fun simple(report: String): String {
+    val title = report.lineSequence().firstOrNull().orEmpty()
+    val summary = report.substringAfter("## Summary", "").let { if (it.isBlank()) "" else "## Summary" + it.substringBefore("\n## ") }
+    val vulns = if (report.contains("EXPLOITED IN THE WILD")) "\n🚨 Some software here has vulnerabilities that are being exploited right now — update it first (details in Expert)." else ""
+    val next = report.substringAfterLast("_Next step:", "").substringBefore("_").let { if (it.isBlank()) "" else "\n**Next step:**$it" }
+    return listOf(title, summary.ifBlank { report.take(1_500) }, vulns, next).filter { it.isNotBlank() }.joinToString("\n")
 }
 
 @Composable

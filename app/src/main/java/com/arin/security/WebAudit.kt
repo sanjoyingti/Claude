@@ -105,6 +105,12 @@ object WebAudit {
                 }
             }
         }
+        // Known vulnerabilities for software versions the site reveals.
+        VulnIntel.section(listOfNotNull(h["Server"], h["X-Powered-By"]).joinToString(" "), onStep).takeIf { it.isNotBlank() }?.let {
+            sb.append(it)
+            if (it.contains("EXPLOITED IN THE WILD")) f += F("HIGH", "Software with actively exploited vulnerabilities", "See the vulnerability list: update that software first.")
+            else if (it.contains("CVE-")) f += F("MEDIUM", "Software version has known vulnerabilities", "See the list below; update if the version matches.")
+        }
         val order = listOf("HIGH", "MEDIUM", "LOW")
         sb.insert(sb.indexOf("\n## "), buildString {
             appendLine("\n## Summary: ${f.count { it.sev == "HIGH" }} high · ${f.count { it.sev == "MEDIUM" }} medium · ${f.count { it.sev == "LOW" }} low")

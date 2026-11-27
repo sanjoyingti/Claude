@@ -130,6 +130,7 @@ object NetAudit {
             if (why.isNotBlank()) risks += "$p $name: $why"
         }
         if (443 in openPorts || 8443 in openPorts) sb.appendLine("\n## TLS on ${if (443 in openPorts) 443 else 8443}\n" + WebAudit.tlsOnly(host, if (443 in openPorts) 443 else 8443))
+        sb.append(VulnIntel.section(sb.toString(), onStep))
         sb.appendLine("\n## What to look at")
         if (risks.isEmpty()) sb.appendLine("- Nothing risky among the common services.") else risks.forEach { sb.appendLine("- $it") }
         sb.appendLine("\n---\n_Next step: close or protect anything you don't need (router settings → services/UPnP/remote management)._")
