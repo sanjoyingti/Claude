@@ -1205,6 +1205,35 @@ class BuildAgent(
         val ctx = context ?: return notesIn
         val boss = bossName()
         val trimmed = com.arin.selffix.CreditSaver.trimErrors(errors)
+        // ARIN-PROTECTED: boss-minimum-credit — Arin itself (no AI) cuts the code around every error site; the helper's
+        // whole-problem diagnosis says what to change; the worker fixes each piece. Your model is only asked when Arin
+        // can't find an error site. The rebuild checks the fix (no extra inspection by your model).
+        val diagnosis = web.substringAfter("CONSULTANT'S WHOLE-PROBLEM DIAGNOSIS", "").let { if (it.isBlank()) "" else it.take(3_500) }
+        val sites = Regex("([\\w./-]+\\.(?:kt|java|xml|kts))[:(](\\d+)").findAll(errors)
+            .map { it.groupValues[1] to it.groupValues[2].toInt() }.distinct().toList()
+        val auto = sites.groupBy({ it.first }, { it.second }).mapNotNull { (f, lines) ->
+            val path = files.keys.firstOrNull { it == f || it.endsWith("/" + f.substringAfterLast("/src/main/").ifBlank { f }) || it.endsWith("/" + f.substringAfterLast('/')) } ?: return@mapNotNull null
+            val n = files[path]!!.lines().size
+            val a = (lines.min() - 20).coerceAtLeast(1); val b = (lines.max() + 20).coerceAtMost(n)
+            cut("FILE: $path\nLINES: $a-$b\nNEED: fix the error(s) at line(s) ${lines.joinToString()} as the diagnosis/error says")
+        }.take(4)
+        if (auto.isNotEmpty()) {
+            step(BuildEvent.Kind.THINKING, "Arin cut out the code at ${auto.size} error site(s) — the worker fixes them" + if (diagnosis.isNotBlank()) " using Claude's diagnosis" else "")
+            var any = false
+            for (pc in auto) {
+                val task = "FILE: ${pc.file}\nCODE:\n${pc.text}\nERROR:\n" +
+                    trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(10).joinToString("\n").ifBlank { trimmed.take(1_500) } +
+                    (if (diagnosis.isNotBlank()) "\nDIAGNOSIS FROM A SENIOR ENGINEER:\n$diagnosis" else "") +
+                    "\nNEED: ${pc.need}\nReturn ONLY the fixed CODE above (the same piece, complete, every line), nothing else."
+                val (who, out) = com.arin.selffix.Worker.run(ctx, task, boss) { _, t -> step(BuildEvent.Kind.THINKING, t) }
+                val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
+                if (who.isBlank() || code.isBlank()) continue
+                replacePiece(pc, code); any = true
+            }
+            if (any) { step(BuildEvent.Kind.THINKING, "Fixed — building again (the build itself checks the fix)"); return notesIn }
+        }
+        // No error site in the files (a Gradle/library problem): the worker fixes it with the full error report.
+        if (sites.isEmpty()) return apply(ask(fixPrompt(errors, notesIn, web)))
         step(BuildEvent.Kind.THINKING, "$boss is analysing the build errors")
         val plan = bossSay(buildString {
             appendLine("The build failed. ERRORS:")
