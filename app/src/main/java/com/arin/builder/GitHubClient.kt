@@ -121,6 +121,22 @@ class GitHubClient(private val token: String) {
     }
 
     /**
+     * ARIN-PROTECTED: safe rollback — puts the files back exactly as they were at [toSha] by adding a NEW commit on top
+     * (nothing is deleted from history, so the rollback itself can be undone). Returns the new commit's SHA.
+     */
+    suspend fun restore(repo: Repo, toSha: String, message: String): String {
+        val base = "/repos/${repo.owner}/${repo.name}"
+        val head = call("GET", "$base/git/ref/heads/${repo.branch}").obj("object")!!.str("sha")!!
+        val tree = call("GET", "$base/git/commits/$toSha").obj("tree")!!.str("sha")!!
+        val commit = call("POST", "$base/git/commits", buildJsonObject {
+            put("message", JsonPrimitive(message)); put("tree", JsonPrimitive(tree))
+            put("parents", JsonArray(listOf(JsonPrimitive(head))))
+        }).str("sha")!!
+        call("PATCH", "$base/git/refs/heads/${repo.branch}", buildJsonObject { put("sha", JsonPrimitive(commit)) })
+        return commit
+    }
+
+    /**
      * Commits [files] (path → content, or null to delete) on top of the branch in one commit.
      * Returns the commit SHA.
      */

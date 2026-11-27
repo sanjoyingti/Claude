@@ -271,6 +271,15 @@ class BuildAgent(
             }.take(15)
     }
 
+    private var primaryFails = 0
+    private var lastRepo: GitHubClient.Repo? = null
+    private fun saveProjectQuietly() { lastRepo?.let { r -> runCatching { saveProject(r, null) } } }
+
+    // ARIN-PROTECTED: budgets — limits per build so nothing runs away with your credit (change them in Credit saver).
+    private var researchUsed = 0
+    private var consultUsed = 0
+    private fun budget(name: String, def: Int): Int = context?.let { com.arin.selffix.CreditSaver.budget(it, name, def) } ?: def
+
     /** Files named in build errors. */
     private fun errorFiles(errors: String): List<String> =
         Regex("([\\w./-]+\\.(?:kt|java|xml|kts))[:(]").findAll(errors).map { it.groupValues[1] }.mapNotNull { f ->
@@ -973,6 +982,7 @@ class BuildAgent(
     private fun mb(bytes: Long) = if (bytes < 1024 * 1024) "${bytes / 1024} KB" else "%.1f MB".format(bytes / 1048576.0)
 
     private fun saveProject(repo: GitHubClient.Repo, apk: String?) {
+        lastRepo = repo
         onProject(
             Project(
                 appName = appName,
@@ -1127,8 +1137,19 @@ class BuildAgent(
                     scanned = nl
                 }
             }; false } catch (e: SteerNow) { true } catch (e: Exception) {
+                // ARIN-PROTECTED: watchdog — your main model didn't answer: Arin (ordinary code, no AI) keeps everything
+                // written so far, waits and asks again twice; then it stops with the work saved, so "try again" resumes.
+                if (!target.worker && e !is kotlinx.coroutines.CancellationException && primaryFails < 2) {
+                    primaryFails++
+                    saveProjectQuietly()
+                    step(BuildEvent.Kind.STEP, "${nice(target.model)} didn't answer (${e.message.orEmpty().take(90)}) — your work is saved; asking again in ${30 * primaryFails} s")
+                    kotlinx.coroutines.delay(30_000L * primaryFails)
+                    continue
+                }
+                if (!target.worker) throw IllegalStateException("Your main model (${nice(target.model)}) isn't answering: ${e.message.orEmpty().take(200)}. " +
+                    "Everything done so far is saved — say \"try again\" to carry on from here.")
                 // Claude's usage limit (or any failure) of a worker: not an error to fix — the next worker/helper takes over.
-                if (!target.worker || wi + 1 >= pool.size) throw e
+                if (wi + 1 >= pool.size) throw e
                 val why = e.message.orEmpty()
                 step(BuildEvent.Kind.THINKING, (if (why.startsWith("CLAUDE_LIMIT: ")) why.removePrefix("CLAUDE_LIMIT: ") else
                     "${nice(target.model)} couldn't answer (${why.take(100)})") + " — passing the task to ${nice(pool[wi + 1].model)}")
@@ -1649,6 +1670,11 @@ class BuildAgent(
      * error comes back, Claude is also asked for help (when connected), whatever model this build uses.
      */
     private suspend fun researchFirst(query: String, errors: String): String {
+        if (researchUsed >= budget("research", 15)) {
+            step(BuildEvent.Kind.STEP, "Web-research budget for this build used up (${researchUsed}) — using what was already found")
+            return ""
+        }
+        researchUsed++
         val seen = repeats.count(query.ifBlank { errors.take(200) })
         // ARIN-PROTECTED: credit-saver — 1) a fix that worked before for this exact error (no AI at all); 2) Claude
         // researches and returns the patch (code-only), so your model reads a short answer instead of web pages.
@@ -1827,6 +1853,8 @@ class BuildAgent(
     private suspend fun consultHelper(errors: String, same: Int): String {
         val ctx = context ?: return ""
         if (com.arin.selffix.ClaudeHelper.route(ctx, helperTab) == null) return ""
+        if (consultUsed >= budget("consult", 8)) return ""
+        consultUsed++
         val fp = com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) } + "#" + (same >= 3)
         if (fp in declined) return ""
         val h = com.arin.selffix.ClaudeHelper.helper(ctx)

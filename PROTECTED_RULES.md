@@ -263,3 +263,8 @@ told they are there.
   requirement → deliver.
 - All earlier rules still apply — in particular, Arin never starts a build by itself.
 - Only the owner can change this rule.
+- **Watchdog** (ordinary code, no AI): if your main model stops answering during a build, the work is saved, Arin waits
+  and asks again twice, then stops with everything saved so "try again" carries on from there.
+- **Budgets per build:** at most 15 web researches and 8 helper consultations (changeable), so nothing runs away with credit.
+- **Safe rollback:** say "roll back" or "undo last change" in the app's tab: its files go back to before the last change
+  with a new commit on top (nothing deleted, can be undone). It never builds by itself afterwards.

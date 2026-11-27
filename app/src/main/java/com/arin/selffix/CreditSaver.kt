@@ -37,6 +37,10 @@ object CreditSaver {
     fun setOfflineModel(c: Context, path: String) = prefs(c).edit().putString("offline", path).apply()
 
     /** Helper tries Claude Haiku first for an error, then the chosen Claude model (off by default: full power). */
+    /** A per-build budget: "research" (web searches, default 15), "consult" (helper consultations, default 8). */
+    fun budget(c: Context, name: String, def: Int): Int = prefs(c).getInt("budget_$name", def)
+    fun setBudget(c: Context, name: String, n: Int) = prefs(c).edit().putInt("budget_$name", n.coerceIn(1, 100)).apply()
+
     /** Easy helper questions go to Claude Haiku (uses far less of your Claude limit); hard ones to the model you picked. On by default. */
     fun haikuFirst(c: Context): Boolean = prefs(c).getBoolean("haiku_first", true)
     fun setHaikuFirst(c: Context, on: Boolean) = prefs(c).edit().putBoolean("haiku_first", on).apply()

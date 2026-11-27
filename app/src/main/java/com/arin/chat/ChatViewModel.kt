@@ -1959,6 +1959,36 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun chatBuildAppName(): String = chatBuildSession()?.project?.appName ?: "the app"
 
+    /** Rolls this tab's app back to before its last change (see send). Returns false when there's nothing to roll back. */
+    private fun rollBack(said: String): Boolean {
+        val app = getApplication<Application>()
+        val project = chatBuildSession()?.project ?: return false
+        if (project.owner == com.arin.builder.BuildAgent.LOCAL_OWNER || project.selfUpdate) return false
+        val mem = com.arin.builder.ProjectMemory.of(app, project.packageName)
+        val (head, to) = mem.lastRollback() ?: return false
+        if (to.isBlank()) return false
+        messages += Message(fromUser = true, text = said)
+        val note = Message(fromUser = false, text = "↩️ Rolling ${project.appName} back to before the last change…")
+        messages += note
+        persist()
+        ArinApp.scope.launch {
+            val text = runCatching {
+                val gh = com.arin.builder.GitHubClient(githubToken())
+                val repo = com.arin.builder.GitHubClient.Repo(project.owner, project.repo, project.branch, project.repoUrl)
+                val sha = gh.restore(repo, to, "Roll back: undo ${head.take(7)} (asked by the owner)")
+                mem.recordCommit(sha, head, "Roll back to ${to.take(7)}")
+                "↩️ **Rolled back.** ${project.appName}'s files on GitHub are back to how they were before the last change " +
+                    "(commit ${to.take(7)}). Nothing was deleted — say \"undo last change\" again to bring it back.\n\n" +
+                    "**What to do next:** say \"build it\" when you want an APK of this version (I won't build it by myself)."
+            }.getOrElse { "Couldn't roll back: ${it.message?.take(200)}" }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                messages.indexOfFirst { it.id == note.id }.takeIf { it >= 0 }?.let { messages[it] = messages[it].copy(text = text) }
+                persist()
+            }
+        }
+        return true
+    }
+
     /** One build per tab: steers the running one with [request] and returns a note, or null when none is running. */
     private fun oneBuildPerTab(request: String): String? {
         val (sid, name) = runningBuildsHere().firstOrNull() ?: return null
@@ -2889,6 +2919,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // Talking with the AI helper: the chat's own model reads the whole message first and drafts its answer; then the
         // helper helps it, and the model gives the final answer (see consultHelper in the reply loop).
         consultNext = helperTalk && claudeHelperOn
+        // "Roll back" / "undo the last change": the app's files go back to how they were before the last change
+        // (safe: a new commit on top, so it can itself be undone). Only on the owner's own words.
+        if (!streaming && Regex("""(?i)^\s*(please\s+)?(roll\s*back|undo (the |my )?last (change|update|build))\b""").containsMatchIn(text) && rollBack(text)) return
         // A build from this chat is running: what you type steers it (followed at its next step).
         if (text.isNotBlank() && !streaming && chatBuildRunning()) {
             chatBuildSession()?.steer(text)
