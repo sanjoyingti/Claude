@@ -41,7 +41,7 @@ object RuleIntegrity {
             runCatching { Worker.instructions(c) }.getOrDefault(""),
             runCatching { TeamWork.instructions(c) }.getOrDefault(""),
         ).filter { it.isNotEmpty() }.forEach { t = t.replace(it, "") }
-        return t.replace(Regex("""This is Arin version [^.]*\. """), "").replace(Regex("""Today is [^.]*\.\n\n"""), "")
+        return t.replace(Regex("""This is Arin version .*?\. (?=Use Markdown)"""), "").replace(Regex("""Today is [^.]*\.\n\n"""), "")
     }
 
     fun sha256(t: String): String = java.security.MessageDigest.getInstance("SHA-256").digest(t.toByteArray()).joinToString("") { "%02x".format(it) }

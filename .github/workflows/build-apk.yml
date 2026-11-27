@@ -119,6 +119,11 @@ jobs:
           grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/ClaudeHelper.kt
           grep -q "ARIN-PROTECTED: bounded-scroll" $D/security/SecurityScreen.kt
           grep -q "ARIN-PROTECTED: tests-gate" .github/arin-test.sh
+          grep -q "ARIN-PROTECTED: orchestrator" $D/selffix/Orchestrator.kt
+          grep -q "ARIN-PROTECTED: run-context" $D/selffix/Orchestrator.kt
+          grep -q "ARIN-PROTECTED: project-graph" $D/selffix/ProjectGraph.kt
+          grep -q "ARIN-PROTECTED: evidence-check" $D/chat/ChatViewModel.kt
+          grep -q "ARIN-PROTECTED: proot-fallback" $D/terminal/Linux.kt
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"

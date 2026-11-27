@@ -94,6 +94,72 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         @Volatile var steerNow = false
         var job: Job? = null
         var checkpointJob: Job? = null
+        /** Captured once at the start; this reply's background steps read their identity from here, not from the screen. */
+        var ctx: com.arin.selffix.RunContext? = null
+        /** The owner's objective and requirement ledger for this reply, and the Boss's chosen approach. */
+        var ledger: com.arin.selffix.Orchestrator.Ledger? = null
+        var plan: com.arin.selffix.Orchestrator.Plan? = null
+        val tried = mutableSetOf<com.arin.selffix.Orchestrator.Approach>()
+    }
+
+    private val orchestratorStats by lazy { com.arin.selffix.Orchestrator.Stats(java.io.File(getApplication<Application>().filesDir, "orchestrator/stats.tsv")) }
+    private fun taskFile(chat: String) = java.io.File(getApplication<Application>().filesDir, "orchestrator/tasks/" + chat.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".txt")
+    private val runLog by lazy { java.io.File(getApplication<Application>().filesDir, "orchestrator/runs.log") }
+
+    /**
+     * The Boss's planning checkpoint for a new reply: the owner's exact objective as an immutable record with a requirement
+     * ledger, a diagnosis, the first approach and its budget. A "Resume" restores the interrupted task's record instead.
+     */
+    private fun planRun(run: Run, userSaid: String, projectId: String, p: String, m: String, app: Application) {
+        val runId = java.util.UUID.randomUUID().toString().take(8)
+        val workerOn = com.arin.selffix.Worker.on(app)
+        val resumed = if (userSaid.startsWith("Resume the task from exactly where it stopped"))
+            com.arin.selffix.Orchestrator.loadCheckpoint(taskFile(run.chat))?.takeIf { it.progress != "finished" } else null
+        val ledger = resumed?.ledger ?: com.arin.selffix.Orchestrator.Ledger(com.arin.selffix.Orchestrator.record(runId, run.chat, projectId, userSaid))
+        val d = com.arin.selffix.Orchestrator.diagnose(ledger.task.original, ledger.requirements.size)
+        val plan = com.arin.selffix.Orchestrator.choose(d, workerOn, claudeHelperOn, orchestratorStats)
+            .let { pl -> resumed?.approach?.let { pl.copy(approach = it, reason = "resumed: " + pl.reason) } ?: pl }
+        run.ctx = com.arin.selffix.RunContext(runId, run.chat, run.chatTitle, projectId, p, m, workDirOf(run.chat).orEmpty(), claudeHelperOn, workerOn, ledger.task.original)
+        run.ledger = ledger
+        run.plan = plan
+        com.arin.selffix.Orchestrator.saveCheckpoint(taskFile(run.chat), ledger, plan, if (resumed != null) "resumed" else "started")
+        com.arin.selffix.Orchestrator.log(runLog, runId, run.chat, if (resumed != null) "resume" else "plan", mapOf("project" to projectId,
+            "type" to d.type.name, "approach" to plan.approach.name, "why" to plan.reason, "provider" to p, "model" to m,
+            "requirements" to ledger.requirements.joinToString(",") { it.id }))
+        com.arin.selffix.Activity.log("chat", "🧭 Plan: " + plan.line().take(200))
+    }
+
+    /** The completion checkpoint: ledger statuses from what the answer and the executed steps show; outcome recorded. */
+    private fun finishRun(run: Run, answer: String, ran: List<com.arin.data.CommandRun>, failure: String?, workerAccepted: Boolean) {
+        val ledger = run.ledger ?: return
+        val ctx = run.ctx ?: return
+        val executedOk = ran.any { it.kind != "tool" && it.kind != "steer" && it.exitCode == 0 }
+        val anyFailed = ran.lastOrNull { it.kind != "tool" && it.kind != "steer" }?.let { it.exitCode != null && it.exitCode != 0 } == true
+        val uncovered = com.arin.selffix.Requirements.uncovered(ledger.open().map { it.text }, answer).toSet()
+        ledger.requirements.forEach { r ->
+            when {
+                failure != null -> ledger.update(r.id, com.arin.selffix.Orchestrator.ReqStatus.FAILED, failure.take(120))
+                r.text in uncovered -> Unit
+                // VERIFIED only when a real command or build step ran successfully and nothing after it failed.
+                executedOk && !anyFailed -> ledger.update(r.id, com.arin.selffix.Orchestrator.ReqStatus.VERIFIED, "commands ran with exit 0")
+                else -> ledger.update(r.id, com.arin.selffix.Orchestrator.ReqStatus.IMPLEMENTED, "addressed in the answer")
+            }
+        }
+        val verified = failure == null && !anyFailed && (executedOk || workerAccepted) && uncovered.isEmpty()
+        val status = when {
+            failure != null -> "FAILED"
+            ledger.requirements.all { it.status == com.arin.selffix.Orchestrator.ReqStatus.VERIFIED } -> "COMPLETED"
+            ledger.requirements.any { it.status == com.arin.selffix.Orchestrator.ReqStatus.VERIFIED || it.status == com.arin.selffix.Orchestrator.ReqStatus.IMPLEMENTED } -> "PARTIALLY COMPLETED"
+            else -> "INCOMPLETE"
+        }
+        run.plan?.let { pl ->
+            val d = com.arin.selffix.Orchestrator.diagnose(ledger.task.original, ledger.requirements.size)
+            orchestratorStats.record(d.type, pl.approach, verified, ctx.model)
+        }
+        com.arin.selffix.Orchestrator.saveCheckpoint(taskFile(run.chat), ledger, run.plan, if (failure == null) "finished" else "failed: ${failure.take(100)}")
+        com.arin.selffix.Orchestrator.log(runLog, ctx.runId, ctx.chatId, "finish", mapOf("status" to status, "verified" to verified.toString(),
+            "approach" to (run.plan?.approach?.name ?: ""), "tried" to run.tried.joinToString(","),
+            "ledger" to ledger.requirements.joinToString(",") { "${it.id}:${it.status}" }))
     }
 
     /** Replies running now, by chat id (a temporary chat uses [TEMP_CHAT]). */
@@ -3155,6 +3221,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             var failStreak = 0
             run.liveCommands.clear()
             var failure: String? = null
+            withContext(Dispatchers.IO) { runCatching { planRun(run, userSaid, project?.id.orEmpty(), p.name, m, app) } }
+            var workerAccepted = false
             try {
                 // Models that can't see get every picture and video described for them (text read, content described).
                 val seenHistory = com.arin.selffix.VisionBridge.prepare(app, p, m, history) { run.status = it }.also { run.status = null }
@@ -3690,11 +3758,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         turns += Turn(false, full)
                         // ARIN-PROTECTED: outcome-classes — the boss is told which worker declined or failed and why (from the
                         // real answers), and decides: restate a misunderstood task, respect a genuine refusal, or do it itself.
+                        run.plan?.let { pl -> run.tried += pl.approach }
+                        val nextPlan = if (result.isBlank()) run.plan?.let { pl -> wr.attempts.lastOrNull()?.verdict?.kind?.let { k ->
+                            com.arin.selffix.Orchestrator.escalate(pl, k, run.tried, com.arin.selffix.Worker.on(app), claudeHelperOn) } } else null
+                        if (nextPlan != null) run.plan = nextPlan
                         turns += Turn(true, if (result.isBlank()) "[No worker did this task — ${wr.summary()}." +
+                            (nextPlan?.let { " Suggested next approach: ${it.approach} (${it.reason}); don't repeat the same attempt." } ?: "") +
                             (if (reviewNote.isNotBlank()) " $reviewNote." else "") + " You (the main model) decide the next " +
                             "step: if a worker misunderstood, restate the task accurately; respect a genuine safety or authorization refusal " +
                             "(don't reword the task to get around it); after a technical failure, do it yourself, briefly.]"
-                            else { lastWorkerResult = result; "[WORKER RESULT from $who — inspect it. If it's right, answer the person and write " +
+                            else { lastWorkerResult = result
+                                // ARIN-PROTECTED: evidence-check — a worker's "done" is checked against its task (no AI call).
+                                val acc = com.arin.selffix.Orchestrator.accept(result, com.arin.selffix.Orchestrator.Evidence(deliverable = result),
+                                    com.arin.selffix.Orchestrator.Ledger(com.arin.selffix.Orchestrator.record(run.ctx?.runId.orEmpty(), run.chat, "", workerTask)))
+                                if (acc.accepted) workerAccepted = true
+                                (if (acc.accepted) "" else "[Arin check: ${acc.status} — ${acc.reason}. Don't accept this as done without evidence.]\n") +
+                                "[WORKER RESULT from $who — inspect it. If it's right, answer the person and write " +
                                 "${com.arin.selffix.Worker.RESULT_TAG} where its output should appear (don't copy it). If it's wrong, send directions " +
                                 "in another <ask_worker>.]\n" + result.take(16_000) })
                         continue
@@ -3984,6 +4063,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         pendingBuild = pendingBuild,
                     )
                 }
+                withContext(Dispatchers.IO) { runCatching { finishRun(run, Prompt.clean(answer), ran.toList(), failure, workerAccepted) } }
                 runs.remove(run.chat)
                 if (run.chat == chatKey()) {
                     // This chat is open: show the answer here. Append in place (no full-list rebuild) when nothing

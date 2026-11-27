@@ -669,6 +669,7 @@ object Linux {
             put("PATH", "/system/bin")
             put("ANDROID_ROOT", "/system")
             put("ANDROID_DATA", "/data")
+            if (noSeccomp(context)) put("PROOT_NO_SECCOMP", "1")
         }
         val process = try {
             pb.start()
@@ -701,6 +702,14 @@ object Linux {
             // Give the subshell a moment to have written where it ended up.
             var cwd: String? = null
             repeat(10) { if (cwd == null) { cwd = runCatching { cwdFile.readText().trim() }.getOrNull()?.ifBlank { null }; if (cwd == null) Thread.sleep(20) } }
+            val all = out.toString() + err.toString()
+            // ARIN-PROTECTED: proot-fallback — some kernels (emulators, a few phones) reject PRoot's fast seccomp mode, so the
+            // shell can't even open /dev/null. Nothing ran in that case: switch to the compatible mode once, remember it, retry.
+            if (!noSeccomp(context) && Regex("""(/dev/null|cannot duplicate pipe)[^\n]*Function not implemented""").containsMatchIn(all)) {
+                context.getSharedPreferences("arin-linux", Context.MODE_PRIVATE).edit().putBoolean("no_seccomp", true).apply()
+                runCatching { script.delete() }; runCatching { cwdFile.delete() }
+                return@withContext Linux.run(context, command, timeoutMs, workDir, onOutput)
+            }
             Termux.Result(out.toString(), err.toString(), code, null, cwd = cwd)
         } catch (e: TimeoutCancellationException) {
             process.destroy()
@@ -713,6 +722,9 @@ object Linux {
             runCatching { cwdFile.delete() }
         }
     }
+
+    /** True once this device was found to need PRoot's compatible (no-seccomp) mode. */
+    fun noSeccomp(context: Context): Boolean = context.getSharedPreferences("arin-linux", Context.MODE_PRIVATE).getBoolean("no_seccomp", false)
 
     /** Copies an attached file into Linux (/root/files) and returns its path there, or null. */
     fun importFile(context: Context, input: InputStream, name: String): String? = runCatching {

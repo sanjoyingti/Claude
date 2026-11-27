@@ -86,6 +86,7 @@ chat/ChatViewModel.kt|bounded-retry|00d255d597bf
 chat/ChatViewModel.kt|credit-saver|5e75a670adea
 chat/ChatViewModel.kt|credit-saver|818b9d96dec9
 chat/ChatViewModel.kt|credit-saver|851b7a41b143
+chat/ChatViewModel.kt|evidence-check|ffa9c8364990
 chat/ChatViewModel.kt|explain-after-coding|8e9079e301b4
 chat/ChatViewModel.kt|helper-never-takes-over|b13f347d08e3
 chat/ChatViewModel.kt|helper-sees-only-the-boss|a8d875d20fe8
@@ -183,7 +184,10 @@ selffix/Delegation.kt|owner-words-only-to-main|b99adc4f588e
 selffix/Delegation.kt|refusal-provenance|3890c7d5bf71
 selffix/ErrorDoctor.kt|research-first-error-help|d4c218126047
 selffix/ErrorDoctor.kt|researches the error on the internet|1d524e8c80fa
+selffix/Orchestrator.kt|orchestrator|f752b4f288ab
+selffix/Orchestrator.kt|run-context|1fcaf8c036f9
 selffix/Outcome.kt|outcome-classes|aab0487b7cab
+selffix/ProjectGraph.kt|project-graph|28dec20202b3
 selffix/RefusalReview.kt|refusal-review|2697e6a05fdc
 selffix/Requirements.kt|requirement-coverage|047d3f8fe280
 selffix/RuleIntegrity.kt|rule-integrity|153cf38d82db
@@ -210,6 +214,7 @@ settings/SettingsScreen.kt|terminal-self-test|3743837f5499
 terminal/Linux.kt|apk-toolkit in every tab|a86a0d6c4809
 terminal/Linux.kt|apk-toolkit|a3f075ae6094
 terminal/Linux.kt|per-run-workdir|df7c998e1ad8
+terminal/Linux.kt|proot-fallback|b1f5b8811f87
 terminal/RetryGuard.kt|bounded-retry|0c854381189a
 terminal/TerminalSelfTest.kt|terminal-self-test|f880982b7fc3
 voice/VoiceScreen.kt|ai-helper in every tab|fc42063188ae

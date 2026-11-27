@@ -324,3 +324,10 @@ told they are there.
 - **rule-integrity** — the exact instruction texts the main, middle and helper models receive at runtime are fingerprinted (SHA-256) in `app/src/main/assets/instruction-baseline.txt`. A unit test fails the build if any changed, disappeared or was replaced; the running app checks the same at start-up and on the test device.
 - **rule-baseline (stronger)** — `.github/protected-baseline.txt` now fingerprints each protected rule's whole comment block, so an edited or swapped rule fails the build, not only a deleted one.
 - **terminal-self-test** — Settings → Linux → "Test the terminal" checks the phone's real terminal: working folders carry over, chats stay separate, simultaneous commands don't mix output or exit codes, a missing folder is handled, and the retry limit works. The same test runs on the emulator.
+
+## 1.25.0 — Orchestration upgrade
+- orchestrator: Boss's no-AI decision layer — immutable task record + requirement ledger (R1…), diagnosis, first-choice approach and adaptive budget, evidence-based escalation (never the same approach twice; never around a genuine safety/authorization refusal), outcome statistics from verified results only, per-run log and resumable checkpoint.
+- run-context: each reply's identity captured once at its start.
+- evidence-check: a worker's "done" is checked against its task before the boss accepts it.
+- project-graph: project-scoped map of files, classes, functions and dependents (library; not yet used by the chat flow).
+- proot-fallback: PRoot's compatible mode is used only where the kernel rejects the fast mode.
