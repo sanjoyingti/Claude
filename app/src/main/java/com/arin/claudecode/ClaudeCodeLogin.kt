@@ -88,7 +88,7 @@ private fun ProLogin(vm: ChatViewModel) {
         accounts.forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.Switch(checked = a.id == activeId, onCheckedChange = { on -> if (on) vm.makeCcAccountMain(a.id) })
-                androidx.compose.foundation.layout.Spacer(Modifier.padding(4.dp))
+                androidx.compose.foundation.layout.Spacer(Modifier.width(6.dp))
                 var email by remember(a.id) { mutableStateOf<String?>(null) }
                 androidx.compose.runtime.LaunchedEffect(a.id) { email = com.arin.claudecode.ClaudeAccounts.email(ctx, a.id) }
                 Text("• ${a.name}" + (email?.let { " ($it)" } ?: ""), modifier = Modifier.weight(1f))
