@@ -51,10 +51,13 @@ object ClaudeCodeModel {
         java.io.File(dir, "prompt.txt").writeText(convo)
         java.io.File(root, "$DIR/home/.claude".removePrefix("/")).mkdirs()
         java.io.File(root, "$DIR/home/.claude.json".removePrefix("/")).takeIf { !it.exists() }?.writeText("{\"hasCompletedOnboarding\":true}")
-        val m = model.ifBlank { "sonnet" }.replace("'", "")
+        // "sonnet@<account>": that account's own sign-in (it used to always use the main one, so switching accounts
+        // didn't help when the main account was out of credit).
+        val m = ClaudeAccounts.modelOf(model).ifBlank { "sonnet" }.replace("'", "")
+        val tokenFile = ClaudeAccounts.tokenFileFor(context, model)
         val out = java.io.File(dir, "out.jsonl")
         val cmd = "cd $DIR/$id; unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL; " +
-            "export CLAUDE_CODE_OAUTH_TOKEN=\$(cat /root/.cc_token 2>/dev/null) DISABLE_AUTOUPDATER=1 " +
+            "export CLAUDE_CODE_OAUTH_TOKEN=\$(cat $tokenFile 2>/dev/null) DISABLE_AUTOUPDATER=1 " +
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 HOME=$DIR/home; " +
             "timeout 1800 claude -p --model '$m' --output-format stream-json --verbose --include-partial-messages " +
             "--add-dir $DIR/$id --allowedTools Read --disallowedTools ${CC_TOOLS.joinToString(" ")} " +

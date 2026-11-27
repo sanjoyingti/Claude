@@ -391,6 +391,10 @@ PY
           ( set -a; . $BRIDGE_ENV; set +a; setsid python3 /root/.arin/cc-bridge.py 8787 >/dev/null 2>&1 & )
           for i in 1 2 3 4 5 6 7 8 9 10; do curl -s -m 1 http://127.0.0.1:8787/health >/dev/null 2>&1 && break; sleep 0.3; done
         fi
+        # The Claude account in use NOW (switching accounts in Arin takes effect on the next start; never a stale copy).
+        if [ -z "${'$'}CLAUDE_CODE_OAUTH_TOKEN" ] && [ -z "${'$'}ANTHROPIC_BASE_URL" ] && [ ! -f $BRIDGE_ENV ] && [ -s $TOKEN_FILE ]; then
+          export CLAUDE_CODE_OAUTH_TOKEN="${'$'}(cat $TOKEN_FILE)"
+        fi
         exec $REAL_BIN "${'$'}@"
     """.trimIndent() + "\n"
 
@@ -438,8 +442,8 @@ PY
         val bridgeBefore = runCatching { bridgeEnv.readText() }.getOrDefault("")
         when (b?.kind) {
             "pro" -> {
-                val token = runCatching { java.io.File(root, TOKEN_FILE.removePrefix("/")).readText().trim() }.getOrDefault("")
-                if (token.isNotEmpty()) env.put("CLAUDE_CODE_OAUTH_TOKEN", token)
+                // The sign-in is NOT copied into settings.json (a copy there pinned the old account after a switch and
+                // overrode the one chosen): the launcher reads the current account's token on every start.
                 if (b.model.isNotBlank()) env.put("ANTHROPIC_MODEL", b.model)
                 env.put("DISABLE_AUTOUPDATER", "1")
                 bridgeEnv.delete()

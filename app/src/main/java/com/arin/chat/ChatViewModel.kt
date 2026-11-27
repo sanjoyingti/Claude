@@ -731,7 +731,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun makeCcAccountMain(id: String) {
         val app = getApplication<Application>()
-        ArinApp.scope.launch { com.arin.claudecode.ClaudeAccounts.makeMain(app, id); ccAccountsTick++; notice = "The Claude Code tab now uses this account" }
+        ArinApp.scope.launch {
+            com.arin.claudecode.ClaudeAccounts.makeMain(app, id); ccAccountsTick++
+            // Old Claude processes still hold the previous account's sign-in: end them so the next message uses this one.
+            runCatching { com.arin.claudecode.Harness.stopAll() }
+            runCatching { com.arin.terminal.Shell.run(app, "pkill -f 'arin-claude/claude' ; pkill -f '/claude -p' ; true", 15_000) }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { applyCcLinux() }
+            notice = "Switched — Claude now uses \"${com.arin.claudecode.ClaudeAccounts.name(app, id)}\" (send your message again)"
+        }
     }
 
     /** New name for a Claude account (shown in the model menu, e.g. "Claude Sonnet · Work"). */
