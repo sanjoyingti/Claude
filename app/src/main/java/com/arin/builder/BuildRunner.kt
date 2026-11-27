@@ -204,6 +204,16 @@ object BuildRunner {
         return true
     }
 
+    /**
+     * ARIN-PROTECTED: build-tab-shows-running — when the Build tab opens on an empty, idle session, show a running build
+     * instead (if one is running), so a build started from a chat still shows its live progress here. Only changes which
+     * session is displayed — each build keeps its own session, timeline, working directory and tab isolation.
+     */
+    fun showRunningIfIdle(context: Context) {
+        if (current.running || current.timeline.isNotEmpty() || current.project != null) return
+        sessions.values.firstOrNull { it.running }?.let { open(context, it.id) }
+    }
+
     /** Forgets an idle session's in-memory copy (it's saved on disk) so sessions don't pile up. */
     private fun dropIfIdle(s: BuildSession) {
         if (!s.running && s.pending == null && s.id != current.id) sessions.remove(s.id)

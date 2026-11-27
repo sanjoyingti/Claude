@@ -338,3 +338,4 @@ told they are there.
 - project-map-in-chat: when a chat has a project folder, the worker (and the helper, when asked) gets only the related files from the map; investigate-first tasks must cite mapped files as evidence; a plan with review gets one independent helper review.
 - project-map-in-build: Arin-side only (the build worker still never sees the project): a fixed piece that removes a class/function other files use is rejected.
 - 1.26.1: a chat reply's task record is saved in the background (not awaited), so the reply reaches the chat first and a build it starts keeps its live progress message (1.25.0 regression fixed; nothing removed).
+- 1.26.2 build-tab-shows-running: opening an empty Build tab displays a build already running (e.g. started from a chat); display only, each build keeps its own session and tab isolation.

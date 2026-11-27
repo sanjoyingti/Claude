@@ -148,6 +148,10 @@ fun BuildScreen(chat: ChatViewModel, vm: BuildViewModel, onBack: () -> Unit, onO
     }
 
     val listState = rememberLazyListState()
+    // When this tab opens empty, show a build that's already running (e.g. one started from a chat). Display only —
+    // builds keep running in their own sessions; nothing about tab isolation changes.
+    val buildTabCtx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { BuildRunner.showRunningIfIdle(buildTabCtx) }
     LaunchedEffect(vm.timeline.size) {
         if (vm.timeline.isNotEmpty()) listState.animateScrollToItem(vm.timeline.size - 1)
     }

@@ -128,6 +128,7 @@ jobs:
           grep -q "ARIN-PROTECTED: project-map " $D/selffix/ProjectGraph.kt
           grep -q "ARIN-PROTECTED: project-map-in-chat" $D/chat/ChatViewModel.kt
           grep -q "ARIN-PROTECTED: project-map-in-build" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: build-tab-shows-running" $D/builder/BuildRunner.kt
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"
