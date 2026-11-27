@@ -3613,11 +3613,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         recalls++
                         run.liveText = ""
                         run.status = "Remembering “$recallQuery”"
-                        val found = withContext(Dispatchers.IO) { runCatching { store.recall(recallQuery, run.chat) }.getOrDefault("") }
+                        val found = withContext(Dispatchers.IO) { runCatching { store.recall(recallQuery, null, only = run.chat) }.getOrDefault("") }
+                        // ARIN-PROTECTED: tab-memory — "remember our past conversation" means THIS tab's own conversation only
+                        // (its whole saved history), never what was built or said in another tab.
                         run.status = null
                         val result = if (found.isBlank())
-                            "No past chat mentions \"$recallQuery\". Try other words once, or answer from this chat and ask the person for the detail."
-                        else "Matching parts of past chats:\n\n$found\n\nNow answer using these where they help."
+                            "Nothing earlier in this tab mentions \"$recallQuery\". Try other words once, or ask the person for the detail (other tabs are never read)."
+                        else "Matching earlier parts of THIS tab's conversation:\n\n$found\n\nNow answer using these where they help."
                         val step = com.arin.data.CommandRun("recall: $recallQuery", result.take(2_000), 0, kind = "tool")
                         ran += step
                         run.liveCommands += step

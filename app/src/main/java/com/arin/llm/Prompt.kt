@@ -517,15 +517,17 @@ object Prompt {
             }
             append('\n')
             if (!need("recall")) {
-                append("Past chats: to look something up from an earlier chat, reply with ONLY <recall>a few keywords</recall>.\n")
+                append("Earlier in this tab: to look something up from earlier in THIS conversation, reply with ONLY <recall>a few keywords</recall>. Other tabs are never read.\n")
             } else {
-            append("Past conversations: every chat with the person is saved on this phone and you can read them. ")
+            append("Past conversation (THIS TAB ONLY — owner's rule): when the person says \"remember our past conversation\" or refers to " +
+                "something from before, it means earlier in THIS tab, never another tab or what was built there. The whole history of " +
+                "this tab is saved and you can read it. ")
             append("When they refer to something from before (\"my app\", \"the error we fixed\", \"what you suggested\", ")
             append("\"continue where we left off\", \"do you remember…\"), or it would help to know what was said earlier, reply with ")
             append("ONLY <recall>a few keywords</recall> (topic words that were likely said, not words like \"discussed\"). ")
             append("The app sends you the matching parts of past chats; then answer from them. Never say you can't remember ")
             append("past chats or that you have no memory before recalling.\n")
-            if (pastChats.isNotBlank()) append("Most recent past chats (title, date):\n").append(pastChats).append('\n')
+            // Other tabs' titles are not listed: their conversations are never used here.
             }
             append('\n')
         }

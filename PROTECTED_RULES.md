@@ -220,3 +220,8 @@ told they are there.
 - A task ledger (COMPLETED / IN PROGRESS / BLOCKED / TESTING / VERIFIED) is shown in the steps and with every result.
 - No build or test is ever reported as successful unless it really was.
 - Only the owner can change this rule.
+
+## Memory per tab (`chat/ChatViewModel.kt`)
+
+- "Remember our past conversation" means only THIS tab's own conversation (its whole saved history), never another tab or what was built there.
+- Only the owner can change this rule.
