@@ -59,7 +59,7 @@ class BuildService : Service() {
         }
         val appName = request.project?.appName ?: request.appName
         session.running = true
-        jobs[session.id] = scope.launch {
+        jobs[session.id] = scope.launch(com.arin.selffix.TabScope("build:" + session.id)) {
             // The agent parses big model replies and project files: keep that work off the main thread,
             // or the screen freezes and Android closes the app ("isn't responding").
             // ARIN-PROTECTED: never give up — when an attempt fails, research the error on the internet and try another

@@ -132,7 +132,7 @@ llm/Llm.kt|boss-minimum-credit|bfb152cb09b5
 llm/Llm.kt|claude-harness for|f6f2275bdccc
 llm/Llm.kt|claude-harness|fdbe35e2f93d
 llm/Llm.kt|credit-saver|c6d2347ae786
-llm/Llm.kt|tab-isolation|a67e1296effe
+llm/Llm.kt|tab-isolation|3869677028e3
 llm/Prompt.kt|ai-helper|26b71d6e9b60
 llm/Prompt.kt|research-first auto-fix rule for every model|8448bdb73ae4
 llm/Prompt.kt|tab-isolation|c0796fd59313
@@ -195,6 +195,7 @@ selffix/SelfUpdateRules.kt|Arin|9433b6f2cd31
 selffix/SelfUpdateRules.kt|files an update may never touch|c770320405ef
 selffix/SelfUpdateRules.kt|self-update-only-arin|4f32a69ea707
 selffix/TabIsolation.kt|tab-isolation|cb9bc99bcdfd
+selffix/TabScope.kt|strict-tab-scope|e91491b70ae0
 selffix/TaskSummary.kt|ask-before-building|7f02b8954f8a
 selffix/TaskSummary.kt|exact-request|d66a722bcbff
 selffix/TaskSummary.kt|explain-after-coding|dd1ba5686c5c

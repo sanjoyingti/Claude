@@ -304,7 +304,7 @@ object ArinUpdateChat {
         val endpoint = if (provider == com.arin.llm.Provider.Custom) com.arin.llm.CustomApi.Endpoint(vm.customBaseUrl, vm.customFormat) else null
         val token = vm.githubToken()
         com.arin.app.ReplyService.hold(app, "arin-update")
-        job = com.arin.ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+        job = com.arin.ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main + TabScope("arin-update")) {
             try {
                 if (files == null && token.isNotBlank()) {
                     status = "Looking at Arin's source on GitHub"

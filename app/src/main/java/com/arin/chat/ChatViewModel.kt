@@ -3206,7 +3206,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         run.status = null
         ReplyService.start(app)
         // App-wide scope: the reply finishes even if this screen goes away.
-        run.job = ArinApp.scope.launch {
+        run.job = ArinApp.scope.launch(com.arin.selffix.TabScope("chat:" + run.chat)) {
             val thinking = StringBuilder()
             var thinkStart = 0L
             var answer = ""

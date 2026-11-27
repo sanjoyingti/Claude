@@ -58,7 +58,8 @@ object AutoFix {
         // Credit saver: the same search is never done twice, and pages are cut to the paragraphs that matter.
         val app = com.arin.ArinApp.instance
         val saver = CreditSaver.on(app)
-        if (saver) CreditSaver.cachedResearch(q)?.let { onStep("Already researched this error — reusing it"); return it }
+        val cacheKey = TabScope.current().let { if (it.startsWith("oneoff-")) "" else it } + "|" + q  // strict-tab-scope
+        if (saver) CreditSaver.cachedResearch(cacheKey)?.let { onStep("Already researched this error — reusing it"); return it }
         val queries = linkedSetOf(q, "$q fix", "$q site:stackoverflow.com", "$q github issue").take(4)
         val out = StringBuilder()
         val urls = linkedSetOf<String>()
@@ -82,7 +83,7 @@ object AutoFix {
             }
         }
         return if (out.isBlank()) "The internet search for \"$q\" found nothing. Search again with other words before fixing."
-        else out.toString().take(if (saver) 7_000 else 14_000).also { if (saver) CreditSaver.cacheResearch(q, it) }
+        else out.toString().take(if (saver) 7_000 else 14_000).also { if (saver) CreditSaver.cacheResearch(cacheKey, it) }
     }
 
     /** Remembers which errors keep coming back, so a repeat gets a new approach (and Claude's help). */

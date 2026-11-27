@@ -402,12 +402,15 @@ object ClaudeHelper {
         }
         val text = question + if (shared.isNotEmpty()) "\n\nThe person's files (read them with the Read tool): " + shared.joinToString(", ") else ""
         val now = System.currentTimeMillis()
-        val talk = helperTalks[source]?.takeIf { now - it.first < 15 * 60_000L }?.second ?: mutableListOf()
+        // strict-tab-scope: the helper's running session belongs to one tab only (never shared by tab type).
+        val tabKey = "$source|" + TabScope.current()
+        val talk = helperTalks[tabKey]?.takeIf { now - it.first < 15 * 60_000L }?.second ?: mutableListOf()
         talk += com.arin.llm.Turn(fromUser = true, text = text)
-        helperTalks[source] = now to talk
+        helperTalks[tabKey] = now to talk
+        helperTalks.entries.removeIf { now - it.value.first > 15 * 60_000L }
         val out = StringBuilder()
         // Errors go up, so the helper can try the Claude key instead.
-        com.arin.claudecode.Harness.stream(model, SYSTEM, talk.toList(), purpose = "helper:$source",
+        com.arin.claudecode.Harness.stream(model, SYSTEM, talk.toList(), purpose = "helper:$tabKey",
             tools = "Read,Grep,Glob,WebFetch,WebSearch").collect { if (it is com.arin.llm.Delta.Text) out.append(it.text) }
         return out.toString().trim()
     }

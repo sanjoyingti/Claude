@@ -74,7 +74,7 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
         if (busy) return
         busy = true; report = ""; step = "Starting…"
         scopeTarget?.let { ScopeLog.add(ctx, what, it) }
-        scope.launch {
+        scope.launch(com.arin.selffix.TabScope("security:$what")) {
             report = runCatching { withContext(Dispatchers.IO) { work { s -> step = s } } }.getOrElse { "⚠️ ${it.message}" }
             ScopeLog.saveReport(ctx, what, report)
             busy = false; step = ""

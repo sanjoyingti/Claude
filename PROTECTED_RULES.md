@@ -331,3 +331,4 @@ told they are there.
 - evidence-check: a worker's "done" is checked against its task before the boss accepts it.
 - project-graph: project-scoped map of files, classes, functions and dependents (library; not yet used by the chat flow).
 - proot-fallback: PRoot's compatible mode is used only where the kernel rejects the fast mode.
+- strict-tab-scope (1.25.1): every tab's work (each chat, each build, Arin Update, Security) runs tagged with its own id; helper sessions, harness sessions and the research cache are keyed by it, and untagged calls get a one-off session — nothing is shared between tabs.
