@@ -73,7 +73,7 @@ object ClaudeCodeModel {
                 "stream_event" -> {
                     val d = o.optJSONObject("event")?.optJSONObject("delta") ?: return
                     when (d.optString("type")) {
-                        "text_delta" -> d.optString("text").takeIf { it.isNotEmpty() }?.let { sent = true; trySend(Delta.Text(it)) }
+                        "text_delta" -> d.optString("text").takeIf { it.isNotEmpty() }?.let { com.arin.builder.LiveFeed.stream("Claude", it); sent = true; trySend(Delta.Text(it)) }
                         "thinking_delta" -> d.optString("thinking").takeIf { it.isNotEmpty() }?.let { trySend(Delta.Thinking(it)) }
                     }
                 }
@@ -108,7 +108,9 @@ object ClaudeCodeModel {
             if (!sent && !resultText.isNullOrBlank()) { sent = true; send(Delta.Text(resultText!!)) }
             if (!sent) {
                 val raw = runCatching { out.readText() }.getOrDefault("").takeLast(600)
-                throw LlmException("Claude (Claude Code login) didn't answer: " + (errorText ?: raw.ifBlank { job.await().stderr.takeLast(400) }))
+                val why = errorText ?: raw.ifBlank { job.await().stderr.takeLast(400) }
+                if (ClaudeLimit.isLimit(why)) throw LlmException("CLAUDE_LIMIT: " + ClaudeLimit.hit(context, ClaudeAccounts.accountOf(model), why))
+                throw LlmException("Claude (Claude Code login) didn't answer: " + why)
             }
         } finally {
             if (!job.isCompleted) runCatching { com.arin.terminal.Shell.run(context, "pkill -f '[a]dd-dir $DIR/$id'  2>/dev/null; echo ok", 20_000) }

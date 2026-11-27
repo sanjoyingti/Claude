@@ -155,11 +155,12 @@ object Harness {
                                                 if (newBlock) { send(Delta.Text("\n\n")); newBlock = false }
                                                 // Some models (DeepSeek and others) write their reasoning as <think>…</think>
                                                 // inside the answer: it goes to the reasoning, not the reply.
+                                                com.arin.builder.LiveFeed.stream("Claude", it)
                                                 for ((isThought, part) in thinkSplit.feed(it)) {
                                                     if (isThought) send(Delta.Thinking(part)) else { sentText = true; send(Delta.Text(part)) }
                                                 }
                                             }
-                                            "thinking_delta" -> d.optString("thinking").takeIf { it.isNotEmpty() }?.let { send(Delta.Thinking(it)) }
+                                            "thinking_delta" -> d.optString("thinking").takeIf { it.isNotEmpty() }?.let { com.arin.builder.LiveFeed.stream("Claude (thinking)", it); send(Delta.Thinking(it)) }
                                         }
                                     }
                                 }
@@ -169,7 +170,7 @@ object Harness {
                                 val c = o.optJSONObject("message")?.optJSONArray("content") ?: continue
                                 for (i in 0 until c.length()) {
                                     val b = c.optJSONObject(i) ?: continue
-                                    if (b.optString("type") == "tool_use") { toolRunning = true; send(Delta.Thinking("\n▸ " + describe(b) + "\n")) }
+                                    if (b.optString("type") == "tool_use") { toolRunning = true; com.arin.builder.LiveFeed.add("Claude ▸", describe(b)); send(Delta.Thinking("\n▸ " + describe(b) + "\n")) }
                                 }
                             }
                             "user" -> toolRunning = false // the tool's result came back
@@ -179,7 +180,9 @@ object Harness {
                                 o.optString("session_id").takeIf { it.isNotBlank() }?.let { session.sessionId = it }
                                 UsageMeter.fromResult(o)
                                 if (o.optBoolean("is_error") && !sentText) {
-                                    throw LlmException("Claude: " + o.optString("result").ifBlank { o.optString("subtype") }.take(600))
+                                    val msg = o.optString("result").ifBlank { o.optString("subtype") }
+                                    if (ClaudeLimit.isLimit(msg)) throw LlmException("CLAUDE_LIMIT: " + ClaudeLimit.hit(context, session.account.takeIf { it != "main" }, msg))
+                                    throw LlmException("Claude: " + msg.take(600))
                                 }
                                 if (!sentText) o.optString("result").takeIf { it.isNotBlank() }?.let { sentText = true; send(Delta.Text(it)) }
                             }

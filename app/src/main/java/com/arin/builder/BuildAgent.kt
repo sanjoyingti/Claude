@@ -205,7 +205,10 @@ class BuildAgent(
     /** The helper's plan is asked for once per build, before the model writes its first code. */
     private var helperPlanned = false
 
-    private fun step(kind: BuildEvent.Kind, text: String) = emit(BuildEvent(kind, text))
+    private fun step(kind: BuildEvent.Kind, text: String) {
+        LiveFeed.add(if (kind == BuildEvent.Kind.THINKING) "…" else "Build", text)
+        emit(BuildEvent(kind, text))
+    }
 
     /** The model's last answer, kept so a failure report can show what it sent. */
     private var lastReply = ""
@@ -1050,7 +1053,16 @@ class BuildAgent(
                     }
                     scanned = nl
                 }
-            }; false } catch (e: SteerNow) { true }
+            }; false } catch (e: SteerNow) { true } catch (e: Exception) {
+                // Claude's usage limit (or any failure) of a worker: not an error to fix — the next worker/helper takes over.
+                if (!target.worker || wi + 1 >= pool.size) throw e
+                val why = e.message.orEmpty()
+                step(BuildEvent.Kind.THINKING, (if (why.startsWith("CLAUDE_LIMIT: ")) why.removePrefix("CLAUDE_LIMIT: ") else
+                    "${nice(target.model)} couldn't answer (${why.take(100)})") + " — passing the task to ${nice(pool[wi + 1].model)}")
+                wi++
+                target = pool[wi]
+                continue
+            }
             if (steeredNow) {
                 step(BuildEvent.Kind.THINKING, "Changing course now with your direction")
                 onProgress(null, "")

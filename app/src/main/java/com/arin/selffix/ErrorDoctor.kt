@@ -37,6 +37,11 @@ object ErrorDoctor {
      * does about it, and — when the person must act — exactly how to fix it. Never blank.
      */
     suspend fun diagnose(context: Context, where: String, error: String, brain: Brain?, onStep: (String) -> Unit = {}): String {
+        // Claude's usage limit is not a bug: nothing to search or fix.
+        if (error.contains("CLAUDE_LIMIT") || com.arin.claudecode.ClaudeLimit.isLimit(error)) {
+            return "**What happened:** " + error.substringAfter("CLAUDE_LIMIT: ").take(300) + "\n\n**Can Arin fix it by itself?** Yes — " +
+                "it uses your other Claude account if it has credit, otherwise it carries on without Claude (the worker and web research)."
+        }
         val q = query(error, where)
         val research = AutoFix.research(q, error, onStep)
         val ask = "An error happened in the Arin Android app ($where).\n\nError:\n${error.take(3_000)}\n\n" +

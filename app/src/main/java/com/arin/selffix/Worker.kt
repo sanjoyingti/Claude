@@ -49,7 +49,7 @@ object Worker {
         return "WORKER MODE IS ON. The team: you (the boss, the only one who talks to the person), the worker (${names(c)}, a " +
             "different model that does the heavy work) and the AI helper (helps the worker). OWNER'S STRICT RULE: you only direct and " +
             "inspect; you NEVER write code (not even a few lines), long text, research summaries or long analysis yourself. Keep your " +
-            "own replies short. For any code, " +
+            "own replies short and answer FAST: decide quickly, don't deliberate at length. For any code, " +
             "long text, long analysis or multi-step work, do NOT do it yourself — write <ask_worker>TASK: everything the worker " +
             "needs (it cannot see the person or this chat)</ask_worker> as the LAST thing in your reply and stop. Its result comes " +
             "back to you: inspect it; if it's wrong, send directions in another <ask_worker>. To show the worker's output to the " +
@@ -82,7 +82,8 @@ object Worker {
                 }
                 "claude" -> {
                     val key = settings.key(com.arin.llm.Provider.Claude)
-                    val login = runCatching { com.arin.terminal.Linux.installed(c) && com.arin.claudecode.ClaudeCode.connected(c) }.getOrDefault(false)
+                    val login = runCatching { com.arin.terminal.Linux.installed(c) && com.arin.claudecode.ClaudeCode.connected(c) }.getOrDefault(false) &&
+                        !com.arin.claudecode.ClaudeLimit.allLimited(c)
                     val m = w.model.ifBlank { if (key.isNotBlank()) "claude-sonnet-5-5" else "sonnet" }
                     when {
                         // Claude Code login models ("sonnet", "opus", "haiku"), or no key: use the login.

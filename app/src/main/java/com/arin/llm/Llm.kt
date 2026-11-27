@@ -291,7 +291,7 @@ object Llm {
             if (lowReasoning) {
                 put("reasoning_effort", "low")
                 // DeepSeek: thinking on by default and billed as output; switch it off.
-                if (model.contains("deepseek", ignoreCase = true)) putJsonObject("thinking") { put("type", "disabled") }
+                if (model.contains("deepseek", ignoreCase = true)) { putJsonObject("thinking") { put("type", "disabled") }; put("enable_thinking", false) }
             }
             if (extra) {
                 put("private", true) // keep prompts out of the free service's public feed

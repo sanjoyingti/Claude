@@ -219,9 +219,11 @@ object ClaudeHelper {
                     com.arin.terminal.Linux.installed(context) &&
                         com.arin.claudecode.ClaudeCode.installed(context) && com.arin.claudecode.ClaudeCode.connected(context)
                 }.getOrDefault(false)
+                // Every Claude login account is out of credit: use the key if there is one, else no Claude for now.
+                val loginOk = pro && !com.arin.claudecode.ClaudeLimit.allLimited(context)
                 when {
                     h.model.startsWith("claude-") && hasKey -> "key"
-                    pro -> "pro"
+                    loginOk -> "pro"
                     hasKey -> "key"
                     else -> null
                 }
