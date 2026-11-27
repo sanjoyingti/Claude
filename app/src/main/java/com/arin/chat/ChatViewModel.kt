@@ -4092,7 +4092,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         pendingBuild = pendingBuild,
                     )
                 }
-                withContext(Dispatchers.IO) { runCatching { finishRun(run, Prompt.clean(answer), ran.toList(), failure, workerAccepted) } }
+                // Not awaited: the reply must reach the chat before anything else runs, or a build it just started
+                // posts its progress message first and the realign below wipes it (no build progress in the chat).
+                val finAnswer = Prompt.clean(answer); val finRan = ran.toList(); val finFailure = failure; val finAccepted = workerAccepted
+                ArinApp.scope.launch(Dispatchers.IO) { runCatching { finishRun(run, finAnswer, finRan, finFailure, finAccepted) } }
                 runs.remove(run.chat)
                 if (run.chat == chatKey()) {
                     // This chat is open: show the answer here. Append in place (no full-list rebuild) when nothing
