@@ -46,7 +46,12 @@ object Worker {
     /** What the boss is told in chat when worker mode is on. */
     fun instructions(c: Context): String {
         if (!on(c)) return ""
-        return "WORKER MODE IS ON. The team: you (the boss, the only one who talks to the person), the worker (${names(c)}, a " +
+        return instructionsText(names(c))
+    }
+
+    /** The boss's worker-mode instructions, as sent ([names] = the workers' names). Checked by [RuleIntegrity]. */
+    internal fun instructionsText(names: String): String {
+        return "WORKER MODE IS ON. The team: you (the boss, the only one who talks to the person), the worker (${names}, a " +
             "different model that does the heavy work) and the AI helper (helps the worker). OWNER'S STRICT RULE: you only direct and " +
             "inspect; you NEVER write code (not even a few lines), long text, research summaries or long analysis yourself. Keep your " +
             "own replies short: think as deeply as the problem needs, but write little. For any code, " +
@@ -57,7 +62,7 @@ object Worker {
             "person, write $RESULT_TAG instead of copying it. Short questions and small talk you answer yourself, briefly.\n\n"
     }
 
-    private val SYSTEM = "You are the WORKER. A supervisor model gives you tasks and checks your work. Do the task completely " +
+    internal val SYSTEM = "You are the WORKER. A supervisor model gives you tasks and checks your work. Do the task completely " +
         "and well; reply with only the result (code in full where asked), no chit-chat. When stuck, ask the helper code-only: " +
         "<ask_helper>FILE: …\nBODY:\n…\nERROR: …\nNEED: <one line></ask_helper> as the last thing; its answer comes back to you."
 
@@ -122,7 +127,9 @@ object Worker {
         runFor(c, task, boss, system, onStatus = onStatus)
 
     /** One worker's try at a task: who, and what its answer actually was (provenance for the audit and the boss). */
-    data class Attempt(val who: String, val provider: String, val model: String, val verdict: Outcome.Verdict)
+    data class Attempt(val who: String, val provider: String, val model: String, val verdict: Outcome.Verdict,
+                       /** Its exact answer (in memory only, for the boss's review; the audit keeps only the redacted reason). */
+                       val raw: String = "")
 
     /**
      * ARIN-PROTECTED: worker-results — what a worker run produced: the answer (if a worker did the work), its outcome
@@ -187,7 +194,7 @@ object Worker {
                 if (v.kind.ok && !v.partial && CreditSaver.isRefusal(text))
                     v = Outcome.Verdict(Outcome.Kind.UNCLASSIFIED_REFUSAL, text.trim().lineSequence().first().take(300))
                 if (!v.kind.ok) {
-                    attempts += Attempt(me, t.provider.name, t.model, v)
+                    attempts += Attempt(me, t.provider.name, t.model, v, raw = text.take(4_000))
                     if (v.kind.refusal) CreditSaver.noteRefusal(c, t.w, "chat")
                     onStatus(me, "$me " + (if (v.kind.refusal) "declined (${v.kind.name.lowercase().replace('_', ' ')})" else "couldn't do it (${v.kind.name.lowercase().replace('_', ' ')})") +
                         " — passing $boss's task to the next worker")

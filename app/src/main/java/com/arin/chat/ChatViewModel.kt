@@ -3647,8 +3647,41 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         run.liveText = ""
                         run.status = "$bossName is instructing the worker: " + workerTask.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().removePrefix("TASK:").trim().take(90)
                         val wr = com.arin.selffix.Worker.runDetailed(app, workerTask, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
-                        val who = wr.who
-                        val result = if (wr.ok) wr.text else ""
+                        var who = wr.who
+                        var result = if (wr.ok) wr.text else ""
+                        // ARIN-PROTECTED: refusal-review — a worker that declined gets a bounded review: its exact answer and
+                        // reason, the helper's independent assessment, and the boss's decision (clarify, permitted
+                        // alternative, or stop). Genuine safety/authorization refusals are final and never re-sent in other words.
+                        var reviewNote = ""
+                        val declined = wr.attempts.lastOrNull()?.takeIf { !wr.ok && it.verdict.kind.refusal }
+                        if (declined != null) {
+                            run.status = "${declined.who} declined — reviewing why"
+                            val bossTurn: suspend (String) -> com.arin.selffix.RefusalReview.Reply = { prompt ->
+                                val sb = StringBuilder()
+                                com.arin.llm.Llm.stream(p, key, m, "You are the BOSS (main model) reviewing a declined task. Follow every rule you already have.",
+                                    listOf(Turn(true, prompt)), endpoint = endpoint, conv = "review:${run.chat}", boss = true)
+                                    .collect { d -> if (d is Delta.Text) sb.append(d.text) }
+                                com.arin.selffix.RefusalReview.Reply(bossName, sb.toString())
+                            }
+                            val helperTurn: (suspend (String) -> com.arin.selffix.RefusalReview.Reply)? = if (claudeHelperOn) ({ q ->
+                                com.arin.selffix.RefusalReview.Reply(com.arin.selffix.ClaudeHelper.helper(app).name,
+                                    com.arin.selffix.ClaudeHelper.ask(app, q, source = "chat", ownerTexts = ownerWords) { run.status = it })
+                            }) else null
+                            val rv = com.arin.selffix.RefusalReview.review(
+                                objective = workerTask, task = workerTask,
+                                first = com.arin.selffix.RefusalReview.Reply(declined.who, declined.raw),
+                                middle = { t ->
+                                    val again = com.arin.selffix.Worker.runDetailed(app, t, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
+                                    com.arin.selffix.RefusalReview.Reply(again.who.ifBlank { again.attempts.lastOrNull()?.who ?: "worker" },
+                                        if (again.ok) again.text else again.attempts.lastOrNull()?.raw.orEmpty())
+                                },
+                                helper = helperTurn,
+                                boss = bossTurn,
+                            )
+                            reviewNote = rv.summary()
+                            com.arin.selffix.Activity.log("chat", "⚖️ " + reviewNote.take(300))
+                            if (rv.decision == com.arin.selffix.RefusalReview.Decision.USE_RESULT) { who = rv.who; result = rv.text }
+                        }
                         run.who = bossName
                         run.status = null
                         val step = com.arin.data.CommandRun("worker ${who.ifBlank { "(none)" }}: ${workerTask.take(80)}", result.take(2_000), 0, kind = "tool")
@@ -3657,7 +3690,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         turns += Turn(false, full)
                         // ARIN-PROTECTED: outcome-classes — the boss is told which worker declined or failed and why (from the
                         // real answers), and decides: restate a misunderstood task, respect a genuine refusal, or do it itself.
-                        turns += Turn(true, if (result.isBlank()) "[No worker did this task — ${wr.summary()}. You (the main model) decide the next " +
+                        turns += Turn(true, if (result.isBlank()) "[No worker did this task — ${wr.summary()}." +
+                            (if (reviewNote.isNotBlank()) " $reviewNote." else "") + " You (the main model) decide the next " +
                             "step: if a worker misunderstood, restate the task accurately; respect a genuine safety or authorization refusal " +
                             "(don't reword the task to get around it); after a technical failure, do it yourself, briefly.]"
                             else { lastWorkerResult = result; "[WORKER RESULT from $who — inspect it. If it's right, answer the person and write " +

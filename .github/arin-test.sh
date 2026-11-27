@@ -7,7 +7,7 @@ AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)
 PKG=$("$AAPT" dump badging "$APK" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
 report() {
   { echo "RESULT: $1"; [ -n "$2" ] && echo "ERROR: $2"; echo "PACKAGE: $PKG"
-    for f in tests.txt tests/unit-test-report.txt tests/lint-report.txt; do [ -f "$f" ] && cat "$f"; done
+    for f in tests.txt device.txt tests/unit-test-report.txt tests/lint-report.txt; do [ -f "$f" ] && cat "$f"; done
     [ -f crash.txt ] && cat crash.txt; [ -f instr.txt ] && { echo "--- on-device test output ---"; tail -80 instr.txt; }; } > "$R"
   cat "$R"
   exit 0
@@ -49,15 +49,19 @@ if [ -n "$TESTAPK" ] && [ -f "$TESTAPK" ]; then
     report TESTS_NOT_RUN "the test APK couldn't be installed"
   fi
   adb shell am instrument -w "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > instr.txt 2>&1
+  # What the on-device checks found (real Linux terminal, the running app's model instructions).
+  { adb shell run-as "$PKG" cat files/terminal-selftest.txt 2>/dev/null; echo; adb shell run-as "$PKG" cat files/rule-integrity.txt 2>/dev/null; echo; } > device.txt
   if grep -q "^OK (" instr.txt; then
     echo "ON-DEVICE TESTS: $(grep '^OK (' instr.txt)" > tests.txt
   else
     echo "ON-DEVICE TESTS: $(grep -E '^Tests run:' instr.txt || echo 'did not finish')" > tests.txt
     report TESTS_FAILED "$(grep -E '^Tests run:' instr.txt || echo 'on-device tests failed')"
   fi
-else
+elif [ -n "$TESTAPK" ]; then
   echo "ON-DEVICE TESTS: test APK not available" > tests.txt
   report TESTS_NOT_RUN "the test APK wasn't built"
+else
+  echo "ON-DEVICE TESTS: not part of this run (install, open and tap test only)" > tests.txt
 fi
 check
 report PASS ""

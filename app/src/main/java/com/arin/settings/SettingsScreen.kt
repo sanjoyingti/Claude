@@ -551,6 +551,24 @@ private fun LinuxSettings(vm: ChatViewModel) {
         if (vm.linuxReady && com.arin.terminal.Linux.Tool.entries.all { vm.toolInstalled(it) }) {
             OutlinedButton(onClick = { vm.installDevTools() }) { Text("Update all APK & build tools (newest)") }
         }
+        if (vm.linuxReady) {
+            // ARIN-PROTECTED: terminal-self-test — checks working folders, separate chats, simultaneous commands,
+            // exit codes, a missing folder and the retry limit on this phone's real terminal.
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            var testing by remember { mutableStateOf(false) }
+            var result by remember { mutableStateOf("") }
+            OutlinedButton(enabled = !testing, onClick = {
+                testing = true; result = "Testing the terminal…"
+                scope.launch {
+                    result = runCatching { com.arin.terminal.TerminalSelfTest.report(com.arin.terminal.TerminalSelfTest.run(vm.getApplication<android.app.Application>())) }
+                        .getOrElse { "Terminal test couldn't run: ${it.message}" }
+                    testing = false
+                }
+            }) { Text(if (testing) "Testing…" else "Test the terminal") }
+            if (result.isNotBlank()) androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(result, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
     if (vm.linuxBusy) com.arin.selffix.InstallProgressPanel()
     if (vm.linuxLog.isNotEmpty()) {

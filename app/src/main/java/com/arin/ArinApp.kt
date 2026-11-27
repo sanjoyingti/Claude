@@ -20,6 +20,8 @@ class ArinApp : Application() {
         instance = this
         CrashLog.install(this)
         CrashLog.checkExitReasons(this)
+        // ARIN-PROTECTED: rule-integrity — the running app's model instructions are compared with the owner-approved ones.
+        Thread { runCatching { com.arin.selffix.RuleIntegrity.checkApp(this) } }.apply { isDaemon = true; start() }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_REPLIES, "Replies", NotificationManager.IMPORTANCE_DEFAULT).apply {

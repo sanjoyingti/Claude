@@ -56,6 +56,11 @@ object ClaudeHelper {
         // ARIN-PROTECTED: helper-never-takes-over + helper-sees-only-the-boss, told plainly so the model is never confused
         // about who it is.
         val status = if (lastChecked > 0 && lastRoute == null) "(The helper can't be reached right now: no key or login.)\n" else ""
+        return instructionsText(who, status, maxAsks(context), CreditSaver.on(context) && !Worker.on(context))
+    }
+
+    /** The boss's helper instructions, as sent. Checked by [RuleIntegrity]. */
+    internal fun instructionsText(who: String, status: String, maxAsks: Int, delegate: Boolean): String {
         return "WHO YOU ARE: you are the model the person picked for this chat — the BOSS. You do all the work and every " +
             "reply yourself. $who is a DIFFERENT model, your helper: it is not you, so never call yourself $who and never " +
             "describe yourself as the helper. If asked which model you are, name only yourself.\n" + status +
@@ -65,14 +70,14 @@ object ClaudeHelper {
             "SIGNATURE: the method/class signature\nBODY:\n<current code>\nERROR: <exact error text, if any>\n" +
             "NEED: <one line, e.g. \"return the patched body\" or \"what does this method return\">\n</ask_helper> — as the " +
             "LAST thing in your reply, then stop; the answer (code only) comes back " +
-            "to you as a private note. It remembers nothing between questions. Up to ${maxAsks(context)} times per answer. " +
+            "to you as a private note. It remembers nothing between questions. Up to $maxAsks times per answer. " +
             "Never paste the person's message to it, never let it answer for you, never mention its notes to the person. " +
-            "If the person asks whether the AI helper is on: yes.\n" + (if (CreditSaver.on(context) && !Worker.on(context)) DELEGATE else "") + "\n"
+            "If the person asks whether the AI helper is on: yes.\n" + (if (delegate) DELEGATE else "") + "\n"
     }
 
     // ARIN-PROTECTED: credit-saver — the boss spends fewer of its own credits by handing code-writing to Claude. The boss
     // still decides what is built, writes the spec, puts the code in place and answers the person.
-    private const val DELEGATE =
+    internal const val DELEGATE =
         "CREDIT SAVER IS ON — save your own tokens: (1) for any new or changed code longer than about 40 lines, do NOT write " +
             "it yourself: ask the helper with <ask_helper>FILE: path\nSIGNATURE: what to write\nUSES: names/APIs it must use\n" +
             "NEED: implement <one line></ask_helper>, then put its code in place yourself. (2) To find code, ask: " +
@@ -85,7 +90,7 @@ object ClaudeHelper {
     // answers the person, never does the boss's work in its place and never changes the boss's API, key or model.
     @Volatile private var lastLimitWarn = 0L
 
-    private const val SYSTEM =
+    internal const val SYSTEM =
         "You get code-only questions (file, method signature, current body, error). Reply with ONLY the patched code (and " +
             "at most one line saying what was wrong) — no story. " +
         "You are an assistant to another AI model (the BOSS) working inside the Arin Android app. The boss was chosen by " +
