@@ -1,0 +1,166 @@
+app/AppShell.kt|ai-helper in every tab
+app/LogsScreen.kt|ai-helper in every tab
+builder/BuildAgent.kt|ai-helper during builds
+builder/BuildAgent.kt|api-index
+builder/BuildAgent.kt|batch-fix
+builder/BuildAgent.kt|before every fix
+builder/BuildAgent.kt|boss-minimum-credit
+builder/BuildAgent.kt|budgets
+builder/BuildAgent.kt|complete-project
+builder/BuildAgent.kt|credit-saver
+builder/BuildAgent.kt|duplicate-guard
+builder/BuildAgent.kt|exact-request
+builder/BuildAgent.kt|explain-after-coding
+builder/BuildAgent.kt|heavy-work-off-the-boss
+builder/BuildAgent.kt|helper-sees-only-the-boss
+builder/BuildAgent.kt|impact-analysis
+builder/BuildAgent.kt|import-guard
+builder/BuildAgent.kt|never change the
+builder/BuildAgent.kt|never-stuck
+builder/BuildAgent.kt|notes from earlier attempts
+builder/BuildAgent.kt|outcome-classes
+builder/BuildAgent.kt|owner-words-only-to-main
+builder/BuildAgent.kt|requirement-coverage
+builder/BuildAgent.kt|research the internet before every fix
+builder/BuildAgent.kt|research-fallback
+builder/BuildAgent.kt|research-first auto-fix keeps going until the error is fixed
+builder/BuildAgent.kt|self-updates change only
+builder/BuildAgent.kt|smart-thinking
+builder/BuildAgent.kt|steer-immediately
+builder/BuildAgent.kt|strict self-update rules also apply on
+builder/BuildAgent.kt|syntax-guard
+builder/BuildAgent.kt|test-before-handover
+builder/BuildAgent.kt|toolchain-guard
+builder/BuildAgent.kt|watchdog
+builder/BuildAgent.kt|whole-problem-consultation
+builder/BuildAgent.kt|with the
+builder/BuildAgent.kt|worker-mode
+builder/BuildAgent.kt|worker-mode strict privacy for build errors
+builder/BuildScreen.kt|ai-helper in every tab
+builder/BuildScreen.kt|explain-after-coding
+builder/BuildScreen.kt|plan-improve-build-where
+builder/BuildScreen.kt|task-summary in every tab
+builder/BuildService.kt|ai-helper during builds
+builder/BuildService.kt|ask-before-building
+builder/BuildService.kt|never give up
+builder/Compat.kt|tab-isolation
+builder/GitHubClient.kt|github-auth-check
+builder/GitHubClient.kt|safe rollback
+builder/KotlinDuplicates.kt|duplicate-guard
+builder/KotlinFixes.kt|compiler-fixes
+builder/KotlinImports.kt|import-guard
+builder/KotlinSyntax.kt|syntax-guard
+builder/ProjectMemory.kt|project-memory
+builder/ProjectTemplate.kt|release-gating
+builder/ProjectTemplate.kt|test-before-handover
+builder/ProjectTemplate.kt|toolchain-guard
+chat/ChatScreen.kt|ai-helper in every tab
+chat/ChatViewModel.kt|ai-helper
+chat/ChatViewModel.kt|apk-toolkit
+chat/ChatViewModel.kt|apk-toolkit in every tab
+chat/ChatViewModel.kt|boss-memory
+chat/ChatViewModel.kt|boss-minimum-credit
+chat/ChatViewModel.kt|bounded-retry
+chat/ChatViewModel.kt|credit-saver
+chat/ChatViewModel.kt|explain-after-coding
+chat/ChatViewModel.kt|helper-never-takes-over
+chat/ChatViewModel.kt|helper-sees-only-the-boss
+chat/ChatViewModel.kt|model-per-tab
+chat/ChatViewModel.kt|never give up
+chat/ChatViewModel.kt|outcome-classes
+chat/ChatViewModel.kt|owner-words-only-to-main
+chat/ChatViewModel.kt|per-run-workdir
+chat/ChatViewModel.kt|research first
+chat/ChatViewModel.kt|research-first-error-help
+chat/ChatViewModel.kt|self-update-only-arin
+chat/ChatViewModel.kt|smart-thinking
+chat/ChatViewModel.kt|tab-isolation
+chat/ChatViewModel.kt|tab-memory
+chat/ChatViewModel.kt|task-summary in every tab
+chat/ChatViewModel.kt|team-work in every tab
+chat/ChatViewModel.kt|test-before-handover
+chat/ChatViewModel.kt|the
+chat/ChatViewModel.kt|the same error keeps failing
+chat/ChatViewModel.kt|with the
+chat/ChatViewModel.kt|worker-mode
+claudecode/ClaudeCode.kt|task-summary in every tab
+claudecode/ClaudeCodeModel.kt|claude-lean
+claudecode/ClaudeCodeScreen.kt|ai-helper in every tab
+claudecode/Harness.kt|claude-harness
+claudecode/Harness.kt|git-in-repo
+claudecode/Harness.kt|helper-sees-only-the-boss
+claudecode/Harness.kt|tab-isolation
+free/FreeTokensScreen.kt|ai-helper in every tab
+llm/Llm.kt|boss-minimum-credit
+llm/Llm.kt|claude-harness
+llm/Llm.kt|claude-harness for
+llm/Llm.kt|credit-saver
+llm/Llm.kt|tab-isolation
+llm/Prompt.kt|ai-helper
+llm/Prompt.kt|research-first auto-fix rule for every model
+llm/Prompt.kt|tab-isolation
+llm/Prompt.kt|task-summary in every tab
+llm/Prompt.kt|team-work in every tab
+llm/Prompt.kt|worker-mode
+movie/MovieMakerScreen.kt|ai-helper in every tab
+project/ProjectScreens.kt|ai-helper in every tab
+security/SecurityScreen.kt|bounded-scroll
+selffix/AiHelperUi.kt|ai-helper
+selffix/AiHelperUi.kt|the
+selffix/ArinUpdateChat.kt|apk-toolkit in every tab
+selffix/ArinUpdateChat.kt|explain-after-coding
+selffix/ArinUpdateChat.kt|helper-sees-only-the-boss
+selffix/ArinUpdateChat.kt|only an
+selffix/ArinUpdateChat.kt|owner-words-only-to-main
+selffix/ArinUpdateChat.kt|research-first-error-help
+selffix/ArinUpdateChat.kt|task-summary in every tab
+selffix/ArinUpdateChat.kt|team-work in every tab
+selffix/ArinUpdateScreen.kt|ai-helper in every tab
+selffix/ArinUpdateScreen.kt|arin-update-tab
+selffix/AutoFix.kt|do exactly what was asked
+selffix/AutoFix.kt|fix rounds never run out
+selffix/AutoFix.kt|in every chat
+selffix/AutoFix.kt|research the error on the internet before any fix
+selffix/AutoFix.kt|research-first-autofix
+selffix/AutoFix.kt|the rule is always on
+selffix/ChatMemory.kt|boss-memory
+selffix/ChatMemory.kt|requirement-coverage
+selffix/ClaudeHelper.kt|ai-helper
+selffix/ClaudeHelper.kt|credit-saver
+selffix/ClaudeHelper.kt|delegation-firewall
+selffix/ClaudeHelper.kt|helper-never-takes-over
+selffix/ClaudeHelper.kt|helper-sees-only-the-boss
+selffix/ClaudeHelper.kt|outcome-classes
+selffix/CreditSaver.kt|credit-saver
+selffix/CreditSaver.kt|worker-mode
+selffix/Delegation.kt|delegation-firewall
+selffix/Delegation.kt|owner-words-only-to-main
+selffix/Delegation.kt|refusal-provenance
+selffix/ErrorDoctor.kt|research-first-error-help
+selffix/ErrorDoctor.kt|researches the error on the internet
+selffix/Outcome.kt|outcome-classes
+selffix/Requirements.kt|requirement-coverage
+selffix/SelfUpdateRules.kt|Arin
+selffix/SelfUpdateRules.kt|files an update may never touch
+selffix/SelfUpdateRules.kt|self-update-only-arin
+selffix/TabIsolation.kt|tab-isolation
+selffix/TaskSummary.kt|ask-before-building
+selffix/TaskSummary.kt|exact-request
+selffix/TaskSummary.kt|explain-after-coding
+selffix/TaskSummary.kt|orchestration
+selffix/TaskSummary.kt|task-summary
+selffix/TaskSummary.kt|test-before-handover
+selffix/TaskSummary.kt|whole-problem-consultation
+selffix/TeamWork.kt|team-work
+selffix/VisionBridge.kt|owner-words-only-to-main
+selffix/Worker.kt|delegation-firewall
+selffix/Worker.kt|tab-isolation
+selffix/Worker.kt|worker-mode in chat
+selffix/Worker.kt|worker-results
+settings/ArinFolder.kt|arin-folder
+settings/SettingsScreen.kt|ai-helper in every tab
+terminal/Linux.kt|apk-toolkit
+terminal/Linux.kt|apk-toolkit in every tab
+terminal/Linux.kt|per-run-workdir
+terminal/RetryGuard.kt|bounded-retry
+voice/VoiceScreen.kt|ai-helper in every tab

@@ -307,6 +307,8 @@ object ClaudeHelper {
                 files, source)
             else -> viaApi(context, h, w, brief, files)
         }
+        val started = System.currentTimeMillis()
+        var callError: Throwable? = null
         val answer = runCatching { via(way) }.recoverCatching { first ->
             // The Claude key failed: try the Claude Code login, and the other way round.
             val other = when {
@@ -317,14 +319,25 @@ object ClaudeHelper {
             }
             onStatus("Trying ${h.name} another way")
             via(other)
-        }.getOrElse { "${h.name} couldn't be reached (${it.message?.take(200)}). Continue on your own." }
+        }.getOrElse { callError = it; "${h.name} couldn't be reached (${it.message?.take(200)}). Continue on your own." }
             .ifBlank { "${h.name} sent an empty answer. Continue on your own." }
-        val failed = answer.contains("couldn't be reached") || answer.contains("sent an empty answer")
-        Delegation.finish(context, did, if (failed) "failed" else "done")
-        Activity.log(source, if (failed) "🟣 ${h.name} couldn't help: ${answer.take(120)}"
-            else "🟣 ${h.name} answered (${answer.split(Regex("\\s+")).size} words) — using its help")
+        // ARIN-PROTECTED: outcome-classes — a refusal is never recorded as help given, and a technical failure is never
+        // called a refusal. The main model is told who answered, what kind of answer it was and why.
+        val verdict = Outcome.classify(answer, brief, callError)
+        val who = h.name + (h.model.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: "")
+        Delegation.finish(context, did, when {
+            verdict.kind.ok -> "done"
+            verdict.kind.refusal -> "refused"
+            else -> "failed"
+        }, who = who, role = "helper", verdict = verdict, ms = System.currentTimeMillis() - started)
+        Activity.log(source, when {
+            verdict.kind.refusal -> "🟣 ${h.name} declined (${verdict.kind.name}): ${verdict.reason.take(120)}"
+            !verdict.kind.ok -> "🟣 ${h.name} couldn't help (${verdict.kind.name}): ${answer.take(120)}"
+            else -> "🟣 ${h.name} answered (${answer.split(Regex("\\s+")).size} words) — using its help"
+        })
+        val note = Outcome.forBoss("Helper", who, verdict)
         // The helper never saw the hidden values; its answer gets them back (for the main model only).
-        return Delegation.Brief.restore(answer, hidden)
+        return (if (note.isNotBlank()) "$note\n" else "") + Delegation.Brief.restore(answer, hidden)
     }
 
     /** One fresh question, no history: the helper keeps nothing between questions. */

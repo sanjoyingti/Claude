@@ -73,6 +73,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * has its own, so several chats can think, code and run commands at the same time; switching chats doesn't stop them.
      */
     inner class Run(val chat: String, val chatTitle: String, val base: List<Message>) {
+        /** This task's own retry limits (never shared with another chat's run). */
+        val retries = com.arin.terminal.RetryGuard()
         var liveText by mutableStateOf("")
         var liveThinking by mutableStateOf("")
         /** Which model is working right now ("DeepSeek", "GPT-6 Luna", "Claude"). */
@@ -98,6 +100,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val runs = androidx.compose.runtime.mutableStateMapOf<String, Run>()
 
     private fun chatKey(): String = chatId ?: TEMP_CHAT
+
+    // ---- Each chat's own working folder (survives restarts; one chat's `cd` never moves another chat) ----
+    private val workDirs = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val workDirPrefs by lazy { getApplication<Application>().getSharedPreferences("arin-workdirs", android.content.Context.MODE_PRIVATE) }
+    fun workDirOf(chat: String): String? = workDirs[chat] ?: workDirPrefs.getString(chat, null)?.also { workDirs[chat] = it }
+    fun setWorkDir(chat: String, dir: String) { workDirs[chat] = dir; workDirPrefs.edit().putString(chat, dir).apply() }
 
     /** The open chat's running reply, if any. */
     fun runFor(key: String? = chatKey()): Run? = key?.let { runs[it] }
@@ -3186,7 +3194,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 var system = if (offline) Prompt.localSystem(memoryList, aboutYou, howToAnswer, replyStyle) else Prompt.system(
                     searchFlag, memoryFlag, memoryList, project, useTerminal, com.arin.mcp.Mcp.promptSection(activeNames, compact = saveCredits || com.arin.selffix.CreditSaver.on(getApplication())),
-                    terminalInfo = com.arin.terminal.Shell.describe(app),
+                    terminalInfo = com.arin.terminal.Shell.describe(app) +
+                        (workDirOf(run.chat)?.let { " This chat's commands start in $it (where its last command ended; `cd` to change it)." } ?: ""),
                     // ARIN-PROTECTED: tab-isolation — other chats are listed only when the owner asks for an earlier chat here.
                     pastChats = if (memoryFlag && com.arin.selffix.TabIsolation.asksPastChats(userSaid)) withContext(Dispatchers.IO) { runCatching { store.recentTitles(run.chat) }.getOrDefault("") } else "",
                     aboutPerson = aboutYou,
@@ -3515,10 +3524,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         val shellProblem = (if (allowed) com.arin.terminal.AgentTools.ensureShell(app) { run.status = it } else null)
                             // ARIN-PROTECTED: apk-toolkit in every tab — build/APK tools are installed before a command needs them.
                             ?: (if (allowed && cmd != null) com.arin.terminal.Linux.ensureToolsFor(app, cmd) { run.status = it.take(120) } else null)
+                        // ARIN-PROTECTED: per-run-workdir — commands, reads and writes of this chat's task run in this chat's own
+                        // working folder (where its previous command ended), never in another chat's.
+                        val wd = workDirOf(run.chat)
+                        // ARIN-PROTECTED: bounded-retry — the same failed command isn't repeated without a change in between.
+                        val blocked = if (allowed && shellProblem == null && cmd != null && action == null) run.retries.check(cmd, wd) else null
                         val step0 = if (!allowed) {
                             com.arin.data.CommandRun(label, "The person chose not to allow this.", null, ran = false)
                         } else if (shellProblem != null) {
                             com.arin.data.CommandRun(label, shellProblem, 1)
+                        } else if (blocked != null) {
+                            com.arin.data.CommandRun(label, blocked, 1)
                         } else {
                             run.status = when (action) {
                                 is Prompt.AgentAction.Install -> "Installing " + action.spec.take(60)
@@ -3529,13 +3545,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             }
                             val r = when (action) {
                                 is Prompt.AgentAction.Install -> com.arin.terminal.AgentTools.install(app, action.spec)
-                                is Prompt.AgentAction.Read -> com.arin.terminal.AgentTools.read(app, action.path, action.from)
-                                is Prompt.AgentAction.Write -> com.arin.terminal.AgentTools.write(app, action.path, action.content)
-                                is Prompt.AgentAction.Edit -> com.arin.terminal.AgentTools.edit(app, action.path, action.old, action.new)
-                                null -> com.arin.terminal.Shell.run(app, cmd!!)
+                                is Prompt.AgentAction.Read -> com.arin.terminal.AgentTools.read(app, action.path, action.from, workDir = wd)
+                                is Prompt.AgentAction.Write -> com.arin.terminal.AgentTools.write(app, action.path, action.content, workDir = wd)
+                                is Prompt.AgentAction.Edit -> com.arin.terminal.AgentTools.edit(app, action.path, action.old, action.new, workDir = wd)
+                                null -> com.arin.terminal.Shell.run(app, cmd!!, workDir = wd)
                             }
                             run.status = null
-                            com.arin.data.CommandRun(label, r.forModel(), r.exitCode)
+                            // Where this chat's task now is (a `cd` holds for its next command); a change lets retries run again.
+                            val moved = if (action == null) r.cwd?.takeIf { it != wd }?.also { setWorkDir(run.chat, it) } else null
+                            if (action != null && action !is Prompt.AgentAction.Read && r.exitCode == 0) run.retries.changed()
+                            if (action == null) run.retries.record(cmd!!, wd, r.exitCode == 0, r.combined().takeLast(300))
+                            com.arin.data.CommandRun(label, r.forModel() + (moved?.let { "\n(working folder is now $it)" } ?: ""), r.exitCode)
                         }
                         // A search that just found nothing (grep/find exit 1, a closed pipe) is not an error: no red ✗, no research.
                         val step = if (step0.ran && com.arin.selffix.TeamWork.nothingFound(step0.exitCode, step0.output))
@@ -3626,14 +3646,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         workerAsks++
                         run.liveText = ""
                         run.status = "$bossName is instructing the worker: " + workerTask.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().removePrefix("TASK:").trim().take(90)
-                        val (who, result) = com.arin.selffix.Worker.runFor(app, workerTask, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
+                        val wr = com.arin.selffix.Worker.runDetailed(app, workerTask, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
+                        val who = wr.who
+                        val result = if (wr.ok) wr.text else ""
                         run.who = bossName
                         run.status = null
                         val step = com.arin.data.CommandRun("worker ${who.ifBlank { "(none)" }}: ${workerTask.take(80)}", result.take(2_000), 0, kind = "tool")
                         ran += step
                         run.liveCommands += step
                         turns += Turn(false, full)
-                        turns += Turn(true, if (result.isBlank()) "[No worker could do this task (all refused or failed). Do it yourself, briefly.]"
+                        // ARIN-PROTECTED: outcome-classes — the boss is told which worker declined or failed and why (from the
+                        // real answers), and decides: restate a misunderstood task, respect a genuine refusal, or do it itself.
+                        turns += Turn(true, if (result.isBlank()) "[No worker did this task — ${wr.summary()}. You (the main model) decide the next " +
+                            "step: if a worker misunderstood, restate the task accurately; respect a genuine safety or authorization refusal " +
+                            "(don't reword the task to get around it); after a technical failure, do it yourself, briefly.]"
                             else { lastWorkerResult = result; "[WORKER RESULT from $who — inspect it. If it's right, answer the person and write " +
                                 "${com.arin.selffix.Worker.RESULT_TAG} where its output should appear (don't copy it). If it's wrong, send directions " +
                                 "in another <ask_worker>.]\n" + result.take(16_000) })

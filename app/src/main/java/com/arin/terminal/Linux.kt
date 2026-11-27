@@ -594,11 +594,28 @@ object Linux {
      * Runs [command] with bash in Linux (home /root, as root) and waits until it finishes, at most
      * [timeoutMs]. Background jobs it starts (nohup … &) keep running after it returns.
      */
+    /**
+     * ARIN-PROTECTED: per-run-workdir — the script Arin runs for one command. It starts in [workDir] (the folder this
+     * chat's task is working in; /root when there is none), not always in /root, so `cd myproject` in one command
+     * still holds for the next command of the same task. Where the command ends up is written to [cwdFile] (read back
+     * by the caller and kept per chat, never shared between chats). A folder that no longer exists is reported, and
+     * the command runs in the home folder instead. Pure, so it is tested by really running it with bash.
+     */
+    fun script(command: String, done: String, workDir: String?, cwdFile: String, home: String = HOME): String {
+        val wd = workDir?.takeIf { it.isNotBlank() }
+        val q = { s: String -> "'" + s.replace("'", "'\\''") + "'" }
+        val start = if (wd == null) "cd ${q(home)} 2>/dev/null\n"
+            else "cd ${q(wd)} 2>/dev/null || { echo ${q("Arin: the working folder $wd no longer exists — running in $home")} >&2; cd ${q(home)} 2>/dev/null; }\n"
+        return start + "(\nset -o pipefail\n$command\n__arin_rc=\$?\npwd > ${q(cwdFile)} 2>/dev/null\nexit \$__arin_rc\n)\nrc=\$?\nprintf '\\n$done%s\\n' \"\$rc\" >&2\n"
+    }
+
     suspend fun run(
         context: Context,
         command: String,
         timeoutMs: Long = 15 * 60_000L,
         onOutput: ((String) -> Unit)? = null,
+        /** The folder this task works in (kept per chat by the caller); null = the home folder. */
+        workDir: String? = null,
     ): Termux.Result = withContext(Dispatchers.IO) {
         if (!installed(context)) return@withContext Termux.Result("", "", null, "Linux isn't installed. Open Settings → Linux and tap Install Linux.")
         val root = rootfs(context)
@@ -613,7 +630,8 @@ object Linux {
         // marker line, so background jobs it leaves running don't keep us waiting.
         val script = File(root, "tmp/arin-$id.sh")
         // pipefail: a crash before "| head" must not look like success.
-        script.writeText("cd $HOME 2>/dev/null\n(\nset -o pipefail\n$command\n)\nrc=$?\nprintf '\\n$done%s\\n' \"\$rc\" >&2\n")
+        val cwdFile = File(root, "tmp/arin-$id.cwd")
+        script.writeText(script(command, done, workDir, "/tmp/arin-$id.cwd"))
         val cmd = mutableListOf(
             proot(context).absolutePath,
             "-0", "-r", root.absolutePath,
@@ -680,7 +698,10 @@ object Linux {
         }.apply { isDaemon = true; start() }
         try {
             val code = withTimeout(timeoutMs) { finished.await() }
-            Termux.Result(out.toString(), err.toString(), code, null)
+            // Give the subshell a moment to have written where it ended up.
+            var cwd: String? = null
+            repeat(10) { if (cwd == null) { cwd = runCatching { cwdFile.readText().trim() }.getOrNull()?.ifBlank { null }; if (cwd == null) Thread.sleep(20) } }
+            Termux.Result(out.toString(), err.toString(), code, null, cwd = cwd)
         } catch (e: TimeoutCancellationException) {
             process.destroy()
             Termux.Result(out.toString(), err.toString(), null, "Stopped after ${timeoutMs / 60_000} min without finishing.")
@@ -689,6 +710,7 @@ object Linux {
             throw e
         } finally {
             runCatching { script.delete() }
+            runCatching { cwdFile.delete() }
         }
     }
 
@@ -720,8 +742,10 @@ object Shell {
             "No terminal is set up. Open Settings → Terminal and tap Install Linux (built in), or set up Termux."
         }
 
-    suspend fun run(context: Context, command: String, timeoutMs: Long = 15 * 60_000L): Termux.Result =
-        if (usesLinux(context)) Linux.run(context, command, timeoutMs) else Termux.run(context, command, timeoutMs = timeoutMs)
+    /** Runs [command] in [workDir] (this task's folder; null = home). The result's `cwd` is where it ended up. */
+    suspend fun run(context: Context, command: String, timeoutMs: Long = 15 * 60_000L, workDir: String? = null): Termux.Result =
+        if (usesLinux(context)) Linux.run(context, command, timeoutMs, workDir = workDir)
+        else Termux.run(context, command, workdir = workDir ?: Termux.HOME, timeoutMs = timeoutMs)
 
     /** A line describing the environment, for the model. */
     fun describe(context: Context): String =

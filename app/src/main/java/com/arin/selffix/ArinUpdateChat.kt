@@ -382,9 +382,12 @@ object ArinUpdateChat {
                             // Heavy writing (code, long text) goes to the worker; the boss inspects what comes back.
                             steps++
                             status = "$bossName is instructing the worker: " + workerTask.lineSequence().first().take(80)
-                            val (who, result) = Worker.runFor(app, TeamWork.safeDirection(workerTask), bossName, tab = "arin-update", ownerTexts = ownerWords()) { _, s -> status = s.take(120) }
+                            val wr = Worker.runDetailed(app, TeamWork.safeDirection(workerTask), bossName, tab = "arin-update", ownerTexts = ownerWords()) { _, s -> status = s.take(120) }
+                            val who = wr.who
+                            val result = if (wr.ok) wr.text else ""
                             turns += ChatMessage(Role.ASSISTANT, reply.trim())
-                            turns += ChatMessage(Role.USER, if (result.isBlank()) "[No worker could do this task. Do it yourself, briefly.]"
+                            turns += ChatMessage(Role.USER, if (result.isBlank()) "[No worker did this task — ${wr.summary()}. Decide the next step: " +
+                                "restate a misunderstood task, respect a genuine refusal, or do it yourself, briefly.]"
                                 else "[WORKER RESULT from ${Worker.nice(who)} — inspect it; send directions in another <ask_worker> if it's wrong.]\n" + result.take(12_000))
                             continue
                         }

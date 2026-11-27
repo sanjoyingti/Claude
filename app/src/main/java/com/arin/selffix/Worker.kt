@@ -121,21 +121,52 @@ object Worker {
     suspend fun run(c: Context, task: String, boss: String = "your model", system: String = SYSTEM, onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> =
         runFor(c, task, boss, system, onStatus = onStatus)
 
+    /** One worker's try at a task: who, and what its answer actually was (provenance for the audit and the boss). */
+    data class Attempt(val who: String, val provider: String, val model: String, val verdict: Outcome.Verdict)
+
+    /**
+     * ARIN-PROTECTED: worker-results — what a worker run produced: the answer (if a worker did the work), its outcome
+     * class, and every worker's try with who it was and why it didn't work. Failures are never collapsed into "".
+     */
+    data class WorkResult(val who: String, val text: String, val verdict: Outcome.Verdict, val attempts: List<Attempt>) {
+        val ok: Boolean get() = verdict.kind.ok && text.isNotBlank()
+        /** For the main model when no worker did it: who answered what (from the real answers only). */
+        fun summary(): String = attempts.filterNot { it.verdict.kind.ok }.joinToString("; ") {
+            "${it.who}: ${it.verdict.kind.name}" + (if (it.verdict.reason.isNotBlank()) " (\"${it.verdict.reason.take(160)}\")" else "")
+        }.ifBlank { "no worker is set up or reachable" }
+    }
+
     /** [run] for a project: the relevant [requirements] of [project] go with the brief. */
     suspend fun runFor(c: Context, task0: String, boss: String = "your model", system: String = SYSTEM, tab: String = "", project: String? = null,
                        requirements: List<String> = emptyList(), ownerTexts: Collection<String> = emptyList(),
-                       onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
+                       onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> =
+        runDetailed(c, task0, boss, system, tab, project, requirements, ownerTexts, onStatus).let { it.who to (if (it.ok) it.text else "") }
+
+    /** Like [runFor], with the full outcome (who refused or failed, and why). */
+    suspend fun runDetailed(c: Context, task0: String, boss: String = "your model", system: String = SYSTEM, tab: String = "", project: String? = null,
+                            requirements: List<String> = emptyList(), ownerTexts: Collection<String> = emptyList(),
+                            onStatus: (who: String, text: String) -> Unit = { _, _ -> }): WorkResult {
         // ARIN-PROTECTED: delegation-firewall — the worker gets only the task brief (no transcript, no secrets, none of the
         // person's own words: those go only to the main model).
         val (task, did, hidden) = Delegation.gateFull(c, "worker", task0, tab, project, requirements, ownerTexts)
-        val result = runInner(c, task, boss, system, onStatus)
-        Delegation.finish(c, did, if (result.second.isBlank()) "failed" else "done")
+        val started = System.currentTimeMillis()
+        val r = runInner(c, task, boss, system, tab.ifBlank { did }, onStatus)
+        Delegation.finish(c, did, when { r.ok -> "done"; r.verdict.kind.refusal -> "refused"; else -> "failed" },
+            who = r.who.ifBlank { r.attempts.lastOrNull()?.who.orEmpty() }, role = "worker", verdict = r.verdict,
+            ms = System.currentTimeMillis() - started,
+            attempts = r.attempts.map { a ->
+                org.json.JSONObject().put("who", a.who).put("outcome", a.verdict.kind.name)
+                    .put("reason", Delegation.Brief.redact(a.verdict.reason).first.take(200))
+            })
         // The worker never saw the hidden values; the code it returns gets them back.
-        return result.first to Delegation.Brief.restore(result.second, hidden)
+        return r.copy(text = Delegation.Brief.restore(r.text, hidden))
     }
 
-    private suspend fun runInner(c: Context, task: String, boss: String, system: String, onStatus: (who: String, text: String) -> Unit): Pair<String, String> {
+    private suspend fun runInner(c: Context, task: String, boss: String, system: String, scope: String,
+                                 onStatus: (who: String, text: String) -> Unit): WorkResult {
         val helper = ClaudeHelper.helper(c).name
+        val attempts = mutableListOf<Attempt>()
+        val expectsCode = system != SYSTEM || Regex("""(?i)\b(=== FILE|kotlin|code|fix the|implement)\b""").containsMatchIn(task.take(3_000))
         for (t in targets(c)) {
             val me = nice(t.model)
             onStatus(me, "$me is following $boss's instructions")
@@ -143,14 +174,23 @@ object Worker {
             var asks = 0
             while (true) {
                 val sb = StringBuilder()
-                val ok = runCatching {
-                    com.arin.llm.Llm.stream(t.provider, t.key, t.model, system, turns.toList(), endpoint = t.endpoint, conv = "worker")
+                var err: Throwable? = null
+                // ARIN-PROTECTED: tab-isolation — each chat/task has its own worker conversation (a session shared by
+                // every tab under one constant id could carry one tab's work into another's).
+                runCatching {
+                    com.arin.llm.Llm.stream(t.provider, t.key, t.model, system, turns.toList(), endpoint = t.endpoint, conv = "worker:$scope")
                         .collect { d -> if (d is Delta.Text) sb.append(d.text) }
-                }.isSuccess
+                }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it; err = it }
                 val text = sb.toString()
-                if (!ok || CreditSaver.isRefusal(text)) {
-                    if (ok) CreditSaver.noteRefusal(c, t.w, "chat")
-                    onStatus(me, "$me " + (if (ok) "refused" else "couldn't do it") + " — passing $boss's task to the next worker")
+                var v = Outcome.classify(text, task, if (text.isBlank()) err else null, expectsCode)
+                // The older short-refusal check still counts (a refusal is never taken as finished work).
+                if (v.kind.ok && !v.partial && CreditSaver.isRefusal(text))
+                    v = Outcome.Verdict(Outcome.Kind.UNCLASSIFIED_REFUSAL, text.trim().lineSequence().first().take(300))
+                if (!v.kind.ok) {
+                    attempts += Attempt(me, t.provider.name, t.model, v)
+                    if (v.kind.refusal) CreditSaver.noteRefusal(c, t.w, "chat")
+                    onStatus(me, "$me " + (if (v.kind.refusal) "declined (${v.kind.name.lowercase().replace('_', ' ')})" else "couldn't do it (${v.kind.name.lowercase().replace('_', ' ')})") +
+                        " — passing $boss's task to the next worker")
                     break
                 }
                 val q = ClaudeHelper.question(text)
@@ -164,9 +204,10 @@ object Worker {
                     continue
                 }
                 onStatus(boss, "$me finished; $boss is inspecting $me's work")
-                return t.model to ClaudeHelper.clean(text).trim()
+                attempts += Attempt(me, t.provider.name, t.model, v)
+                return WorkResult(t.model, ClaudeHelper.clean(text).trim(), v, attempts)
             }
         }
-        return "" to ""
+        return WorkResult("", "", attempts.lastOrNull()?.verdict ?: Outcome.Verdict(Outcome.Kind.NETWORK_OR_PROVIDER_FAILURE, "no worker is set up or reachable"), attempts)
     }
 }

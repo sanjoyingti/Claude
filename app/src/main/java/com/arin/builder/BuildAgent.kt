@@ -302,7 +302,7 @@ class BuildAgent(
         for (attempt in 1..2) {
             text = runCatching {
                 val sb = StringBuilder()
-                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, input)), system, req.endpoint(), boss = true)
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, input)), system, req.endpoint(), boss = true, conv = "build:$memKey:brief")
                     .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
                 sb.toString().trim()
             }.getOrDefault("")
@@ -311,6 +311,24 @@ class BuildAgent(
         }
         if (text.length <= 20) throw IllegalStateException("Your main model (${bossName()}) couldn't write the brief for the worker, and " +
             "the worker may not see your own words. Everything is saved — say \"try again\" to carry on.")
+        // ARIN-PROTECTED: requirement-coverage — every requirement of the owner's must be in the brief; the main model
+        // adds what it left out (once), so nothing is lost on the way to the worker.
+        val asked = com.arin.selffix.Requirements.lines(if (prev.isNotBlank() && !req.resume) req.description + "\n" + steered.joinToString("\n") else requirements.ifBlank { req.description } + "\n" + steered.joinToString("\n"))
+        val missing = com.arin.selffix.Requirements.uncovered(asked, text)
+        if (missing.isNotEmpty()) {
+            step(BuildEvent.Kind.THINKING, "${bossName()}'s brief left out ${missing.size} of ${asked.size} requirement(s) — asking it to add them")
+            val fixMsg = "Your brief:\n$text\n\nIt leaves out these points the owner asked for — rewrite the WHOLE brief so it includes them (own words, numbered points):\n" +
+                missing.joinToString("\n") { "- $it" }
+            val again = runCatching {
+                val sb = StringBuilder()
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, fixMsg)), system, req.endpoint(), boss = true, conv = "build:$memKey:brief")
+                    .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
+                sb.toString().trim()
+            }.getOrDefault("")
+            if (again.length > 20 && com.arin.selffix.Requirements.uncovered(asked, again).size < missing.size) text = again
+        }
+        val stillMissing = com.arin.selffix.Requirements.uncovered(asked, text).size
+        ledger("Brief for the worker", "${asked.size - stillMissing} of ${asked.size} requirement(s) in it" + if (stillMissing > 0) " — $stillMissing not clearly covered" else "")
         // Its own words only: anything it copied from the owner is removed (the gateway does the same for every request).
         text = com.arin.selffix.Delegation.Brief.withoutOwnerText(text, owner).first
         step(BuildEvent.Kind.THINKING, "${bossName()} wrote the brief for the worker in its own words (your messages and files stay with ${bossName()})")
@@ -349,6 +367,9 @@ class BuildAgent(
 
     /** Values hidden from the worker in [workerSafe] (e.g. an API key in the owner's own code): its answer gets them back. */
     private var workerHidden: List<String> = emptyList()
+
+    /** Which workers declined in this build, and why (from their real answers). */
+    private val workerRefusals = mutableListOf<String>()
     private val mem: ProjectMemory? by lazy { context?.let { runCatching { ProjectMemory.of(it, if (self) "arin-self" else packageName) }.getOrNull() } }
 
     /**
@@ -457,7 +478,7 @@ class BuildAgent(
         } else runCatching {
             kotlinx.coroutines.withTimeoutOrNull(240_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
-                    "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint())
+                    "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint(), conv = "build:$memKey:explain")
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
@@ -1288,7 +1309,8 @@ class BuildAgent(
             // ARIN-PROTECTED: steer-immediately — a direction sent while the model writes stops this answer at once, and the
             // model starts again WITH the direction (not queued for later).
             val steeredNow = try { resilient(
-                attempt = { model -> streamModel(target.provider, target.key, model, working.toList(), if (target.worker) workSystem else system, target.endpoint) },
+                attempt = { model -> streamModel(target.provider, target.key, model, working.toList(), if (target.worker) workSystem else system, target.endpoint,
+                    conv = "build:$memKey" + if (target.worker) ":worker" else "") },
                 model = target.model,
                 fallback = { if (req.provider != com.arin.llm.Provider.Free) null else alternativeModel(req.provider, req.apiKey, req.model) }, // ARIN-PROTECTED: never change the Custom API — nor Claude, GPT or the Claude Code login: only the person switches them
                 onRetry = { step(BuildEvent.Kind.STEP, it) },
@@ -1362,12 +1384,27 @@ class BuildAgent(
             val masked = sb.toString()
             val reply = if (toWorkers) com.arin.selffix.Delegation.Brief.restore(masked, workerHidden) else masked
             // A worker that refuses: the same task goes to the next worker; after the last one, to your model.
-            if (target.worker && com.arin.selffix.CreditSaver.isRefusal(reply)) {
+            // ARIN-PROTECTED: outcome-classes — a refusal is classified (and told apart from a technical failure) with
+            // who said it and their stated reason, recorded for the audit, and never taken as finished work.
+            val verdict = if (target.worker) com.arin.selffix.Outcome.classify(masked, "", null, expectsCode = true).let { v ->
+                if (v.kind.ok && com.arin.selffix.CreditSaver.isRefusal(reply)) com.arin.selffix.Outcome.Verdict(com.arin.selffix.Outcome.Kind.UNCLASSIFIED_REFUSAL, masked.trim().lineSequence().first().take(300)) else v
+            } else null
+            if (verdict != null && masked.isBlank() && wi + 1 < pool.size) {
+                // An empty answer is a technical failure, not a refusal: the next worker takes the task (nothing noted against this one).
+                workerRefusals += "${nice(target.model)}: INCOMPLETE_RESPONSE (empty answer)"
+                wi++; target = pool[wi]
+                step(BuildEvent.Kind.THINKING, "${nice(pool[wi - 1].model)} sent an empty answer (a technical failure, not a refusal) — passing the task to ${nice(target.model)}")
+                continue
+            }
+            if (verdict != null && verdict.kind.refusal) {
                 com.arin.selffix.CreditSaver.noteRefusal(context!!, target.w!!, helperTab)
+                workerRefusals += "${nice(target.model)}: ${verdict.kind.name}" + (if (verdict.reason.isNotBlank()) " (\"${verdict.reason.take(160)}\")" else "")
+                ledger("Worker ${nice(target.model)}", "DECLINED — ${verdict.kind.name}: ${verdict.reason.take(160)}")
                 wi++
-                target = pool.getOrNull(wi) ?: throw IllegalStateException("Every worker and the helper refused this task. " +
-                    "Add another worker in Settings → Credit saver, or turn worker mode off for this task.")
-                step(BuildEvent.Kind.THINKING, "${nice(pool[wi - 1].model)} refused — ${bossName()} is passing the task to ${nice(target.model)}")
+                target = pool.getOrNull(wi) ?: throw IllegalStateException("Every worker and the helper declined this task — " +
+                    workerRefusals.joinToString("; ") + ". Add another worker in Settings → Credit saver, or turn worker mode off for this task.")
+                step(BuildEvent.Kind.THINKING, "${nice(pool[wi - 1].model)} declined (${verdict.kind.name.lowercase().replace('_', ' ')}: ${verdict.reason.take(90)}) — " +
+                    "${bossName()} is passing the task to ${nice(target.model)}")
                 continue
             }
             lastReply = reply
@@ -1875,7 +1912,7 @@ class BuildAgent(
         runCatching {
             kotlinx.coroutines.withTimeoutOrNull(180_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
-                    "You are the supervisor of an AI coding worker. Think as deeply as the problem needs; write briefly.", req.endpoint(), boss = workerOn(), hard = hard)
+                    "You are the supervisor of an AI coding worker. Think as deeply as the problem needs; write briefly.", req.endpoint(), boss = workerOn(), hard = hard, conv = "build:$memKey:boss")
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
@@ -2273,6 +2310,8 @@ class BuildAgent(
             a.contains("couldn't be reached") || a.contains("isn't connected") || a.contains("switched off") -> "not reachable"
             com.arin.claudecode.ClaudeLimit.isLimit(a.take(800)) -> "usage limit reached"
             Regex("(?i)no usable (files|answer)|returned nothing usable").containsMatchIn(a.take(600)) -> "no usable files"
+            Regex("""^\[Helper .{0,120}— (POLICY_OR_SAFETY_REFUSAL|AUTHORIZATION_REQUIRED|MISUNDERSTOOD_OBJECTIVE|INSUFFICIENT_INFORMATION|TECHNICAL_LIMITATION|UNCLASSIFIED_REFUSAL|INCOMPLETE_RESPONSE|NETWORK_OR_PROVIDER_FAILURE)""").containsMatchIn(a.take(300)) ->
+                "the helper declined or failed (" + Regex("""— ([A-Z_]+)""").find(a.take(300))!!.groupValues[1] + ")"
             Regex("(?i)exit(ed)? (with )?code 128|not a git repository").containsMatchIn(a.take(1_500)) && a.length < 1_500 -> "git/search command failed (exit 128)"
             else -> null
         } ?: return true

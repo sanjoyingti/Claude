@@ -70,9 +70,15 @@ object ChatMemory {
             (if (t.fromUser) "OWNER: " else "ARIN: ") + t.text.let { if (it.length > 700) it.take(550) + " …" + it.takeLast(120) else it }
         }
         val recall = recall(old.subList(0, minOf(upto, old.size)), latest)
+        // ARIN-PROTECTED: requirement-coverage — a request of the owner's that the summary dropped is kept word for word.
+        val dropped = if (summary.isBlank()) emptyList() else Requirements.uncovered(
+            old.subList(0, minOf(upto, old.size)).filter { it.fromUser }.flatMap { Requirements.lines(it.text) }, summary,
+        ).takeLast(12)
         val memo = buildString {
             append("[Memory of this chat, kept by Arin — everything said before the latest messages. Use it; ask if something isn't here.]\n")
             append(summary.ifBlank { "(not written yet)" })
+            if (dropped.isNotEmpty()) append("\n\n[Owner's requests the summary left out, word for word — still required:]\n")
+                .append(dropped.joinToString("\n") { "- " + it.take(400) })
             if (pending.isNotBlank()) append("\n\n[Older messages not yet in the memory:]\n").append(pending)
             if (recall.isNotBlank()) append("\n\n[Earlier messages that match the owner's new message, word for word:]\n").append(recall)
         }

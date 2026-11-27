@@ -219,8 +219,24 @@ object Delegation {
         return Triple(b.text, id, b.secrets)
     }
 
-    /** Marks how a delegation ended ("done", "failed", "refused"). */
-    fun finish(c: Context, id: String, status: String) = record(c, JSONObject().put("id", id).put("time", System.currentTimeMillis()).put("status", status))
+    /**
+     * ARIN-PROTECTED: refusal-provenance — how a delegation ended ("done", "refused", "failed"), with WHO actually
+     * answered (role + provider/model), the outcome class, the model's own stated reason (secrets redacted, at most 300
+     * characters) and how long it took. Only recorded from the real answer, never guessed.
+     */
+    fun finish(c: Context, id: String, status: String, who: String = "", role: String = "", verdict: Outcome.Verdict? = null,
+               ms: Long = 0, attempts: List<JSONObject> = emptyList()) = record(c, JSONObject().put("id", id)
+        .put("time", System.currentTimeMillis()).put("status", status)
+        .apply {
+            if (who.isNotBlank()) put("who", who)
+            if (role.isNotBlank()) put("role", role)
+            verdict?.let { put("outcome", it.kind.name); if (it.reason.isNotBlank()) put("reason", Brief.redact(it.reason).first.take(300)); if (it.partial) put("partial", true) }
+            if (ms > 0) put("ms", ms)
+            if (attempts.isNotEmpty()) put("attempts", JSONArray(attempts))
+        })
+
+    /** Notes a later step of a delegation (e.g. "boss-informed", "next-worker-succeeded"). */
+    fun note(c: Context, id: String, event: String) = record(c, JSONObject().put("id", id).put("time", System.currentTimeMillis()).put("event", event))
 
     @Synchronized private fun record(c: Context, o: JSONObject) = runCatching {
         val f = log(c)

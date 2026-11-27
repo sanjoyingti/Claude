@@ -96,6 +96,17 @@ jobs:
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: duplicate-guard" $D/builder/KotlinDuplicates.kt
           grep -q "ARIN-PROTECTED: compiler-fixes" $D/builder/KotlinFixes.kt
+          # ARIN-PROTECTED: rule-baseline — every protected rule that existed when the owner approved the baseline must still
+          # be in its file (new rules may be added; removing one fails the build).
+          bash .github/protected-markers.sh > /tmp/now.txt
+          MISSING=$(grep -vxFf /tmp/now.txt .github/protected-baseline.txt || true)
+          if [ -n "$MISSING" ]; then echo "Protected rules removed:"; echo "$MISSING"; exit 1; fi
+          grep -q "ARIN-PROTECTED: per-run-workdir" $D/terminal/Linux.kt
+          grep -q "ARIN-PROTECTED: bounded-retry" $D/terminal/RetryGuard.kt
+          grep -q "ARIN-PROTECTED: outcome-classes" $D/selffix/Outcome.kt
+          grep -q "ARIN-PROTECTED: refusal-provenance" $D/selffix/Delegation.kt
+          grep -q "ARIN-PROTECTED: worker-results" $D/selffix/Worker.kt
+          grep -q "ARIN-PROTECTED: requirement-coverage" $D/selffix/Requirements.kt
           grep -q "ARIN-PROTECTED: api-index" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/selffix/Delegation.kt
           grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/builder/BuildAgent.kt
