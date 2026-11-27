@@ -240,3 +240,9 @@ told they are there.
 - Routine steps (short directions, quick checks, simple replies) use little thinking to save credit.
 - Either way it writes little; the worker and helper do the heavy work. All other rules still apply.
 - Only the owner can change this rule.
+
+## Claude uses as little of your limit as possible (`claudecode/ClaudeCodeModel.kt`, `selffix/CreditSaver.kt`)
+
+- Claude gets only Arin's own short instructions (not Claude Code's long ones and tool list) and only the tools a task needs.
+- Easy helper questions go to Claude Haiku; hard ones (build-error diagnosis) to the model you picked.
+- Only the owner can change this rule.

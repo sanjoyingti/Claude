@@ -37,8 +37,10 @@ object ClaudeCodeModel {
             f.writeBytes(android.util.Base64.decode(b64, android.util.Base64.DEFAULT))
             return "$DIR/$id/${f.name}"
         }
+        // ARIN-PROTECTED: claude-lean — Claude gets only Arin's instructions as its system prompt (Claude Code's own long
+        // instructions and tool list are left out) and just the Read tool: about what a message in the Claude app costs.
+        java.io.File(dir, "sys.txt").writeText(system.take(60_000))
         val convo = buildString {
-            append("SYSTEM INSTRUCTIONS (follow them):\n").append(system).append("\n\n")
             append("THE CONVERSATION SO FAR (reply as the assistant to the last USER message; write only your reply):\n\n")
             turns.forEach { t ->
                 append(if (t.fromUser) "USER:\n" else "ASSISTANT:\n").append(t.text)
@@ -60,6 +62,7 @@ object ClaudeCodeModel {
             "export CLAUDE_CODE_OAUTH_TOKEN=\$(cat $tokenFile 2>/dev/null) DISABLE_AUTOUPDATER=1 " +
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_TELEMETRY=1 HOME=$DIR/home; " +
             "timeout 1800 claude -p --model '$m' --output-format stream-json --verbose --include-partial-messages " +
+            "--tools Read --system-prompt \"\$(cat $DIR/$id/sys.txt)\" " +
             "--add-dir $DIR/$id --allowedTools Read --disallowedTools ${CC_TOOLS.joinToString(" ")} " +
             "< $DIR/$id/prompt.txt > $DIR/$id/out.jsonl 2>&1"
         val job = async(Dispatchers.IO) { com.arin.terminal.Shell.run(context, cmd, 31 * 60_000L) }

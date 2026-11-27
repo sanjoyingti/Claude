@@ -37,7 +37,8 @@ object CreditSaver {
     fun setOfflineModel(c: Context, path: String) = prefs(c).edit().putString("offline", path).apply()
 
     /** Helper tries Claude Haiku first for an error, then the chosen Claude model (off by default: full power). */
-    fun haikuFirst(c: Context): Boolean = prefs(c).getBoolean("haiku_first", false)
+    /** Easy helper questions go to Claude Haiku (uses far less of your Claude limit); hard ones to the model you picked. On by default. */
+    fun haikuFirst(c: Context): Boolean = prefs(c).getBoolean("haiku_first", true)
     fun setHaikuFirst(c: Context, on: Boolean) = prefs(c).edit().putBoolean("haiku_first", on).apply()
 
     /** Daily warning, in thousands of tokens, for the person's own model (0 = off). Only warns, never stops. */
