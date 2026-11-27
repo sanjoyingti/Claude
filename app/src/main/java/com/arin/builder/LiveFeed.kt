@@ -4,6 +4,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 
 /**
  * Everything the models are doing right now, word for word: Claude's thinking, the tools it runs (searches, commands,
@@ -49,8 +50,3 @@ object LiveFeed {
         else lastAt = System.currentTimeMillis()
     }
 }
-
-private fun kotlinx.coroutines.CoroutineScope.launch(
-    ctx: kotlin.coroutines.CoroutineContext,
-    block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit,
-) = kotlinx.coroutines.launch(this, ctx, block = block)
