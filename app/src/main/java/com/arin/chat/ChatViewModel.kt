@@ -723,6 +723,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         com.arin.claudecode.ClaudeAccounts.migrate(app)
         val acc = com.arin.claudecode.ClaudeAccounts.addFromMainToken(app, ccAddingAccount.orEmpty())
+        // The account just signed in to becomes the active one (switch back any time).
+        acc?.let { com.arin.claudecode.ClaudeAccounts.setActive(app, it.id) }
         ccAddingAccount = null
         ccAccountsTick++
         if (provider == Provider.ClaudeCode) loadModels()
@@ -732,7 +734,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun makeCcAccountMain(id: String) {
         val app = getApplication<Application>()
         ArinApp.scope.launch {
-            com.arin.claudecode.ClaudeAccounts.makeMain(app, id); ccAccountsTick++
+            com.arin.claudecode.ClaudeAccounts.setActive(app, id); ccAccountsTick++
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { if (provider == Provider.ClaudeCode) loadModels() }
             // Old Claude processes still hold the previous account's sign-in: end them so the next message uses this one.
             runCatching { com.arin.claudecode.Harness.stopAll() }
             runCatching { com.arin.terminal.Shell.run(app, "pkill -f 'arin-claude/claude' ; pkill -f '/claude -p' ; true", 15_000) }

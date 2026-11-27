@@ -56,8 +56,21 @@ object ClaudeAccounts {
 
     fun name(c: Context, id: String?): String = if (id == null) (list(c).firstOrNull()?.name ?: "Claude") else list(c).firstOrNull { it.id == id }?.name ?: "Claude"
 
-    /** The token file a model should use (its account's, else the main sign-in). */
+    /**
+     * The ACTIVE account: only this one is used — by the Claude Code tab, the helper, workers and every chat — until the
+     * owner switches. Each account keeps its own independent sign-in.
+     */
+    fun active(c: Context): String? = settings(c).secret("CC_ACTIVE").ifBlank { null }?.takeIf { id -> list(c).any { it.id == id } }
+
+    fun setActive(c: Context, id: String) { settings(c).setSecret("CC_ACTIVE", id); makeMain(c, id) }
+
+    /** An account's own token file (for its usage meter), whatever is active. */
+    fun ownTokenFile(c: Context, id: String): String =
+        if (file(c, tokenPath(id)).let { it.exists() && it.length() > 20 }) tokenPath(id) else ClaudeCode.tokenFile()
+
+    /** The token file a model should use: the ACTIVE account's (else its own account's, else the main sign-in). */
     fun tokenFileFor(c: Context, model: String): String {
+        active(c)?.let { a -> if (file(c, tokenPath(a)).let { it.exists() && it.length() > 20 }) return tokenPath(a) }
         val id = accountOf(model) ?: return ClaudeCode.tokenFile()
         return if (file(c, tokenPath(id)).let { it.exists() && it.length() > 20 }) tokenPath(id) else ClaudeCode.tokenFile()
     }
@@ -112,6 +125,7 @@ object ClaudeAccounts {
     fun remove(c: Context, id: String) {
         runCatching { file(c, tokenPath(id)).delete() }
         save(c, list(c).filterNot { it.id == id })
+        if (settings(c).secret("CC_ACTIVE") == id) list(c).firstOrNull()?.let { setActive(c, it.id) } ?: settings(c).setSecret("CC_ACTIVE", "")
     }
 
     /** The models in the menu: every account × Sonnet / Opus / Haiku. */
@@ -120,6 +134,8 @@ object ClaudeAccounts {
         val accounts = list(c)
         val base = listOf("sonnet" to "Claude Sonnet", "opus" to "Claude Opus", "haiku" to "Claude Haiku")
         if (accounts.isEmpty()) return base.map { (id, label) -> ModelOption(id, "$label (Claude Code login)") }
+        // Only the active account's models are offered (switch accounts in the Claude Code tab).
+        active(c)?.let { act -> accounts.firstOrNull { it.id == act }?.let { a -> return base.map { (id, label) -> ModelOption("$id@${a.id}", "$label · ${a.name}") } } }
         return accounts.flatMap { a -> base.map { (id, label) -> ModelOption("$id@${a.id}", "$label · ${a.name}") } }
     }
 }

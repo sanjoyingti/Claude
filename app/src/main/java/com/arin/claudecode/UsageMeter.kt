@@ -85,7 +85,7 @@ object UsageMeter {
     suspend fun refreshClaude(account: String = "main") = withContext(Dispatchers.IO) {
         if (System.currentTimeMillis() - (updatedBy[account] ?: 0L) < 60_000 && sessionBy[account] != null) return@withContext
         val app = com.arin.ArinApp.instance
-        val path = if (account == "main") ClaudeCode.tokenFile() else ClaudeAccounts.tokenFileFor(app, "x@$account")
+        val path = if (account == "main") ClaudeCode.tokenFile() else ClaudeAccounts.ownTokenFile(app, account)
         val token = runCatching {
             java.io.File(com.arin.terminal.Linux.rootfs(app), path.removePrefix("/")).readText().trim()
         }.getOrNull()?.takeIf { it.isNotBlank() } ?: return@withContext

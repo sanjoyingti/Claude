@@ -79,11 +79,16 @@ private fun ProLogin(vm: ChatViewModel) {
     var newName by rememberSaveable { mutableStateOf("") }
     if (vm.ccConnected && !adding && vm.ccAddingAccount == null) {
         Text("Signed in with your Claude subscription ✓", color = colors.primary)
+        Text("Each account has its own sign-in. Only the ACTIVE account is used — here, by the helper, workers and every chat.",
+            style = small, color = colors.onSurfaceVariant)
         // Your Claude accounts: each has its own sign-in; pick one per chat from the model menu at the top.
         vm.ccAccountsTick
         val accounts = remember(vm.ccAccountsTick) { com.arin.claudecode.ClaudeAccounts.migrate(ctx); com.arin.claudecode.ClaudeAccounts.list(ctx) }
+        val activeId = remember(vm.ccAccountsTick) { com.arin.claudecode.ClaudeAccounts.active(ctx) ?: accounts.firstOrNull()?.id }
         accounts.forEach { a ->
             Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(checked = a.id == activeId, onCheckedChange = { on -> if (on) vm.makeCcAccountMain(a.id) })
+                androidx.compose.foundation.layout.Spacer(Modifier.padding(4.dp))
                 var email by remember(a.id) { mutableStateOf<String?>(null) }
                 androidx.compose.runtime.LaunchedEffect(a.id) { email = com.arin.claudecode.ClaudeAccounts.email(ctx, a.id) }
                 Text("• ${a.name}" + (email?.let { " ($it)" } ?: ""), modifier = Modifier.weight(1f))
@@ -99,7 +104,7 @@ private fun ProLogin(vm: ChatViewModel) {
                         dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
                     )
                 }
-                TextButton(onClick = { vm.makeCcAccountMain(a.id) }) { Text("Use in this tab") }
+                if (a.id == activeId) Text("Active ", color = colors.primary, style = small)
                 TextButton(onClick = { vm.removeCcAccount(a.id) }) { Text("Remove") }
             }
         }
