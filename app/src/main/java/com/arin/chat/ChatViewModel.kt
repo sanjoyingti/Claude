@@ -1959,6 +1959,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun chatBuildAppName(): String = chatBuildSession()?.project?.appName ?: "the app"
 
+    /** One build per tab: steers the running one with [request] and returns a note, or null when none is running. */
+    private fun oneBuildPerTab(request: String): String? {
+        val (sid, name) = runningBuildsHere().firstOrNull() ?: return null
+        val s = com.arin.builder.BuildRunner.session(sid) ?: return null
+        val said = request.trim().take(2_000)
+        if (said.isNotBlank()) s.steer(said)
+        return "Only one build runs per tab: $name is already building here, so I've given it your request — it carries on " +
+            "from where it is and follows it. (Tap Stop on the build if you'd rather start over.)"
+    }
+
     /** Every build running from this chat (several can run at once): session id → app name. */
     fun runningBuildsHere(): List<Pair<String, String>> {
         com.arin.builder.BuildRunner.runningCount // read so the bar updates
@@ -2216,6 +2226,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Starts building an app from chat; returns a problem to show, or null when it started. */
     fun startBuild(name: String, description: String, target: BuildTarget = BuildTarget.CHAT, writeFirst: Boolean = false): String? {
+        // ONE build per tab: while this chat's build runs, a new build request becomes a direction for that build
+        // (it carries on and follows it) instead of starting a second one.
+        oneBuildPerTab(description)?.let { return it }
         val token = githubToken()
         val app = getApplication<Application>()
         val phoneReady = com.arin.terminal.Linux.androidBuildReady(app)
@@ -2314,6 +2327,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * "chat" (GitHub, followed in this chat) or "buildtab" (GitHub, followed in the Build tab). Nothing is rewritten.
      */
     fun buildWrittenAt(sessionId: String, where: String): String? {
+        if (runningBuildsHere().any { it.first != sessionId }) return "A build is already running in this chat — only one build per tab. Stop it first, or wait for it to finish."
         val app = getApplication<Application>()
         val session = com.arin.builder.BuildRunner.sessionFor(app, sessionId) ?: return "That build isn't on this phone any more."
         val base = session.lastRequest ?: return "Couldn't find that build's request. Ask for it again."
