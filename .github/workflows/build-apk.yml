@@ -58,6 +58,9 @@ jobs:
           grep -q "ARIN-PROTECTED: ask-before-building" $D/builder/BuildService.kt
           grep -q "ARIN-PROTECTED: smart-thinking" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: claude-lean" $D/claudecode/ClaudeCodeModel.kt
+          grep -q "ARIN-PROTECTED: project-memory" $D/builder/ProjectMemory.kt
+          grep -q "ARIN-PROTECTED: impact-analysis" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: orchestration" $D/selffix/TaskSummary.kt
           grep -q "ARIN-PROTECTED: ask-before-building" $D/selffix/TaskSummary.kt
           grep -q "ARIN-PROTECTED: whole-problem-consultation" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: whole-problem-consultation" $D/selffix/TaskSummary.kt

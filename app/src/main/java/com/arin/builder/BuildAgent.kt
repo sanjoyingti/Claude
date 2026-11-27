@@ -251,6 +251,32 @@ class BuildAgent(
         }
     }
 
+    /** This project's persistent memory (survives closing the app, model changes and expired sessions). */
+    private val mem: ProjectMemory? by lazy { context?.let { runCatching { ProjectMemory.of(it, if (self) "arin-self" else packageName) }.getOrNull() } }
+
+    /**
+     * ARIN-PROTECTED: impact-analysis — before fixing or changing code, Arin itself (no AI) finds every other file that
+     * uses the classes and functions in [targets], so related files are checked and changed together, not just the
+     * obvious one. Returns "File.kt uses A, B" lines.
+     */
+    private fun relatedFiles(targets: Collection<String>): List<String> {
+        val decl = Regex("""(?m)^\s*(?:(?:public|internal|private|data|sealed|abstract|open|enum|inline|value|annotation|suspend)\s+)*(?:class|object|interface|fun)\s+(?:<[^>]+>\s*)?(?:\w+\.)?(\w{3,})""")
+        val names = targets.flatMap { p -> decl.findAll(files[p].orEmpty()).map { it.groupValues[1] }.toList() }.toSet()
+            .filter { it !in setOf("main", "onCreate", "invoke", "toString", "equals", "hashCode", "Preview") }
+        if (names.isEmpty()) return emptyList()
+        return files.filterKeys { k -> k !in targets && (k.endsWith(".kt") || k.endsWith(".java") || k.endsWith(".xml")) }
+            .mapNotNull { (k, txt) ->
+                val used = names.filter { n -> Regex("""\b${Regex.escape(n)}\b""").containsMatchIn(txt) }
+                if (used.isEmpty()) null else "${k.substringAfterLast('/')} ($k) uses " + used.take(8).joinToString()
+            }.take(15)
+    }
+
+    /** Files named in build errors. */
+    private fun errorFiles(errors: String): List<String> =
+        Regex("([\\w./-]+\\.(?:kt|java|xml|kts))[:(]").findAll(errors).map { it.groupValues[1] }.mapNotNull { f ->
+            files.keys.firstOrNull { k -> k == f || k.endsWith("/" + f.substringAfterLast("/src/main/")) || k.endsWith("/" + f.substringAfterLast('/')) }
+        }.distinct().toList()
+
     /** Set whenever the model wrote or changed code in this run (so the owner gets it explained). */
     private var codedThisRun = false
 
@@ -259,7 +285,16 @@ class BuildAgent(
     // suggestions to change, improve or update it, and the offer to build. Only the owner can change this rule.
     suspend fun run(): BuildResult {
         if (!self && !imported) runCatching { stabilizeDeps() }
-        val result = runBuild()
+        mem?.let { m ->
+            m.noteRequest(req.description)
+            m.setRequirements(if (self) req.description else requirements)
+            if (!req.resume) m.setAllRequirements(ProjectMemory.Status.IN_PROGRESS, setOf(ProjectMemory.Status.PENDING))
+        }
+        if (!req.resume) planForOwner()
+        val result0 = runBuild()
+        // The checklist goes with every result, honestly: verified only when it was built AND passed the emulator test.
+        val result = mem?.requirementsText()?.takeIf { it.isNotBlank() && !result0.message.startsWith(CODE_READY) && result0.message != "Stopped." }
+            ?.let { result0.copy(message = result0.message + "\n\n" + it) } ?: result0
         val withLedger = if (ledgerItems.isEmpty() || result.message.startsWith(CODE_READY)) result
             else result.copy(message = result.message + "\n\n" + ledgerText())
         if (!codedThisRun || result.message == "Stopped.") return withLedger
@@ -364,6 +399,28 @@ class BuildAgent(
                 else -> all.keys.none { k -> k.contains("/res/$type") && k.substringAfterLast('/').substringBefore('.') == name }
             }
         }.map { (t, n) -> "R.$t.$n" }.filter { !it.startsWith("R.mipmap.ic_launcher") }
+    }
+
+    /**
+     * The plan in plain English, made by Arin from what it already knows (no AI, no credit): what it understood, what it
+     * will do, how the other models help, and what happens next.
+     */
+    private fun planForOwner() {
+        val ctx = context ?: return
+        val boss = bossName()
+        val workers = if (workerOn()) com.arin.selffix.CreditSaver.workers(ctx).joinToString(", then ") { w ->
+            if (w.apiId == "offline") "the offline model" else com.arin.selffix.Worker.nice(w.model.ifBlank { w.apiId })
+        }.ifBlank { "" } else ""
+        val helper = runCatching { com.arin.selffix.ClaudeHelper.helper(ctx).name }.getOrDefault("")
+        val understood = (if (self) req.description else requirements).lines().map { it.trim() }.firstOrNull { it.length > 15 }?.take(220)
+            ?: req.description.take(220)
+        step(BuildEvent.Kind.STEP, "📋 PLAN\n" +
+            "• What I understood: " + understood + "\n" +
+            "• What Arin will do: " + (if (req.project != null || self) "change the existing app, check every related file, then build it" else "write the complete app, then build it") +
+            " on GitHub and test it on an Android emulator before giving you the link\n" +
+            "• How the models help: " + (if (workers.isNotBlank()) "$boss plans and checks; $workers writes and fixes the code" else "$boss writes and checks the code") +
+            (if (helper.isNotBlank()) "; $helper investigates hard errors" else "") + "\n" +
+            "• What happens next: " + (if (req.stopAfterWriting) "I write the code, explain it, then ask you where to build" else "coding → build → emulator test → your download link"))
     }
 
     private var lastChanged = mutableListOf<String>()
@@ -717,12 +774,14 @@ class BuildAgent(
                 }
             }
             onProgress(null, "")
+            mem?.recordFiles(pendingFiles.keys + pendingDisk.keys)
             ledger("Code written and uploaded to GitHub", "COMPLETED")
             step(BuildEvent.Kind.DONE, "Upload finished: $total file${if (total == 1) "" else "s"} (${mb(pendingFiles.values.sumOf { (it?.size ?: 0).toLong() } + pendingDisk.values.sumOf { it.length() })})")
             pendingFiles.clear()
             pendingDisk.values.forEach { it.delete() }
             pendingDisk.clear()
             uploadedOnce = true
+            mem?.recordCommit(sha, currentSha, message)
             currentSha = sha
             saveProject(repo, null)
           }
@@ -752,6 +811,11 @@ class BuildAgent(
 
             var crashLog: String? = null
             ledger("Build on GitHub", if (run.conclusion == "success") "COMPLETED" else "IN PROGRESS — fixing errors")
+            mem?.recordBuild(run.number, run.conclusion == "success", "")
+            if (run.conclusion == "success") {
+                lastFingerprint?.let { mem?.markFixed(it) }
+                mem?.setAllRequirements(ProjectMemory.Status.IMPLEMENTED, setOf(ProjectMemory.Status.PENDING, ProjectMemory.Status.IN_PROGRESS))
+            }
             if (run.conclusion == "success") {
                 step(BuildEvent.Kind.STEP, "Build succeeded. Getting the download link")
                 // Only hand over a link once the APK file is really there.
@@ -783,6 +847,8 @@ class BuildAgent(
                             testNote = "Tested on an Android emulator: it opens, and tapping around didn't crash it."
                             step(BuildEvent.Kind.DONE, testNote)
                             ledger("Emulator test (open + tap around)", "VERIFIED")
+                            mem?.recordBuild(run.number, true, "emulator test passed")
+                            mem?.setAllRequirements(ProjectMemory.Status.VERIFIED, setOf(ProjectMemory.Status.IMPLEMENTED, ProjectMemory.Status.IN_PROGRESS))
                             ledger("APK handed over", "COMPLETED")
                         }
                         "CRASH", "NOT_RUNNING", "INSTALL_FAILED" -> {
@@ -876,6 +942,7 @@ class BuildAgent(
             // Fingerprint compared with last round's: progress, or the same problem back again?
             lastFingerprint?.let { prev ->
                 if (prev != sig) {
+                    mem?.markFixed(prev)
                     ledger("Fixing build errors", "IN PROGRESS")
                     step(BuildEvent.Kind.DONE, "Progress: the previous error is fixed — now a different one: ${plainError(errors).take(100)}")
                 }
@@ -885,7 +952,12 @@ class BuildAgent(
             // (the full error report, the code at every error site, versions, libraries, what was already tried) and asks for
             // a root-cause diagnosis and a coherent fix. A refusal is noted and work goes on; the same request is never resent.
             val consult = consultHelper(errors, same)
-            val guide = listOf(web, consult).filter { it.isNotBlank() }.joinToString("\n\n")
+            val known = mem?.knownAbout(sig).orEmpty()
+            if (known.contains("WAS FIXED BEFORE")) step(BuildEvent.Kind.DONE, "This project hit this exact error before — reusing the fix that worked then")
+            val impact = relatedFiles(errorFiles(errors)).takeIf { it.isNotEmpty() }?.let {
+                "FILES THAT USE THE BROKEN CODE (check and change them together if needed):\n" + it.joinToString("\n")
+            }.orEmpty()
+            val guide = listOf(known, impact, web, consult).filter { it.isNotBlank() }.joinToString("\n\n")
             val before = files.toMap()
             notes = if (workerOn() && same < 2) privateFix(errors, notes, guide) else apply(ask(fixPrompt(errors, notes, guide)))
             // Remember what this round changed, so the next round doesn't repeat a fix that didn't work.
@@ -893,6 +965,7 @@ class BuildAgent(
             tried += "Round $round (" + plainError(errors).take(80) + "): changed " +
                 (changedNow.take(6).joinToString { it.substringAfterLast('/') }.ifBlank { "nothing" }) +
                 (lastNotes.firstOrNull()?.let { " — $it" }?.take(160) ?: "")
+            mem?.recordTry(sig, realErrorLine(errors), tried.last())
             saveProject(repo, null)
         }
     }
@@ -1173,6 +1246,7 @@ class BuildAgent(
         for (round in 1..1) { // one short inspection: saves your model's credit
             val summary = buildString {
                 appendLine("TASK: " + (if (self) "change the Arin app: " else "Android app \"$appName\": ") + req.description.take(2_500))
+                mem?.brief()?.takeIf { it.isNotBlank() }?.let { appendLine("PROJECT MEMORY: $it") }
                 appendLine("STAGE: $what")
                 appendLine("CHANGED FILES (names and functions only):")
                 pendingFiles.keys.take(30).forEach { p ->
@@ -1772,6 +1846,8 @@ class BuildAgent(
             appendLine()
             appendLine("CODE AT EACH ERROR SITE (numbered lines):")
             appendLine(errorRegions(errors).take(10_000))
+            relatedFiles(errorFiles(errors)).takeIf { it.isNotEmpty() }?.let { appendLine("OTHER FILES THAT USE THIS CODE: " + it.joinToString("; ")) }
+            mem?.knownAbout(com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) })?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
             if (tried.isNotEmpty()) {
                 appendLine()
                 appendLine("ALREADY TRIED (did not work — this error came back ${same} time(s)):")

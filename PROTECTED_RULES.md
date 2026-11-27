@@ -246,3 +246,20 @@ told they are there.
 - Claude gets only Arin's own short instructions (not Claude Code's long ones and tool list) and only the tools a task needs.
 - Easy helper questions go to Claude Haiku; hard ones (build-error diagnosis) to the model you picked.
 - Only the owner can change this rule.
+
+## Master orchestration plan (`builder/ProjectMemory.kt`, `builder/BuildAgent.kt`, `selffix/TaskSummary.kt`)
+
+- **Persistent project memory** (a file per project on the phone, no AI): original objective, every later request, a
+  requirements checklist with statuses, every build error with each fix tried and the fix that worked, every build and
+  emulator test, every commit (rollback points) and every changed file. It survives closing the app, model changes and
+  expired sessions. An error fixed before is fixed the same way again; a fix that failed before is not repeated.
+- **Requirements checklist with honest statuses** on every result: ⬜ pending, 🟡 implemented but not verified,
+  ✅ verified (built and opened on the emulator without crashing), ⛔ blocked, ❓ needs you.
+- **Change-impact analysis** (no AI): every file that uses the broken or changed code is found and given to the fixer and
+  the helper, so related files are fixed together.
+- **Plain-English plan** at the start of every build: what I understood, what Arin will do, how the models help, what's next.
+- **Orchestration rule** for the main model: understand → analyse → split → delegate (worker codes, helper investigates;
+  each gets only what its task needs, never a misleading description) → review → integrate → test → check every
+  requirement → deliver.
+- All earlier rules still apply — in particular, Arin never starts a build by itself.
+- Only the owner can change this rule.
