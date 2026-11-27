@@ -9,6 +9,7 @@ import org.json.JSONObject
  * and the helper) passes through here. The main model owns the conversation; the others get only a task brief:
  *  - API keys, tokens, passwords and private keys are redacted (all saved secrets + common secret formats),
  *  - lines that look like a conversation transcript (User:/Assistant: …) are removed,
+ *  - passages copied from the person's own messages are removed (their words go only to the main model),
  *  - only the project requirements relevant to this task are added (never the whole store),
  *  - an audit record says what kind of information was shared — without storing the content.
  * The pure parts ([Brief]) have unit tests.
@@ -30,22 +31,40 @@ object Delegation {
             // Last: a quoted value given to a secret-named setting (code such as prefs.getString(...) isn't touched).
             Regex("""(?i)\b(api[_-]?key|apikey|secret|token|password|passwd|access[_-]?key|client[_-]?secret)(\s*[:=]\s*)(["'])[^"'\s$(){}]{8,}\3"""),
         )
-        const val MASK = "[REDACTED]"
+        /** Every hidden value becomes "[REDACTED-1]", "[REDACTED-2]"…: the same number for the same value. */
+        const val MASK = "[REDACTED"
 
         /** Replaces every known secret value and every secret-looking string. Returns the text and how many were hidden. */
-        fun redact(text: String, known: Collection<String> = emptyList()): Pair<String, Int> {
-            var t = text; var n = 0
-            known.filter { it.length >= 8 }.sortedByDescending { it.length }.forEach { s ->
-                if (t.contains(s)) { n += t.split(s).size - 1; t = t.replace(s, MASK) }
+        fun redact(text: String, known: Collection<String> = emptyList()): Pair<String, Int> = redactMap(text, known).let { it.first to it.second.size }
+
+        /**
+         * Like [redact], and also returns the hidden values (in memory only, never logged) so a model's answer can get
+         * them back with [restore] — e.g. the owner's own API key in their app's code, which the worker never sees.
+         */
+        fun redactMap(text: String, known: Collection<String> = emptyList()): Pair<String, List<String>> {
+            val found = mutableListOf<String>()
+            fun mask(v: String): String {
+                val i = found.indexOf(v).let { if (it >= 0) it else { found += v; found.lastIndex } }
+                return "[REDACTED-${i + 1}]"
             }
+            var t = text
+            known.filter { it.length >= 8 }.sortedByDescending { it.length }.forEach { v -> if (t.contains(v)) t = t.replace(v, mask(v)) }
             for ((i, p) in patterns.withIndex()) {
                 t = p.replace(t) { m ->
-                    n++
-                    if (i >= patterns.lastIndex - 1) m.groupValues[1] + m.groupValues[2] + m.groupValues[3] + MASK + m.groupValues[3] else MASK
+                    if (m.value.contains(MASK)) m.value
+                    else if (i >= patterns.lastIndex - 1) {
+                        val head = m.groupValues[1] + m.groupValues[2] + m.groupValues[3]
+                        val value = m.value.removePrefix(head).removeSuffix(m.groupValues[3])
+                        head + mask(value) + m.groupValues[3]
+                    } else mask(m.value)
                 }
             }
-            return t to n
+            return t to found
         }
+
+        /** Puts the hidden values back into a model's answer. */
+        fun restore(text: String, secrets: List<String>): String =
+            secrets.foldIndexed(text) { i, acc, v -> acc.replace("[REDACTED-${i + 1}]", v) }
 
         // A transcript turn starts at the beginning of the line with a capitalised speaker ("User: …", "**Assistant:** …").
         // Indented code such as `user: User,` is never matched.
@@ -63,6 +82,68 @@ object Delegation {
                 out.appendLine(line)
             }
             return out.toString().trimEnd() to removed
+        }
+
+        // ---- The owner's own words stay with the main model ----
+        private val word = Regex("""[\p{L}\p{N}'’]+""")
+        /** A line that is code, a build log or a stack trace (technical material, not the person's own words). */
+        private fun technical(line: String): Boolean {
+            val t = line.trim()
+            return t.isEmpty() || Regex("""^(e: |w: |at |Caused by|import |package |fun |val |var |class |object |@|//|<|\*|#|\$ |> |\d+[:|])""").containsMatchIn(t) ||
+                Regex("""[{};]|\)\s*\{|=>|->|::|\w+\(.*\)|\w+\.\w+\.\w+|\.kt\b|\.xml\b|Exception|Error:""").containsMatchIn(t) && t.count { !it.isLetterOrDigit() && it != ' ' } * 6 > t.length / 2
+        }
+
+        private const val SHINGLE = 8
+
+        /**
+         * ARIN-PROTECTED: owner-words-only-to-main — removes from a brief every passage copied from the person's own
+         * messages: any run of [SHINGLE]+ words in a row, and a whole short message (25+ characters) copied word for word.
+         * Code, logs and stack traces the person pasted stay (technical material); their own sentences don't. Each removed
+         * passage becomes one "[…]" and the count is returned.
+         */
+        fun withoutOwnerText(text: String, ownerTexts: Collection<String>): Pair<String, Int> {
+            if (ownerTexts.isEmpty() || text.isBlank()) return text to 0
+            val norm = { s: String -> s.lowercase().replace('’', '\'') }
+            // The person's natural-language lines (technical lines are left out of the comparison).
+            val prose = ownerTexts.flatMap { it.lines() }.filterNot { technical(it) }
+            val shingles = HashSet<String>()
+            val shortWhole = mutableListOf<String>()
+            for (line in prose) {
+                val ws = word.findAll(norm(line)).map { it.value }.toList()
+                if (ws.size >= SHINGLE) for (i in 0..ws.size - SHINGLE) shingles += ws.subList(i, i + SHINGLE).joinToString(" ")
+                else if (line.trim().length >= 25) shortWhole += ws.joinToString(" ")
+            }
+            if (shingles.isEmpty() && shortWhole.isEmpty()) return text to 0
+            val out = StringBuilder(); var removed = 0
+            for (line in text.split("\n")) {
+                if (technical(line)) { out.append(line).append('\n'); continue }
+                val ms = word.findAll(line).toList()
+                val ws = ms.map { norm(it.value) }
+                val cut = BooleanArray(ws.size)
+                for (i in 0..ws.size - SHINGLE) if (ws.subList(i, i + SHINGLE).joinToString(" ") in shingles) for (k in i until i + SHINGLE) cut[k] = true
+                // A whole short message copied (e.g. "make the background dark blue please").
+                val lineWords = ws.joinToString(" ")
+                for (sw in shortWhole) {
+                    val at = Regex("""(?<![\p{L}\p{N}])""" + Regex.escape(sw) + """(?![\p{L}\p{N}])""").find(lineWords) ?: continue
+                    val first = lineWords.substring(0, at.range.first).split(' ').count { it.isNotEmpty() }
+                    val n = sw.split(' ').size
+                    for (k in first until minOf(ws.size, first + n)) cut[k] = true
+                }
+                if (cut.none { it }) { out.append(line).append('\n'); continue }
+                val sb = StringBuilder(); var pos = 0; var i = 0
+                while (i < ms.size) {
+                    if (!cut[i]) { i++; continue }
+                    var j = i; while (j + 1 < ms.size && cut[j + 1]) j++
+                    sb.append(line, pos, ms[i].range.first).append("[…]")
+                    pos = ms[j].range.last + 1
+                    // drop closing punctuation of the removed passage
+                    while (pos < line.length && line[pos] in ".,!?;:\"'’”)") pos++
+                    removed++; i = j + 1
+                }
+                sb.append(line.substring(pos))
+                out.append(sb).append('\n')
+            }
+            return out.toString().removeSuffix("\n") to removed
         }
 
         private val fileRef = Regex("""(?<![\w.-])((?:[\w.-]+/)*[\w.-]+\.(?:kt|kts|java|xml|gradle|toml|json|pro|properties|yml|yaml|md))\b""")
@@ -85,18 +166,26 @@ object Delegation {
                 .filter { it.second >= 2 }.sortedByDescending { it.second }.take(max).map { it.first }
         }
 
-        /** The brief actually sent: transcript lines out, secrets out, relevant requirements in. */
-        fun build(task: String, known: Collection<String>, requirements: List<String> = emptyList()): Built {
+        /**
+         * The brief actually sent: transcript lines out, the person's own words out, secrets out, relevant
+         * requirements in (requirements are the main model's restatement, never the person's text).
+         */
+        fun build(task: String, known: Collection<String>, requirements: List<String> = emptyList(), ownerTexts: Collection<String> = emptyList()): Built {
             val (noChat, turns) = stripConversation(task)
-            val req = relevant(requirements, noChat)
-            val withReq = if (req.isEmpty()) noChat else noChat + "\n\nPROJECT REQUIREMENTS RELEVANT TO THIS TASK (keep them):\n" + req.joinToString("\n") { "- $it" }
-            val (clean, secrets) = redact(withReq, known)
-            return Built(clean, secrets, turns, req.size, files(clean), categories(clean))
+            val (noOwner, ownerRemoved) = withoutOwnerText(noChat, ownerTexts)
+            val req = relevant(requirements, noOwner).map { withoutOwnerText(it, ownerTexts).first }.filter { !it.contains("[…]") }
+            val withReq = if (req.isEmpty()) noOwner else noOwner + "\n\nPROJECT REQUIREMENTS RELEVANT TO THIS TASK (keep them):\n" + req.joinToString("\n") { "- $it" }
+            val (clean, secrets) = redactMap(withReq, known)
+            return Built(clean, secrets.size, turns, req.size, files(clean), categories(clean), ownerRemoved, secrets)
         }
     }
 
     data class Built(val text: String, val secretsHidden: Int, val transcriptLinesRemoved: Int, val requirementsShared: Int,
-                     val files: List<String>, val categories: List<String>)
+                     val files: List<String>, val categories: List<String>, val ownerPassagesRemoved: Int = 0,
+                     /** The hidden values, in memory only (never written to the audit). */
+                     val secrets: List<String> = emptyList()) {
+        override fun toString() = "Built(${text.length} chars, secretsHidden=$secretsHidden)"
+    }
 
     private const val MAX_RECORDS = 500
     private fun log(c: Context) = java.io.File(c.filesDir, "delegation-audit.jsonl")
@@ -112,16 +201,22 @@ object Delegation {
      * Gates one delegation. [dest]: who gets it ("worker", "helper:Claude"…). [tab]: the conversation tab it belongs to.
      * [project]: the project key whose relevant requirements may be added. Returns the brief to send and the record id.
      */
-    fun gate(c: Context, dest: String, task: String, tab: String = "", project: String? = null, requirements: List<String> = emptyList()): Pair<String, String> {
-        val b = Brief.build(task, knownSecrets(c), requirements)
+    fun gate(c: Context, dest: String, task: String, tab: String = "", project: String? = null, requirements: List<String> = emptyList(),
+             ownerTexts: Collection<String> = emptyList()): Pair<String, String> =
+        gateFull(c, dest, task, tab, project, requirements, ownerTexts).let { it.first to it.second }
+
+    /** [gate], also returning the hidden values so the answer can get them back ([Brief.restore]). */
+    fun gateFull(c: Context, dest: String, task: String, tab: String = "", project: String? = null, requirements: List<String> = emptyList(),
+                 ownerTexts: Collection<String> = emptyList()): Triple<String, String, List<String>> {
+        val b = Brief.build(task, knownSecrets(c), requirements, ownerTexts)
         val id = "d" + System.currentTimeMillis().toString(36) + (0..999).random().toString(36)
         record(c, JSONObject()
             .put("id", id).put("time", System.currentTimeMillis()).put("to", dest).put("tab", tab).put("project", project ?: "")
             .put("task", "t" + (task.take(400).hashCode().toUInt().toString(36))) // an identifier, not the content
             .put("files", JSONArray(b.files)).put("shared", JSONArray(b.categories)).put("chars", b.text.length)
             .put("secretsHidden", b.secretsHidden).put("transcriptLinesRemoved", b.transcriptLinesRemoved)
-            .put("requirementsShared", b.requirementsShared).put("status", "sent"))
-        return b.text to id
+            .put("requirementsShared", b.requirementsShared).put("ownerPassagesRemoved", b.ownerPassagesRemoved).put("status", "sent"))
+        return Triple(b.text, id, b.secrets)
     }
 
     /** Marks how a delegation ended ("done", "failed", "refused"). */

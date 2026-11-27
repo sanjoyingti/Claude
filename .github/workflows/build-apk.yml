@@ -95,6 +95,13 @@ jobs:
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/KotlinImports.kt
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: duplicate-guard" $D/builder/KotlinDuplicates.kt
+          grep -q "ARIN-PROTECTED: compiler-fixes" $D/builder/KotlinFixes.kt
+          grep -q "ARIN-PROTECTED: api-index" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/selffix/Delegation.kt
+          grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/chat/ChatViewModel.kt
+          grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/selffix/ArinUpdateChat.kt
+          grep -q "ARIN-PROTECTED: owner-words-only-to-main" $D/selffix/VisionBridge.kt
           grep -q "ARIN-PROTECTED: duplicate-guard" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/Delegation.kt
           grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/Worker.kt
@@ -144,7 +151,19 @@ jobs:
           ./gradlew lintDebug > lint.log 2>&1 || true
           X=$(ls app/build/reports/lint-results-debug.xml 2>/dev/null)
           if [ -n "$X" ]; then
-            echo "LINT: $(grep -c 'severity="Error"' $X) errors, $(grep -c 'severity="Warning"' $X) warnings" > lint-report.txt
+            python3 - "$X" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          r = ET.parse(sys.argv[1]).getroot()
+          issues = list(r.iter("issue"))
+          err = [i for i in issues if i.get("severity") in ("Error", "Fatal")]
+          warn = [i for i in issues if i.get("severity") == "Warning"]
+          out = [f"LINT: {len(err)} errors, {len(warn)} warnings"]
+          for i in err:
+              loc = i.find("location")
+              where = (loc.get("file", "").split("/app/")[-1] + ":" + loc.get("line", "?")) if loc is not None else "?"
+              out.append(f"LINT ERROR {i.get('id')}: {where} — {i.get('message', '')[:220]}")
+          open("lint-report.txt", "w").write("\n".join(out) + "\n")
+          PY
           else echo "LINT: did not produce a report" > lint-report.txt; fi
           cat lint-report.txt
 

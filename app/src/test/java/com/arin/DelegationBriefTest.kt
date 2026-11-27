@@ -24,6 +24,15 @@ class DelegationBriefTest {
             .forEach { assertFalse("leaked: $it", t.contains(it)) }
     }
 
+    @Test fun hiddenValuesComeBackInTheAnswerOnly() {
+        val code = "val api = Api(key = \"$fakeKey\")\nval gh = \"$fakeGh\""
+        val (masked, hidden) = Brief.redactMap(code, listOf(fakeKey))
+        assertFalse(masked.contains(fakeKey)); assertFalse(masked.contains(fakeGh)); assertEquals(2, hidden.size)
+        // the model answers with the masks; the owner's values come back
+        val answer = masked.replace("Api(", "WeatherApi(")
+        assertEquals(code.replace("Api(", "WeatherApi("), Brief.restore(answer, hidden))
+    }
+
     @Test fun ordinaryCodeIsNotRedacted() {
         val code = "    val token = prefs.getString(\"token\", \"\")\n    fun login(user: User, password: String) = api.call(password)"
         assertEquals(code, Brief.redact(code).first)

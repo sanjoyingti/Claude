@@ -188,6 +188,22 @@ object KotlinSyntax {
         return if (r.ok) text else null
     }
 
+    /**
+     * An XML file (layout, manifest, strings…) with ``` fences or explanation text around it — "Content is not allowed
+     * in prolog" — cleaned: everything before the first tag and after the last tag goes. Returns null if it isn't XML.
+     */
+    fun cleanXml(text: String): String? {
+        val lines = text.replace("\r\n", "\n").lines().filterNot { Regex("""^\s*```[\w+-]*\s*$""").matches(it) }
+        val first = lines.indexOfFirst { it.trimStart().startsWith("<") }
+        val last = lines.indexOfLast { it.trimEnd().endsWith(">") }
+        if (first < 0 || last < first) return null
+        return lines.subList(first, last + 1).joinToString("\n").trimEnd() + "\n"
+    }
+
+    /** True when [clean] would change the file (text or fences around the code, imports in the middle…). */
+    fun needsCleaning(path: String, text: String): Boolean =
+        path.endsWith(".kt") && clean(path, text) != text.replace("\r\n", "\n").trimEnd() + "\n"
+
     /** Is this an error report about broken code structure (a typing mistake), not about types or libraries? */
     fun isSyntaxError(errors: String): Boolean = Regex(
         """(?i)(syntax error|expecting a top level declaration|imports are only allowed in the beginning of file|expecting ['"]?[})\]]|expecting member declaration|unexpected tokens|unclosed comment|missing ['"]?\}|unexpected end of file|incomplete code|expecting an element|unresolved reference: ``)""",

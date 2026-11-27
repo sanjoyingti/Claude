@@ -182,25 +182,47 @@ object KotlinImports {
             if (!imported(text, "$RT.getValue")) add += "$RT.getValue"
             if ((Regex("""\bvar\s+\w+(\s*:\s*[\w<>?]+)?\s+by\s""").containsMatchIn(code) || "setValue" in mustHave) && !imported(text, "$RT.setValue")) add += "$RT.setValue"
         }
+        // LazyColumn/LazyRow `items(list) { … }` needs its own import (without it Kotlin picks items(count: Int) and
+        // reports a type mismatch); grids have their own.
+        if (compose && Regex("""(?<![\w.])(items|itemsIndexed)\s*\(""").containsMatchIn(code)) {
+            fun has(fq: String) = Regex("""(?m)^\s*import\s+(${Regex.escape(fq)}|${Regex.escape(fq.substringBeforeLast('.'))}\.\*)\s*$""").containsMatchIn(text)
+            val usesItems = Regex("""(?<![\w.])items\s*\(""").containsMatchIn(code)
+            val usesIndexed = Regex("""(?<![\w.])itemsIndexed\s*\(""").containsMatchIn(code)
+            if (Regex("""(?<![\w.])Lazy(Column|Row)\s*[({]""").containsMatchIn(code)) {
+                if (usesItems && !has("androidx.compose.foundation.lazy.items")) add += "androidx.compose.foundation.lazy.items"
+                if (usesIndexed && !has("androidx.compose.foundation.lazy.itemsIndexed")) add += "androidx.compose.foundation.lazy.itemsIndexed"
+            }
+            if (Regex("""(?<![\w.])Lazy(Vertical|Horizontal)Grid\s*[({]""").containsMatchIn(code)) {
+                if (usesItems && !has("androidx.compose.foundation.lazy.grid.items")) add += "androidx.compose.foundation.lazy.grid.items"
+                if (usesIndexed && !has("androidx.compose.foundation.lazy.grid.itemsIndexed")) add += "androidx.compose.foundation.lazy.grid.itemsIndexed"
+            }
+        }
         var out = text
         val notes = mutableListOf<String>()
         if (add.isNotEmpty()) {
-            val lines = out.lines().toMutableList()
-            val lastImport = lines.indexOfLast { it.trimStart().startsWith("import ") }
-            val pkg = lines.indexOfFirst { it.trimStart().startsWith("package ") }
-            val at = if (lastImport >= 0) lastImport + 1 else if (pkg >= 0) pkg + 1 else 0
-            val block = add.map { "import $it" }
-            lines.addAll(at, if (lastImport < 0 && pkg >= 0) listOf("") + block else block)
-            out = lines.joinToString("\n")
+            out = addImports(out, add.toList())
             notes += "added ${add.size} import(s): " + add.joinToString { it.substringAfterLast('.') }
         }
         // Material 3 experimental components need an opt-in, or the build fails.
         val experimental = Regex("""(?<![\w.])(TopAppBar|CenterAlignedTopAppBar|LargeTopAppBar|MediumTopAppBar|ModalBottomSheet|rememberModalBottomSheetState|ExposedDropdownMenuBox|DatePicker|rememberDatePickerState|TimePicker|rememberTimePickerState|SearchBar|TopAppBarDefaults|SegmentedButton|PullToRefreshBox)\s*[({.]""")
         if (compose && experimental.containsMatchIn(code) && !text.contains("ExperimentalMaterial3Api::class") && !out.contains("ExperimentalMaterial3Api::class")) {
-            out = "@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)\n\n" + out
+            out = KotlinFixes.addFileOptIn(out, "androidx.compose.material3.ExperimentalMaterial3Api")
             notes += "added the Material 3 opt-in"
         }
         return out to notes
+    }
+
+    /** Adds import lines after the last import (or after the package line), skipping ones already there. */
+    fun addImports(text: String, imports: List<String>): String {
+        val lines = text.lines().toMutableList()
+        val have = lines.map { it.trim() }.toSet()
+        val block = imports.distinct().map { "import $it" }.filter { it !in have }
+        if (block.isEmpty()) return text
+        val lastImport = lines.indexOfLast { it.trimStart().startsWith("import ") }
+        val pkg = lines.indexOfFirst { it.trimStart().startsWith("package ") }
+        val at = if (lastImport >= 0) lastImport + 1 else if (pkg >= 0) pkg + 1 else lines.indexOfLast { it.trimStart().startsWith("@file:") } + 1
+        lines.addAll(at, if (lastImport < 0) listOf("") + block else block)
+        return lines.joinToString("\n")
     }
 
     /** "Unresolved reference 'x'" / "Unresolved reference: x" → per file name, the names. */

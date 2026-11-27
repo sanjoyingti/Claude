@@ -253,8 +253,102 @@ class BuildAgent(
 
     /** This project's persistent memory (survives closing the app, model changes and expired sessions). */
     private val memKey get() = if (self) "arin-self" else packageName
-    /** The project's requirements, for the delegation gateway to pick the relevant ones from (never all sent). */
-    private fun reqList(): List<String> = mem?.requirementList().orEmpty()
+    /**
+     * Requirements the delegation gateway may pick from for a worker task: the points of the main model's brief (its own
+     * words), never the owner's requirement text.
+     */
+    private fun reqList(): List<String> = (briefCache?.second ?: mem?.lastOwnerBrief().orEmpty()).lines().map { it.trim() }
+        .filter { Regex("""^(\d+[.)]|[-*•])\s+\S""").containsMatchIn(it) }.map { it.replace(Regex("""^(\d+[.)]|[-*•])\s+"""), "") }
+
+    /** Everything the owner wrote for this build: the request, all earlier requests, and directions sent while working. */
+    private fun ownerTexts(): List<String> = (listOf(req.description, requirements, req.requirements, req.project?.description.orEmpty(),
+        req.project?.requirements.orEmpty()) + steered).filter { it.isNotBlank() }.distinct()
+
+    private var briefCache: Pair<Int, String>? = null
+
+    /**
+     * ARIN-PROTECTED: owner-words-only-to-main — the main model (only it reads the owner's messages and files) writes a
+     * short brief in its own words; workers and the helper build from that brief, never from the owner's text. One short,
+     * lean call per new request (kept in the project memory and reused), so the main model's credit stays low.
+     */
+    private suspend fun ownerBrief(seenText: String = ""): String {
+        val owner = ownerTexts()
+        val sig = owner.joinToString("\u0000").hashCode()
+        briefCache?.let { if (it.first == sig) return it.second }
+        mem?.ownerBrief(sig)?.let { briefCache = sig to it; return it }
+        val prev = mem?.lastOwnerBrief().orEmpty()
+        val input = buildString {
+            if (prev.isNotBlank() && !req.resume) {
+                appendLine("THE BRIEF YOU WROTE EARLIER FOR THIS APP:"); appendLine(prev); appendLine()
+                appendLine("THE OWNER'S NEW REQUEST — update the brief with it (it wins where it conflicts; keep everything else):")
+                appendLine(req.description.take(6_000))
+            } else {
+                appendLine("WHAT THE OWNER ASKED FOR (everything so far):"); appendLine(requirements.ifBlank { req.description }.take(16_000))
+            }
+            if (steered.isNotEmpty()) { appendLine(); appendLine("DIRECTIONS THE OWNER SENT WHILE WORK WAS GOING ON (they win):"); steered.forEach { appendLine("- $it") } }
+            if (req.attachments.isNotEmpty()) {
+                appendLine(); appendLine("FILES THE OWNER ATTACHED (Arin adds pictures, fonts and sounds to the app itself; refer to them by name): " +
+                    req.attachments.joinToString { it.name })
+                if (seenText.isNotBlank()) { appendLine("WHAT THE PHONE READ IN THEM:"); appendLine(seenText.take(4_000)) }
+            }
+        }
+        val system = "You are the main model. A separate coding model will write the code, but it must NEVER see the owner's own " +
+            "words, files or personal details — only your brief. Write the brief in YOUR OWN WORDS as short numbered points: every " +
+            "feature, screen, behaviour, data item, text shown in the app, look and constraint the owner asked for — nothing left " +
+            "out, nothing added. Refer to attached files by name only. Leave out personal details (names, phone numbers, emails, " +
+            "addresses, keys) unless the app itself must show them, and then describe them generically. At most 350 words. " +
+            "Reply with the brief only."
+        var text = ""
+        for (attempt in 1..2) {
+            text = runCatching {
+                val sb = StringBuilder()
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, input)), system, req.endpoint(), boss = true)
+                    .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
+                sb.toString().trim()
+            }.getOrDefault("")
+            if (text.length > 20) break
+            if (attempt == 1) kotlinx.coroutines.delay(5_000)
+        }
+        if (text.length <= 20) throw IllegalStateException("Your main model (${bossName()}) couldn't write the brief for the worker, and " +
+            "the worker may not see your own words. Everything is saved — say \"try again\" to carry on.")
+        // Its own words only: anything it copied from the owner is removed (the gateway does the same for every request).
+        text = com.arin.selffix.Delegation.Brief.withoutOwnerText(text, owner).first
+        step(BuildEvent.Kind.THINKING, "${bossName()} wrote the brief for the worker in its own words (your messages and files stay with ${bossName()})")
+        context?.let { com.arin.selffix.CreditSaver.addUsage(it, input.length + text.length) }
+        briefCache = sig to text
+        mem?.setOwnerBrief(sig, text)
+        return text
+    }
+
+    /**
+     * A prompt as a worker (or the helper writing code) may see it: the owner's text replaced by the main model's brief,
+     * copied passages removed, secrets redacted, and an audit record kept. Attachments never go with it.
+     */
+    private suspend fun workerSafe(prompt: String, seenText: String = ""): String {
+        val owner = ownerTexts()
+        val brief = ownerBrief(seenText)
+        val mark = "\u0001BRIEF\u0001"
+        var t = prompt
+        var placed = false
+        for (o in owner.sortedByDescending { it.length }) {
+            for (v in listOf(o, o.take(14_000), o.take(6_000), o.take(4_000), o.take(2_500), o.take(1_500), o.take(300)).distinct()) {
+                if (v.trim().length >= 12 && t.contains(v)) {
+                    t = t.replace(v, if (!placed) mark else "(see the brief)")
+                    placed = true
+                }
+            }
+        }
+        t = com.arin.selffix.Delegation.Brief.withoutOwnerText(t, owner).first
+        val block = "THE OWNER'S REQUEST — as briefed by the main model (${bossName()}); the owner's own messages and files stay with it:\n$brief"
+        t = if (t.contains(mark)) t.replaceFirst(mark, block) else "$block\n\n$t"
+        val ctx = context ?: return t
+        val (sent, _, hidden) = com.arin.selffix.Delegation.gateFull(ctx, "worker (build)", t, helperTab, memKey)
+        workerHidden = hidden
+        return sent
+    }
+
+    /** Values hidden from the worker in [workerSafe] (e.g. an API key in the owner's own code): its answer gets them back. */
+    private var workerHidden: List<String> = emptyList()
     private val mem: ProjectMemory? by lazy { context?.let { runCatching { ProjectMemory.of(it, if (self) "arin-self" else packageName) }.getOrNull() } }
 
     /**
@@ -323,7 +417,8 @@ class BuildAgent(
         if (changed.isEmpty()) return ""
         step(BuildEvent.Kind.THINKING, "${bossName()} is explaining the code in plain English")
         val brief = buildString {
-            appendLine("WHAT THE OWNER ASKED: " + req.description.take(2_500))
+            // The worker explains in worker mode: it gets the main model's brief, never the owner's own words.
+            appendLine("WHAT THE OWNER ASKED: " + (if (workerOn()) (briefCache?.second ?: mem?.lastOwnerBrief()).orEmpty().ifBlank { "(kept private by the main model)" } else req.description).take(2_500))
             appendLine("APP: " + (if (self) "Arin itself (an update)" else appName))
             appendLine("FILES WRITTEN OR CHANGED:")
             changed.take(30).forEach { p ->
@@ -354,8 +449,9 @@ class BuildAgent(
             step(BuildEvent.Kind.THINKING, "The worker is writing the plain-English explanation")
             runCatching {
                 kotlinx.coroutines.withTimeoutOrNull(240_000) {
-                    com.arin.selffix.Worker.run(ctx, prompt, bossName(),
-                        system = "You explain software to people who are not programmers, clearly and kindly, in plain English.").second
+                    com.arin.selffix.Worker.runFor(ctx, prompt, bossName(),
+                        system = "You explain software to people who are not programmers, clearly and kindly, in plain English.",
+                        project = memKey, ownerTexts = ownerTexts()).second
                 }
             }.getOrNull()?.let { out.append(it) }
         } else runCatching {
@@ -825,7 +921,11 @@ class BuildAgent(
                             val web = researchFirst(query, out.log) // ARIN-PROTECTED: research the internet before every fix
                             val count = out.log.lines().count { it.startsWith("e: ") || it.contains("error:", true) }.coerceAtLeast(1)
                             step(BuildEvent.Kind.ERROR, "Phone build failed with $count error${if (count == 1) "" else "s"}: ${plainError(out.log)}. Fixing on the phone (${com.arin.selffix.AutoFix.roundText(localRounds, if (localOnly) maxFixRounds else baseFixRounds)})")
-                            notes = if (quickFix(out.log)) notes else if (workerOn()) privateFix(out.log, notes, web) else apply(ask(fixPrompt(out.log, notes, web)))
+                            notes = if (quickFix(out.log)) notes else {
+                                val left = remainingErrors ?: out.log
+                                val guideLocal = listOf(apiIndex(left), web).filter { it.isNotBlank() }.joinToString("\n\n")
+                                if (workerOn()) privateFix(left, notes, guideLocal) else apply(ask(fixPrompt(left, notes, guideLocal)))
+                            }
                             continue
                         }
                         if (localOnly) {
@@ -1047,15 +1147,16 @@ class BuildAgent(
             // a root-cause diagnosis and a coherent fix. A refusal is noted and work goes on; the same request is never resent.
             // Arin's own fixes first (brackets, imports — no AI): when they cover every error, no model is asked.
             val quick = quickFix(errors)
-            val consult = if (quick) "" else consultHelper(errors, same)
+            val left = remainingErrors ?: errors
+            val consult = if (quick) "" else consultHelper(left, same)
             val known = mem?.knownAbout(sig).orEmpty()
             if (known.contains("WAS FIXED BEFORE")) step(BuildEvent.Kind.DONE, "This project hit this exact error before — reusing the fix that worked then")
             val impact = relatedFiles(errorFiles(errors)).takeIf { it.isNotEmpty() }?.let {
                 "FILES THAT USE THE BROKEN CODE (check and change them together if needed):\n" + it.joinToString("\n")
             }.orEmpty()
-            val guide = listOf(known, impact, web, consult).filter { it.isNotBlank() }.joinToString("\n\n")
+            val guide = listOf(known, impact, if (quick) "" else apiIndex(left), web, consult).filter { it.isNotBlank() }.joinToString("\n\n")
             val before = files.toMap()
-            notes = if (quick) notes else if (workerOn() && same < 2) privateFix(errors, notes, guide) else apply(ask(fixPrompt(errors, notes, guide)))
+            notes = if (quick) notes else if (workerOn() && same < 2) privateFix(left, notes, guide) else apply(ask(fixPrompt(left, notes, guide)))
             // Remember what this round changed, so the next round doesn't repeat a fix that didn't work.
             val changedNow = files.keys.filter { files[it] != before[it] }
             tried += "Round $round (" + plainError(errors).take(80) + "): changed " +
@@ -1163,7 +1264,6 @@ class BuildAgent(
                 step(BuildEvent.Kind.THINKING, "🟣 Got the helper's plan; the model writes the code")
             }
         }
-        val working = mutableListOf(ChatMessage(Role.USER, prompt + seenText + helperPlan + steeringNote(), seenFiles))
         var steps = 0
         claudeAsks = 0
         // ARIN-PROTECTED: worker-mode — the worker writes; the boss (req.provider/model) only inspects (see [inspect]).
@@ -1171,6 +1271,11 @@ class BuildAgent(
         val pool = if (workerOn()) workerTargets() + listOfNotNull(helperWriter()) else emptyList()
         if (workerOn() && pool.isEmpty()) throw IllegalStateException("Worker mode is on, but no worker or helper can be reached " +
             "(check their keys or sign-in in Settings → Credit saver). Your main model doesn't write code in worker mode, to save its credit.")
+        // ARIN-PROTECTED: owner-words-only-to-main — workers get the main model's brief, never the owner's text or files.
+        val toWorkers = pool.isNotEmpty()
+        val working = mutableListOf(
+            if (toWorkers) ChatMessage(Role.USER, workerSafe(prompt + helperPlan + steeringNote(), seenText))
+            else ChatMessage(Role.USER, prompt + seenText + helperPlan + steeringNote(), seenFiles))
         var wi = 0
         var target: Target = pool.firstOrNull() ?: bossTarget()
         val workSystem = if (target.worker) workerSystem(system) else system
@@ -1249,10 +1354,13 @@ class BuildAgent(
                 onProgress(null, "")
                 val base = working[0].text.substringBefore("\n\nTHE OWNER'S DIRECTIONS")
                 working.clear()
-                working += ChatMessage(Role.USER, base + steeringNote(), seenFiles)
+                working += if (toWorkers) ChatMessage(Role.USER, workerSafe(prompt + helperPlan + steeringNote(), seenText))
+                    else ChatMessage(Role.USER, base + steeringNote(), seenFiles)
                 continue
             }
-            val reply = sb.toString()
+            // The worker never saw hidden values (keys in the owner's own code): the files it wrote get them back.
+            val masked = sb.toString()
+            val reply = if (toWorkers) com.arin.selffix.Delegation.Brief.restore(masked, workerHidden) else masked
             // A worker that refuses: the same task goes to the next worker; after the last one, to your model.
             if (target.worker && com.arin.selffix.CreditSaver.isRefusal(reply)) {
                 com.arin.selffix.CreditSaver.noteRefusal(context!!, target.w!!, helperTab)
@@ -1282,7 +1390,7 @@ class BuildAgent(
                     claudeAsks++
                     val hn = com.arin.selffix.ClaudeHelper.helper(context!!).name
                     step(BuildEvent.Kind.THINKING, "${nice(target.model)} asked $hn for help — $hn is helping ${nice(target.model)}")
-                    "The helper's answer:\n\n" + com.arin.selffix.ClaudeHelper.ask(context!!, projectNote() + claudeQ, source = helperTab).take(12_000)
+                    "The helper's answer:\n\n" + com.arin.selffix.ClaudeHelper.ask(context!!, projectNote() + claudeQ, source = helperTab, ownerTexts = ownerTexts()).take(12_000)
                 }
                 search != null -> {
                     step(BuildEvent.Kind.WEB, "Searching: $search")
@@ -1295,7 +1403,7 @@ class BuildAgent(
                 else -> return reply
             }
             steps++
-            working += ChatMessage(Role.ASSISTANT, reply.trim())
+            working += ChatMessage(Role.ASSISTANT, masked.trim()) // the worker's own (masked) words, never the restored values
             working += ChatMessage(Role.USER, "[Tool result]\n$result\n\nNow continue: write the files in the required format.")
         }
     }
@@ -1417,16 +1525,18 @@ class BuildAgent(
             val n = files[path]!!.lines().size
             val a = (lines.min() - 20).coerceAtLeast(1); val b = (lines.max() + 20).coerceAtMost(n)
             cut("FILE: $path\nLINES: $a-$b\nNEED: fix the error(s) at line(s) ${lines.joinToString()} as the diagnosis/error says")
-        }.take(4)
+        }.take(8) // every broken file in this round (fixed all at once, not a few per build)
         if (auto.isNotEmpty()) {
             step(BuildEvent.Kind.THINKING, "Arin cut out the code at ${auto.size} error site(s) — the worker fixes them" + if (diagnosis.isNotBlank()) " using Claude's diagnosis" else "")
             var any = false
             for (pc in auto) {
-                val task = "FILE: ${pc.file}\nCODE:\n${pc.text}\nERROR:\n" +
-                    trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(10).joinToString("\n").ifBlank { trimmed.take(1_500) } +
+                val fileErrors = trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(10).joinToString("\n").ifBlank { trimmed.take(1_500) }
+                val api = apiIndex(fileErrors)
+                val task = "FILE: ${pc.file}\nCODE:\n${pc.text}\nERROR:\n" + fileErrors +
+                    (if (api.isNotBlank()) "\n$api" else "") +
                     (if (diagnosis.isNotBlank()) "\nDIAGNOSIS FROM A SENIOR ENGINEER:\n$diagnosis" else "") +
                     "\nNEED: ${pc.need}\nReturn ONLY the fixed CODE above (the same piece, complete, every line), nothing else."
-                val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
+                val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList(), ownerTexts = ownerTexts()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
                 val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
                 if (who.isBlank() || code.isBlank()) continue
                 replacePiece(pc, code); any = true
@@ -1447,7 +1557,7 @@ class BuildAgent(
             appendLine("Analyse the cause. Do NOT write the fix. Name each broken piece for the worker, one block each (max 4):")
             appendLine("<piece>FILE: path\nFUNCTION: functionName   (or LINES: from-to)\nNEED: one line saying exactly what to fix</piece>")
         })
-        val pieces = Regex("(?s)<piece>(.*?)</piece>").findAll(plan).mapNotNull { cut(it.groupValues[1]) }.take(4).toList()
+        val pieces = Regex("(?s)<piece>(.*?)</piece>").findAll(plan).mapNotNull { cut(it.groupValues[1]) }.take(8).toList()
         if (pieces.isEmpty()) {
             step(BuildEvent.Kind.THINKING, "$boss couldn't point to a piece — the worker fixes the whole error this time")
             return apply(ask(fixPrompt(errors, notesIn, web)))
@@ -1459,7 +1569,7 @@ class BuildAgent(
                 step(BuildEvent.Kind.THINKING, "$boss is instructing the worker: ${pc.need.take(100)} (${pc.file.substringAfterLast('/')})")
                 val task = "FILE: ${pc.file}\nCODE:\n${pc.text}\nERROR:\n" + trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(8).joinToString("\n").ifBlank { trimmed.take(1_500) } +
                     "\nNEED: ${pc.need}\nReturn ONLY the fixed CODE above (the same piece, complete), nothing else."
-                val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
+                val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList(), ownerTexts = ownerTexts()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
                 val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
                 if (who.isBlank() || code.isBlank()) { step(BuildEvent.Kind.THINKING, "No worker could fix ${pc.file.substringAfterLast('/')}"); continue }
                 fixed += pc to code
@@ -1577,29 +1687,88 @@ class BuildAgent(
      * Fixes Arin can make by itself before any model is asked: broken brackets (syntax errors) and missing imports.
      * True when that covers every reported error, so the next build goes ahead with no AI credit used.
      */
+    /** The errors Arin couldn't fix by itself in the last [quickFix] — the only ones the models are given. */
+    private var remainingErrors: String? = null
+
     private suspend fun quickFix(errors: String): Boolean {
+        remainingErrors = null
         if (self) return false
-        val errLines = errors.lines().filter { it.startsWith("e: ") }
+        val errs = KotlinFixes.errors(errors)
         var changed = 0
         if (KotlinSyntax.isSyntaxError(errors)) {
             val broken = errorFiles(errors).filter { it.endsWith(".kt") || it.endsWith(".kts") }.toSet()
             changed += runCatching { syntaxGuard(force = broken, errors = errors) }.getOrDefault(0)
             if (changed > 0) return true // everything after the first syntax error is a follow-on error
         }
-        changed += runCatching { importGuard(errors) }.getOrDefault(0)
-        val dups = runCatching { duplicateGuard(errors) }.getOrDefault(0)
-        changed += dups
-        val allImports = errLines.isNotEmpty() && errLines.all { l ->
-            (dups > 0 && (KotlinDuplicates.isDuplicateError(l) || l.contains("ambiguity", true))) ||
-            Regex("""Unresolved reference:?\s*'?`?(\w+)""").find(l)?.groupValues?.get(1)?.let { KotlinImports.knows(it) } == true ||
-                l.contains("ExperimentalMaterial3Api") || l.contains("This material API is experimental") ||
-                l.contains("getValue") || l.contains("setValue")
+        // Fixes read straight from the compiler's messages (no AI).
+        val r = runCatching { KotlinFixes.fix(files.filterKeys { it.endsWith(".kt") }, errors) }.getOrNull()
+        if (r != null && r.updated.isNotEmpty()) {
+            r.updated.forEach { (p, t) -> files[p] = t; pendingFiles[p] = t.toByteArray() }
+            changed += r.updated.size
+            step(BuildEvent.Kind.FILE, "Arin fixed ${r.fixed.size} error(s) itself: " + r.notes.joinToString("; ").take(300) + " (no AI needed)")
+            ledger("Compiler fixes", "FIXED by Arin — " + r.notes.joinToString("; ").take(200))
         }
-        if (changed > 0 && allImports) {
-            step(BuildEvent.Kind.DONE, "Arin fixed all ${errLines.size} error(s) itself (imports / duplicate names) — building again, no AI used")
+        val imp = runCatching { importGuard(errors) }.getOrDefault(0)
+        val dups = runCatching { duplicateGuard(errors) }.getOrDefault(0)
+        changed += imp + dups
+        val fixedRaw = r?.fixed?.map { it.raw }.orEmpty().toSet()
+        val touched = (r?.fixed?.map { it.file }.orEmpty() + if (imp + dups > 0) errs.map { it.file } else emptyList()).toSet()
+        fun covered(e: KotlinFixes.Err): Boolean =
+            e.raw in fixedRaw ||
+                (dups > 0 && (KotlinDuplicates.isDuplicateError(e.msg) || e.msg.contains("ambiguity", true))) ||
+                (imp > 0 && Regex("""^Unresolved reference:?\s*'?`?(\w+)`?'?\.?$""").find(e.msg)?.groupValues?.get(1)?.let { KotlinImports.knows(it) } == true) ||
+                (imp > 0 && (e.msg.contains("ExperimentalMaterial3Api") || e.msg.contains("material API is experimental") ||
+                    e.msg.contains("getValue") || e.msg.contains("setValue"))) ||
+                (KotlinFixes.isCascade(e.msg) && e.file in touched)
+        val left = errs.filterNot { covered(it) }
+        if (changed > 0 && errs.isNotEmpty() && left.isEmpty()) {
+            step(BuildEvent.Kind.DONE, "Arin fixed all ${errs.size} error(s) itself — building again, no AI used")
             return true
         }
+        // Only what is left goes to the models, all of it at once.
+        if (changed > 0 && left.size < errs.size) {
+            val drop = errs.filter { covered(it) }.map { it.raw.trim() }.toSet()
+            remainingErrors = errors.lines().filterNot { it.trim() in drop }.joinToString("\n")
+            step(BuildEvent.Kind.THINKING, "Arin fixed ${errs.size - left.size} of ${errs.size} errors itself; the models get the other ${left.size}, all at once")
+        }
         return false
+    }
+
+    /**
+     * ARIN-PROTECTED: api-index — the real signatures (from the project's own files) of the classes the failing code
+     * calls ("Unresolved reference 'bypass' on receiver of type 'Pipeline'"), so the fix matches the code that exists
+     * instead of guessing — fewer rounds.
+     */
+    private fun apiIndex(errors: String): String {
+        val types = Regex("""on receiver of type '([\w.]+)\??'""").findAll(errors).map { it.groupValues[1].substringAfterLast('.') }.toMutableSet()
+        Regex("""Unresolved reference:?\s*'?`?([A-Z]\w*)""").findAll(errors).forEach { types += it.groupValues[1] }
+        if (types.isEmpty()) return ""
+        val kt = files.filterKeys { it.endsWith(".kt") }
+        val sb = StringBuilder()
+        for (type in types.take(6)) {
+            val found = kt.firstNotNullOfOrNull { (p, t) ->
+                runCatching { KotlinDuplicates.topLevel(p, t) }.getOrDefault(emptyList())
+                    .firstOrNull { it.name == type && it.kind in setOf("class", "object", "interface") }?.let { Triple(p, t, it) }
+            }
+            if (found == null) {
+                if (!KotlinImports.knows(type)) sb.appendLine("- $type: NOT declared anywhere in the project (declare it, or use a name that exists).")
+                continue
+            }
+            val (p, t, d) = found
+            val lines = t.lines(); val depth = KotlinSyntax.lineDepths(t)
+            val header = lines.subList(d.start, d.end + 1).joinToString(" ") { it.trim() }.substringBefore("{").replace(Regex("\\s+"), " ").take(300)
+            sb.appendLine("- $p: $header")
+            var n = 0
+            for (i in d.start..d.end) {
+                if (depth.getOrElse(i) { 0 } != 1 || n >= 30) continue
+                val l = lines[i].trim()
+                if (Regex("""^(?:@\w+\s+)*(?:(?:private|internal|public|protected|override|suspend|open|abstract|data|enum|sealed|inner|const|lateinit|inline)\s+)*(fun|val|var|class|object|interface)\s""").containsMatchIn(l) && !l.startsWith("private")) {
+                    sb.appendLine("    " + l.substringBefore(" {").substringBefore(" = ").take(160)); n++
+                }
+            }
+        }
+        if (sb.isBlank()) return ""
+        return "THE PROJECT'S REAL CODE THE FAILING LINES CALL (match these names and parameters, or add what's missing):\n" + sb.toString().trim()
     }
 
     /** Files a rejected piece-fix left for a whole-file repair. */
@@ -1614,11 +1783,20 @@ class BuildAgent(
     private suspend fun syntaxGuard(force: Set<String> = emptySet(), errors: String = ""): Int {
         val candidates = (pendingFiles.keys + force + syntaxBroken).filter { (it.endsWith(".kt") || it.endsWith(".kts")) && files[it] != null }.distinct()
         var changed = 0
+        // XML written by a model: fences or explanation text around it break the whole resource build.
+        for (p in pendingFiles.keys.filter { it.endsWith(".xml") && files[it] != null }.toList()) {
+            val t = files[p] ?: continue
+            val fixed = KotlinSyntax.cleanXml(t) ?: continue
+            if (fixed.trimEnd() != t.replace("\r\n", "\n").trimEnd()) {
+                files[p] = fixed; pendingFiles[p] = fixed.toByteArray(); changed++
+                step(BuildEvent.Kind.FILE, "Arin removed text left around the XML in ${p.substringAfterLast('/')} — no AI needed")
+            }
+        }
         val rewrite = mutableListOf<Pair<String, String>>() // path to the problem
         for (p in candidates) {
             val t = files[p] ?: continue
             val r = KotlinSyntax.scan(t)
-            val fenced = Regex("""(?m)^\s*```""").containsMatchIn(t) || KotlinSyntax.misplacedImports(t)
+            val fenced = Regex("""(?m)^\s*```""").containsMatchIn(t) || KotlinSyntax.misplacedImports(t) || KotlinSyntax.needsCleaning(p, t)
             if (r.ok && !fenced && p !in force && p !in syntaxBroken) continue
             // Arin's own repair first (fences, prose, imports in the middle, stray/missing braces) — no AI.
             val fixed = KotlinSyntax.repair(p, t)
@@ -1642,7 +1820,7 @@ class BuildAgent(
                 "and all other code exactly as it is.\nWHOLE FILE (numbered for you; don't include the numbers):\n" +
                 t.lines().mapIndexed { i, l -> "${i + 1}: $l" }.joinToString("\n") +
                 "\nReturn ONLY the COMPLETE corrected file, every line from the first to the last, no explanation, no ``` fences."
-            val out = if (ctx != null && workerOn()) com.arin.selffix.Worker.runFor(ctx, task, bossName(), project = memKey, requirements = reqList()) { _, s -> step(BuildEvent.Kind.THINKING, s) }.second else ask(task)
+            val out = if (ctx != null && workerOn()) com.arin.selffix.Worker.runFor(ctx, task, bossName(), project = memKey, requirements = reqList(), ownerTexts = ownerTexts()) { _, s -> step(BuildEvent.Kind.THINKING, s) }.second else ask(task)
             val code = KotlinSyntax.clean(p, out.replace(Regex("(?s)^.*?```[\\w-]*\n"), "").substringBeforeLast("```").let { if (it.isBlank()) out else it })
                 .lines().joinToString("\n") { it.replace(Regex("^\\d+: "), "") }
             val r = KotlinSyntax.scan(code)
@@ -2120,7 +2298,8 @@ class BuildAgent(
         val pkg = buildString {
             appendLine("You are a senior Android/Kotlin build engineer, consulted on a failing Gradle build of an Android app.")
             appendLine("APP: " + (if (self) "Arin (an Android AI assistant app) — an update to it" else "$appName ($packageName)"))
-            appendLine("WHAT IT MUST DO (summary): " + (if (self) req.description else requirements).take(1_500))
+            // Never the owner's own words: the main model's brief (if it wrote one), else nothing.
+            (briefCache?.second ?: mem?.lastOwnerBrief())?.takeIf { it.isNotBlank() }?.let { appendLine("WHAT IT MUST DO (the main model's brief): " + it.take(1_500)) }
             appendLine("TOOLCHAIN: Kotlin ${ProjectTemplate.KOTLIN}, Gradle ${ProjectTemplate.GRADLE}, JDK ${ProjectTemplate.JDK}, " +
                 "compileSdk/targetSdk ${ProjectTemplate.SDK}, Compose BOM ${ProjectTemplate.COMPOSE_BOM}")
             if (deps.isNotEmpty()) appendLine("EXTRA LIBRARIES/PLUGINS: " + deps.joinToString())
@@ -2151,7 +2330,7 @@ class BuildAgent(
         }
         val answer = runCatching {
             kotlinx.coroutines.withTimeoutOrNull(300_000) {
-                com.arin.selffix.ClaudeHelper.ask(ctx, pkg, helperTab, hard = true) { s -> step(BuildEvent.Kind.THINKING, s) }
+                com.arin.selffix.ClaudeHelper.ask(ctx, pkg, helperTab, hard = true, ownerTexts = ownerTexts()) { s -> step(BuildEvent.Kind.THINKING, s) }
             }
         }.getOrNull().orEmpty().trim()
         val useless = answer.length < 80 || !usableHelp(answer)
@@ -2542,7 +2721,11 @@ class BuildAgent(
                 e.contains("resource", true) || e.contains("AAPT", true) -> "a picture, color, text or other resource is missing or broken$where"
                 e.contains("Manifest merger", true) -> "the app's Android settings (manifest) conflict"
                 e.contains("Expecting", true) || e.contains("Syntax", true) -> "the code has a typing mistake (like a missing bracket)$where"
-                e.contains("Overload resolution ambiguity", true) || e.contains("Conflicting", true) -> "two things have the same name$where"
+                e.contains("Conflicting", true) || e.contains("Redeclaration", true) -> "two things have the same name$where"
+                e.contains("Overload resolution ambiguity", true) -> "a call matches more than one function (often a missing import, a wrong argument or a copy of a function)$where"
+                e.contains("Function invocation", true) -> "a function is used without its brackets ()$where"
+                e.contains("nullable receiver", true) -> "a value that can be empty is used without a check$where"
+                e.contains("needs opt-in", true) || e.contains("is experimental", true) -> "an experimental feature is used without permission$where"
                 e.contains("OutOfMemory", true) || e.contains("heap space", true) -> "the build ran out of memory"
                 else -> "\"" + e.take(90) + "\"" + where
             }
@@ -2597,6 +2780,16 @@ class BuildAgent(
                 } else if (fileEnd.matches(line)) {
                     files.add(current to stripFences(body.toString()))
                     path = null
+                } else if (fileStart.find(line) != null) {
+                    // A new "=== FILE:" without "=== END FILE ===" before it: the previous file ends here (otherwise the
+                    // next file was glued into it — "Expecting a top level declaration").
+                    files.add(current to stripFences(body.toString()))
+                    path = fileStart.find(line)!!.groupValues[1].trim('`', ' ')
+                    body.clear()
+                } else if (aboutLine.matches(line) || depLine.find(line) != null && body.isBlank()) {
+                    // "=== ABOUT: …" (and a dependency line) is for Arin, never part of the file: it used to end up on the
+                    // file's first line and break the whole file.
+                    depLine.find(line)?.let { deps.add(it.groupValues[1].trim('`', ' ')) }
                 } else {
                     body.appendLine(raw)
                 }

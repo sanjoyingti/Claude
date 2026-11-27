@@ -268,6 +268,8 @@ object ClaudeHelper {
         @Suppress("UNUSED_PARAMETER") files: List<com.arin.data.Attachment> = emptyList(),
         /** A hard question (a fix that already failed): the chosen Claude model even when "Haiku first" is on. */
         hard: Boolean = true,
+        /** The person's own messages in this tab: any passage copied from them is removed before the helper sees it. */
+        ownerTexts: Collection<String> = emptyList(),
         onStatus: (String) -> Unit = {},
     ): String {
         // ARIN-PROTECTED-RULE: helper-sees-only-the-boss — the helper never gets the person's messages or files. Only the
@@ -296,7 +298,7 @@ object ClaudeHelper {
             }
         }
         // ARIN-PROTECTED: delegation-firewall — the helper gets only the question brief (no transcript, no secrets).
-        val (brief, did) = Delegation.gate(context, "helper:" + h.name, question, source)
+        val (brief, did, hidden) = Delegation.gateFull(context, "helper:" + h.name, question, source, ownerTexts = ownerTexts)
         val about = brief.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() && !it.startsWith("You are") }.orEmpty().take(90)
         Activity.log(source, "🟣 Asking ${h.label} for help: $about")
         suspend fun via(w: String) = when (w) {
@@ -321,7 +323,8 @@ object ClaudeHelper {
         Delegation.finish(context, did, if (failed) "failed" else "done")
         Activity.log(source, if (failed) "🟣 ${h.name} couldn't help: ${answer.take(120)}"
             else "🟣 ${h.name} answered (${answer.split(Regex("\\s+")).size} words) — using its help")
-        return answer
+        // The helper never saw the hidden values; its answer gets them back (for the main model only).
+        return Delegation.Brief.restore(answer, hidden)
     }
 
     /** One fresh question, no history: the helper keeps nothing between questions. */

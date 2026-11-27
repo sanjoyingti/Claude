@@ -104,6 +104,9 @@ object VisionBridge {
         text
     }
 
+    /** Owner's strict rule: their files go only to the main model (see [eye]). */
+    private const val OWNER_FILES_ONLY_TO_MAIN = true
+
     private suspend fun describeImage(context: Context, a: Attachment, onStatus: (String) -> Unit): String {
         val f = java.io.File(a.path)
         if (!f.exists()) return "(The file is no longer on the phone.)"
@@ -123,7 +126,7 @@ object VisionBridge {
         else {
             val labels = bmp?.let { labels(it) }.orEmpty()
             if (labels.isNotBlank()) sb.append("Recognised on the phone: $labels\n")
-            sb.append("(No model that can see is connected; add a Gemini, ChatGPT or Claude key for a full description.)\n")
+            sb.append("(Read on the phone only: your files are shown only to your main model, never to another model.)\n")
         }
         return sb.toString().trim()
     }
@@ -160,7 +163,7 @@ object VisionBridge {
             else {
                 frames.firstOrNull()?.second?.let { android.graphics.BitmapFactory.decodeFile(it.absolutePath) }?.let { labels(it) }
                     ?.takeIf { it.isNotBlank() }?.let { sb.append("Recognised on the phone: $it\n") }
-                sb.append("(No model that can see is connected; add a Gemini, ChatGPT or Claude key for a full description.)")
+                sb.append("(Read on the phone only: your files are shown only to your main model, never to another model.)")
             }
             frames.forEach { it.second.delete() }
             sb.toString().trim()
@@ -191,6 +194,10 @@ object VisionBridge {
     // ---- a model that can see, from what the person already has ----
 
     private suspend fun eye(context: Context, images: List<Attachment>, ask: String): String? {
+        // ARIN-PROTECTED: owner-words-only-to-main — the person's pictures and videos are shown only to their main model.
+        // When it can't see, they are read on the phone (text recognition and labels, no AI service): never sent to
+        // another model (Gemini, ChatGPT, Claude, a Custom API or the Claude Code login) to be described.
+        if (OWNER_FILES_ONLY_TO_MAIN) return null
         if (images.isEmpty()) return null
         val s = com.arin.data.Settings(context)
         val system = "You describe images precisely and completely for another AI model that cannot see them."

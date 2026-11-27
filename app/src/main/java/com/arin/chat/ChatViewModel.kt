@@ -1302,7 +1302,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (asked != null && failed == null && helperOn("claude-code")) {
                     val draft = ccMessages.lastOrNull { !it.fromUser }?.text.orEmpty()
                     ArinApp.scope.launch {
-                        val help = com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app, question =
+                        val help = com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app,
+                            ownerTexts = ccMessages.filter { it.fromUser }.map { it.text }, question =
                             "Claude Code (the boss) answered:\n\"\"\"\n${draft.take(8_000)}\n\"\"\"\n\n" +
                                 "Help it: point out mistakes, fill gaps, and say exactly what it should still do. Write to Claude Code.") { ccStatus = it }
                         withContext(Dispatchers.Main) {
@@ -1322,7 +1323,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     ccHelperFixes = if (same) ccHelperFixes + 1 else 0
                     ccLastFailure = err
                     if (ccHelperFixes < 3) ArinApp.scope.launch {
-                        val sol = com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app, question =
+                        val sol = com.arin.selffix.ClaudeHelper.ask(source = "claude-code", context = app,
+                            ownerTexts = ccMessages.filter { it.fromUser }.map { it.text }, question =
                             "Claude Code (the boss) hit this error:\n${err.take(4_000)}\n\n" +
                                 "Claude Code asks you for the solution: the real cause and exactly what to do. Write to Claude Code.") { ccStatus = it }
                         withContext(Dispatchers.Main) {
@@ -3093,6 +3095,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun reply() {
         val history = messages.filterNot { it.failed }
+        // ARIN-PROTECTED: owner-words-only-to-main — the person's own messages in this chat; anything copied from them is
+        // removed before a task or question goes to the worker or the helper (only the main model sees them).
+        val ownerWords = history.filter { it.fromUser }.map { it.text }
         val p = provider
         val m = model
         val key = settings.key(p)
@@ -3255,7 +3260,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 .filter { Regex("(?i)(FAILED|error|exception|not found|denied|cannot|can't|unable|traceback|exit code|warning|at )").containsMatchIn(it) }
                                 .take(40).joinToString("\n").take(4_000)
                             val bossStep = turns.lastOrNull { !it.fromUser }?.text.orEmpty().take(3_000)
-                            val guide = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question =
+                            val guide = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, ownerTexts = ownerWords, question =
                                 "STEP:\n$bossStep\nERROR:\n$errLines\nReturn the fixed step or patched code only.") { run.status = it }
                             run.status = null
                             if (guide.isNotBlank() && !guide.contains("NO_HELP_NEEDED") && !guide.contains("couldn't be reached") && !guide.contains("isn't connected") && !guide.contains("switched off")) {
@@ -3604,7 +3609,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         run.liveText = ""
                         run.status = "$bossName asked ${com.arin.selffix.ClaudeHelper.helper(app).name} for help — ${com.arin.selffix.ClaudeHelper.helper(app).name} is helping $bossName"
                         run.who = com.arin.selffix.ClaudeHelper.helper(app).name
-                        val answer = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question = claudeQ) { }
+                        val answer = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question = claudeQ, ownerTexts = ownerWords) { }
                         run.who = bossName
                         run.status = "${com.arin.selffix.ClaudeHelper.helper(app).name} helped; $bossName is continuing"
                         run.status = null
@@ -3621,7 +3626,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         workerAsks++
                         run.liveText = ""
                         run.status = "$bossName is instructing the worker: " + workerTask.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().removePrefix("TASK:").trim().take(90)
-                        val (who, result) = com.arin.selffix.Worker.runFor(app, workerTask, bossName, tab = run.chat) { w, s -> run.who = w; run.status = s }
+                        val (who, result) = com.arin.selffix.Worker.runFor(app, workerTask, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
                         run.who = bossName
                         run.status = null
                         val step = com.arin.data.CommandRun("worker ${who.ifBlank { "(none)" }}: ${workerTask.take(80)}", result.take(2_000), 0, kind = "tool")
@@ -3798,7 +3803,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         if (run.consultHelper && !helperConsulted && claudeHelperOn && (run.askedHelper || !com.arin.selffix.CreditSaver.on(app))) {
                             helperConsulted = true
                             // Only the boss's own draft goes to the helper (never the person's message).
-                            val help = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question =
+                            val help = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, ownerTexts = ownerWords, question =
                                 "I (the boss model) drafted this answer:\n\"\"\"\n${Prompt.clean(full).take(8_000)}\n\"\"\"\n\n" +
                                     "Help the assistant: point out mistakes, fill gaps, and give it what it needs to answer the person well " +
                                     "(exact facts, code, commands or steps). Write to the assistant, not to the person.") { run.status = it }

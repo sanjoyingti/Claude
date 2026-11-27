@@ -51,7 +51,8 @@ object Worker {
             "inspect; you NEVER write code (not even a few lines), long text, research summaries or long analysis yourself. Keep your " +
             "own replies short: think as deeply as the problem needs, but write little. For any code, " +
             "long text, long analysis or multi-step work, do NOT do it yourself — write <ask_worker>TASK: everything the worker " +
-            "needs (it cannot see the person or this chat)</ask_worker> as the LAST thing in your reply and stop. Its result comes " +
+            "needs, in YOUR OWN WORDS (it cannot see the person or this chat; never paste the person's messages, files or " +
+            "personal details — Arin removes copied passages)</ask_worker> as the LAST thing in your reply and stop. Its result comes " +
             "back to you: inspect it; if it's wrong, send directions in another <ask_worker>. To show the worker's output to the " +
             "person, write $RESULT_TAG instead of copying it. Short questions and small talk you answer yourself, briefly.\n\n"
     }
@@ -122,12 +123,15 @@ object Worker {
 
     /** [run] for a project: the relevant [requirements] of [project] go with the brief. */
     suspend fun runFor(c: Context, task0: String, boss: String = "your model", system: String = SYSTEM, tab: String = "", project: String? = null,
-                       requirements: List<String> = emptyList(), onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
-        // ARIN-PROTECTED: delegation-firewall — the worker gets only the task brief (no transcript, no secrets).
-        val (task, did) = Delegation.gate(c, "worker", task0, tab, project, requirements)
+                       requirements: List<String> = emptyList(), ownerTexts: Collection<String> = emptyList(),
+                       onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
+        // ARIN-PROTECTED: delegation-firewall — the worker gets only the task brief (no transcript, no secrets, none of the
+        // person's own words: those go only to the main model).
+        val (task, did, hidden) = Delegation.gateFull(c, "worker", task0, tab, project, requirements, ownerTexts)
         val result = runInner(c, task, boss, system, onStatus)
         Delegation.finish(c, did, if (result.second.isBlank()) "failed" else "done")
-        return result
+        // The worker never saw the hidden values; the code it returns gets them back.
+        return result.first to Delegation.Brief.restore(result.second, hidden)
     }
 
     private suspend fun runInner(c: Context, task: String, boss: String, system: String, onStatus: (who: String, text: String) -> Unit): Pair<String, String> {

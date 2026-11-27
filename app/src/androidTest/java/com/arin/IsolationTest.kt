@@ -72,6 +72,18 @@ class IsolationTest {
         }
     }
 
+    @Test fun theOwnersOwnWordsNeverReachWorkerOrHelper() {
+        val ownerWords = listOf("ALPHA please build a diary app for my wife Meera with a pink lock screen and her birthday reminder")
+        val task = "TASK: build a diary app for my wife Meera with a pink lock screen and her birthday reminder\nUse Room for storage."
+        for (dest in listOf("worker", "helper:Claude")) {
+            val (sent, id) = Delegation.gate(ctx, dest, task, tab = a.id, ownerTexts = ownerWords)
+            assertFalse(sent.contains("Meera")); assertFalse(sent.contains("birthday reminder"))
+            assertTrue(sent.contains("Use Room for storage."))
+            val rec = Delegation.recent(ctx).first { it.optString("id") == id && it.has("to") }
+            assertEquals(1, rec.getInt("ownerPassagesRemoved")); assertFalse(rec.toString().contains("Meera"))
+        }
+    }
+
     @Test fun relevantRequirementsAreSharedOthersAreNot() {
         val mem = ProjectMemory.of(ctx, "test.isolation.app")
         mem.setRequirements("- The dark theme toggle must stay on the settings screen\n- Export notes to PDF from the notes list")

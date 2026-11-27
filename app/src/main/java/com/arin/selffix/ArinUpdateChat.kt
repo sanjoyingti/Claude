@@ -30,6 +30,9 @@ object ArinUpdateChat {
 
     val messages = mutableStateListOf<Msg>()
 
+    /** ARIN-PROTECTED: owner-words-only-to-main — the owner's own messages here (removed from anything sent to the worker or helper). */
+    private fun ownerWords(): List<String> = messages.toList().filter { it.fromUser }.map { it.text }
+
     /** Files waiting to go with the next message (any type, any size: big files stay on the phone). */
     val pending = mutableStateListOf<com.arin.data.Attachment>()
     /** Files attached in this discussion, by message: the model sees them, and they go to the build. */
@@ -334,7 +337,7 @@ object ArinUpdateChat {
                         .take(40).joinToString("\n").take(4_000)
                     val bossStep = turns.lastOrNull { it.role == Role.ASSISTANT }?.text.orEmpty().take(3_000)
                     val q = "STEP:\n$bossStep\nERROR:\n$errLines\nReturn the fixed step or patched code only."
-                    val a = ClaudeHelper.ask(app, q, source = "arin-update") { status = it }
+                    val a = ClaudeHelper.ask(app, q, source = "arin-update", ownerTexts = ownerWords()) { status = it }
                     return a.takeIf { it.isNotBlank() && !it.contains("NO_HELP_NEEDED") && !it.contains("couldn't be reached") && !it.contains("isn't connected") && !it.contains("switched off") }
                 }
                 var guides = 0
@@ -379,7 +382,7 @@ object ArinUpdateChat {
                             // Heavy writing (code, long text) goes to the worker; the boss inspects what comes back.
                             steps++
                             status = "$bossName is instructing the worker: " + workerTask.lineSequence().first().take(80)
-                            val (who, result) = Worker.run(app, TeamWork.safeDirection(workerTask), bossName) { _, s -> status = s.take(120) }
+                            val (who, result) = Worker.runFor(app, TeamWork.safeDirection(workerTask), bossName, tab = "arin-update", ownerTexts = ownerWords()) { _, s -> status = s.take(120) }
                             turns += ChatMessage(Role.ASSISTANT, reply.trim())
                             turns += ChatMessage(Role.USER, if (result.isBlank()) "[No worker could do this task. Do it yourself, briefly.]"
                                 else "[WORKER RESULT from ${Worker.nice(who)} — inspect it; send directions in another <ask_worker> if it's wrong.]\n" + result.take(12_000))
@@ -422,7 +425,7 @@ object ArinUpdateChat {
                                 val page = WebTools.fetch(fetch).take(if (team) 16_000 else 8_000)
                                 "Content of $fetch:\n" + if (team) TeamWork.digest(app, "the page $fetch", page, bossName, scrubAbout = false) { _, s -> status = s.take(120) } else page
                             }
-                            else -> { helperAsks++; status = "Asking ${ClaudeHelper.helper(app).name} for help"; "The AI helper's answer:\n" + ClaudeHelper.ask(app, ask!!, source = "arin-update").take(12_000) }
+                            else -> { helperAsks++; status = "Asking ${ClaudeHelper.helper(app).name} for help"; "The AI helper's answer:\n" + ClaudeHelper.ask(app, ask!!, source = "arin-update", ownerTexts = ownerWords()).take(12_000) }
                         }
                         turns += ChatMessage(Role.ASSISTANT, reply.trim())
                         done += cmd ?: read?.let { "read $it" } ?: search?.let { "searched the internet: $it" } ?: fetch?.let { "read $it" } ?: "asked the AI helper"
@@ -441,7 +444,7 @@ object ArinUpdateChat {
                         // Only the developer's (boss's) own draft goes to the helper — never the owner's message.
                         val help = ClaudeHelper.ask(app, "I (the developer model, the boss) am updating the Arin app and drafted this reply:\n\"\"\"\n${cleanTags(reply).take(8_000)}\n\"\"\"\n\n" +
                             "Help the developer: point out mistakes, fill gaps, and give it what it needs (exact code, files, steps). " +
-                            "Write to the developer, not to the owner.", source = "arin-update") { status = it }
+                            "Write to the developer, not to the owner.", source = "arin-update", ownerTexts = ownerWords()) { status = it }
                         status = "Finishing the reply with ${ClaudeHelper.helper(app).name}'s help"
                         turns += ChatMessage(Role.ASSISTANT, reply.trim())
                         turns += ChatMessage(Role.USER, "[Help from the AI helper, which the owner asked you to use:]\n$help\n\n" +

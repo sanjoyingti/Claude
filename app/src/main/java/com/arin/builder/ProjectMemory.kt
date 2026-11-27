@@ -149,6 +149,13 @@ class ProjectMemory private constructor(private val file: java.io.File, private 
         if (c.length() == 0) null else c.getJSONObject(c.length() - 1).let { it.optString("sha") to it.optString("rollbackTo") }
     }
 
+    // ---- The main model's brief for workers (the owner's words stay with the main model) ----
+    /** The brief written for [sig] (a fingerprint of the owner's request texts), if there is one. */
+    fun ownerBrief(sig: Int): String? = j.optJSONObject("ownerBrief")?.takeIf { it.optInt("sig") == sig }?.optString("text")?.ifBlank { null }
+    /** The newest brief whatever it was written for (updated, not rewritten, when the owner asks for more). */
+    fun lastOwnerBrief(): String = j.optJSONObject("ownerBrief")?.optString("text").orEmpty()
+    fun setOwnerBrief(sig: Int, text: String) { j.put("ownerBrief", JSONObject().put("sig", sig).put("text", text)); save() }
+
     /** A short summary for your main model (what this project is and where it stands). */
     fun brief(): String = buildString {
         if (objective.isNotBlank()) appendLine("ORIGINAL OBJECTIVE: " + objective.take(600))
