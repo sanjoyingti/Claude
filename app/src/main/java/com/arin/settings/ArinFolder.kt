@@ -85,13 +85,18 @@ object ArinFolder {
     /** A backup of chats and settings, saved to Download (only when you tap Back up), to restore after reinstalling. */
     suspend fun backup(c: Context): String = withContext(Dispatchers.IO) {
         val name = "Arin-backup-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date()) + ".zip"
-        val values = android.content.ContentValues().apply {
-            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
-            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download")
+        // MediaStore.Downloads exists from Android 10 (API 29); older phones (Arin runs from Android 8) save the backup in
+        // Arin's own Download folder instead.
+        var oldFile: File? = null
+        val out: java.io.OutputStream = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            newDownload(c, name) ?: return@withContext "Couldn't create the backup file."
+        } else {
+            val f = File(c.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: c.filesDir, name)
+            oldFile = f
+            f.outputStream()
         }
-        val uri = c.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return@withContext "Couldn't create the backup file."
         val skip = setOf("linux", "vision-cache", "build-files", "logs")
-        c.contentResolver.openOutputStream(uri)?.use { os ->
+        out.use { os ->
             ZipOutputStream(os).use { zip ->
                 fun add(dir: File, prefix: String) {
                     dir.listFiles().orEmpty().forEach { f ->
@@ -105,7 +110,19 @@ object ArinFolder {
                 add(File(c.applicationInfo.dataDir, "shared_prefs"), "shared_prefs/")
             }
         }
-        "Saved to Download/$name — keep it to restore after reinstalling."
+        oldFile?.let { "Saved to ${it.absolutePath} — keep it to restore after reinstalling." }
+            ?: "Saved to Download/$name — keep it to restore after reinstalling."
+    }
+
+    /** A new file in the phone's Download folder (Android 10+, through MediaStore). */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.Q)
+    private fun newDownload(c: Context, name: String): java.io.OutputStream? {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download")
+        }
+        val uri = c.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
+        return c.contentResolver.openOutputStream(uri)
     }
 
     /** Restores a backup over the current data. Arin then closes; open it again. */
