@@ -2014,11 +2014,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun followBuildInChat(title: String, session: com.arin.builder.BuildSession) {
         if (chatId == null) persist()
         chatId?.let { linkBuild(it, session.id) }
-        val msg = Message(fromUser = false, text = "🛠️ **$title…**\n\nStarting.")
-        messages += msg
+        // ONE build message per tab: reuse this build's message if it has one; any older progress message left in the
+        // chat (from a build that was replaced or stopped) is closed, so only one "building" line ever shows.
+        val reuse = follows[session.id]?.msg?.takeIf { id -> messages.any { it.id == id } }
+        val active = follows.values.mapNotNull { it.msg }.toSet() - setOfNotNull(reuse)
+        messages.indices.forEach { i ->
+            val m = messages[i]
+            if (!m.fromUser && m.id != reuse && m.id !in active && m.text.startsWith("🛠️") && !m.text.contains("— steps**")) {
+                messages[i] = m.copy(text = m.text.replaceFirst(Regex("""^🛠️ \*\*(.+?)…\*\*"""), "🛠️ **$1 — steps**") +
+                    if (m.text.contains("— steps**")) "" else "\n\n_(continued in the build below)_")
+            }
+        }
+        val msgId = reuse ?: Message(fromUser = false, text = "🛠️ **$title…**\n\nStarting.").also { messages += it }.id
         persist()
         follows[session.id]?.job?.cancel()
-        val f = Follow(session.id, chatId, msg.id)
+        val f = Follow(session.id, chatId, msgId)
         follows[session.id] = f
         f.job = viewModelScope.launch {
             var last = ""
