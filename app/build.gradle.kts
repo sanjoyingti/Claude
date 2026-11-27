@@ -15,17 +15,23 @@ android {
         // 28, like Termux: Android blocks running programs from app storage for apps targeting 29+,
         // and the built-in Linux (PRoot) needs that. Arin is installed from GitHub, not the Play Store.
         targetSdk = 28
-        versionCode = 248
-        versionName = "1.13.1"
+        versionCode = 249
+        versionName = "1.14.0"
     }
 
     signingConfigs {
         // Fixed key so each new build installs over the previous one.
+        // Signing: if the repo has signing secrets (ARIN_KEYSTORE_FILE / ARIN_STORE_PASSWORD / ARIN_KEY_ALIAS /
+        // ARIN_KEY_PASSWORD, set by the workflow from GitHub Secrets), they are used; otherwise the bundled key, so every
+        // existing install keeps updating (Android only accepts updates signed with the same key).
+        // NOTE: the bundled key and its password are public in this repo, so treat that key as known to anyone. Moving
+        // to a private key means one reinstall (uninstall + install) — see SIGNING.md.
         getByName("debug") {
-            storeFile = file("arin-debug.keystore")
-            storePassword = "arinandroid"
-            keyAlias = "arin"
-            keyPassword = "arinandroid"
+            val ks = System.getenv("ARIN_KEYSTORE_FILE")?.takeIf { it.isNotBlank() && file(it).exists() }
+            storeFile = if (ks != null) file(ks) else file("arin-debug.keystore")
+            storePassword = System.getenv("ARIN_STORE_PASSWORD")?.takeIf { ks != null && it.isNotBlank() } ?: "arinandroid"
+            keyAlias = System.getenv("ARIN_KEY_ALIAS")?.takeIf { ks != null && it.isNotBlank() } ?: "arin"
+            keyPassword = System.getenv("ARIN_KEY_PASSWORD")?.takeIf { ks != null && it.isNotBlank() } ?: "arinandroid"
         }
     }
 

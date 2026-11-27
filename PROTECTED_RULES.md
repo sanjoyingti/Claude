@@ -268,3 +268,15 @@ told they are there.
 - **Budgets per build:** at most 15 web researches and 8 helper consultations (changeable), so nothing runs away with credit.
 - **Safe rollback:** say "roll back" or "undo last change" in the app's tab: its files go back to before the last change
   with a new commit on top (nothing deleted, can be undone). It never builds by itself afterwards.
+
+## Security workstation and verified releases
+
+- **Security** (in the side menu): APK analysis, Web/API check and Network check — all Arin's own code on the phone, no AI
+  credit, nothing uploaded. Scanning someone else's site or device requires confirming you own it or have permission;
+  every target is written to a scope log with its report (`files/security/`). Checks are passive/ordinary connections:
+  no attacks, password guessing, packet injection or Wi-Fi cracking. "Ask Arin to fix" hands a report to a new chat,
+  which asks before building.
+- **Release gating:** every release (Arin and every app Arin builds) is published as NOT VERIFIED and is marked verified
+  and newest only when the emulator test passes.
+- **Signing:** private key from GitHub Secrets when set; otherwise the bundled (public) key so updates keep working —
+  see SIGNING.md for the one-time safe migration.

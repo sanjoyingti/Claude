@@ -18,7 +18,7 @@ import com.arin.project.ProjectsScreen
 import com.arin.settings.SettingsScreen
 
 /** Every top-level screen. Chat is home. */
-enum class Screen { Chat, Settings, Projects, Project, Build, Logs, FreeTokens, ClaudeCode, MovieMaker, ArinUpdate }
+enum class Screen { Chat, Settings, Projects, Project, Build, Logs, FreeTokens, ClaudeCode, MovieMaker, ArinUpdate, Security }
 
 /** Owns which screen is showing. Screens never navigate themselves; they call back here. */
 @Composable
@@ -76,6 +76,7 @@ fun AppShell(vm: ChatViewModel) {
         Screen.ArinUpdate -> "arin-update"
         Screen.ClaudeCode -> "claude-code"
         Screen.MovieMaker -> "movie"
+        Screen.Security -> "security"
         else -> screen.name.lowercase()
     }
     androidx.compose.runtime.LaunchedEffect(helperTab) { vm.enterModelTab(helperTab) } // each tab keeps its own model
@@ -91,6 +92,7 @@ fun AppShell(vm: ChatViewModel) {
             onOpenFree = { screen = Screen.FreeTokens },
             onOpenClaudeCode = { screen = Screen.ClaudeCode },
             onOpenMovieMaker = { screen = Screen.MovieMaker },
+            onOpenSecurity = { screen = Screen.Security },
             onOpenArinUpdate = { screen = Screen.ArinUpdate },
             startVoice = Launch.voicePending,
             onVoiceStarted = { Launch.voicePending = false },
@@ -108,6 +110,7 @@ fun AppShell(vm: ChatViewModel) {
             onOpenSettings = { settingsFromClaudeCode = true; screen = Screen.Settings },
         )
         Screen.MovieMaker -> com.arin.movie.MovieMakerScreen(vm, onBack = { screen = Screen.Chat })
+        Screen.Security -> com.arin.security.SecurityScreen(vm, onBack = { screen = Screen.Chat })
         Screen.ArinUpdate -> com.arin.selffix.ArinUpdateScreen(vm, onBack = { screen = Screen.Chat })
         Screen.Build -> com.arin.builder.BuildScreen(
             chat = vm,

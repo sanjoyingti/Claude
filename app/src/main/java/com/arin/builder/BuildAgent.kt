@@ -831,7 +831,7 @@ class BuildAgent(
                 var apk: String? = null
                 var size: Long? = null
                 for (i in 0 until 20) {
-                    apk = if (self) gh.apkForTag(repo, "$SELF_TAG_PREFIX${run.number}") else gh.latestApkUrl(repo)
+                    apk = if (self) gh.apkForTag(repo, "$SELF_TAG_PREFIX${run.number}") else (gh.apkForTag(repo, "build-${run.number}") ?: gh.latestApkUrl(repo))
                     size = apk?.let { ApkInstaller.check(it) }
                     if (apk != null && size != null) break
                     delay(3000)

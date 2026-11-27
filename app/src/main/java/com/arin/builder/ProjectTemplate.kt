@@ -210,7 +210,9 @@ object ProjectTemplate {
                       tag_name: build-${'$'}{{ github.run_number }}
                       name: Build ${'$'}{{ github.run_number }}
                       files: app-*.apk
-                      make_latest: true
+                      # Not verified yet: the test job marks it verified (and newest) only if the app passes.
+                      prerelease: true
+                      make_latest: false
               # ARIN-PROTECTED: test-before-handover — the APK is installed on an Android emulator, opened and tapped
               # around; Arin hands the download link over only when this test passes. (Its own job: a test problem
               # never breaks the build itself.)
@@ -250,6 +252,13 @@ object ProjectTemplate {
                         arin-test-report.txt
                         arin-test-screen.png
                       fail_on_unmatched_files: false
+                  # ARIN-PROTECTED: release-gating — a release is marked verified (and newest) ONLY if the app passed the emulator test.
+                  - name: Mark the release verified only if the app passed the test
+                    if: always()
+                    env:
+                      GH_TOKEN: ${'$'}{{ github.token }}
+                    run: |
+                      if grep -q "RESULT: PASS" arin-test-report.txt; then gh release edit "build-${'$'}{{ github.run_number }}" -R "${'$'}{{ github.repository }}" --prerelease=false --latest; else gh release edit "build-${'$'}{{ github.run_number }}" -R "${'$'}{{ github.repository }}" --prerelease=true --latest=false; fi
         """.trimIndent(),
         TEST_SCRIPT_PATH to testScript,
     )
@@ -386,6 +395,13 @@ report PASS ""
                     arin-test-report.txt
                     arin-test-screen.png
                   fail_on_unmatched_files: false
+              # ARIN-PROTECTED: release-gating — a release is marked verified (and newest) ONLY if the app passed the emulator test.
+              - name: Mark the release verified only if the app passed the test
+                if: always()
+                env:
+                  GH_TOKEN: ${'$'}{{ github.token }}
+                run: |
+                  if grep -q "RESULT: PASS" arin-test-report.txt; then gh release edit "$tag" -R "${'$'}{{ github.repository }}" --prerelease=false --latest; else gh release edit "$tag" -R "${'$'}{{ github.repository }}" --prerelease=true --latest=false; fi
     """.trimIndent()
 
     val importWorkflow = """
@@ -449,7 +465,8 @@ report PASS ""
                   tag_name: build-${'$'}{{ github.run_number }}
                   name: Build ${'$'}{{ github.run_number }}
                   files: app-*.apk
-                  make_latest: true
+                  prerelease: true
+                  make_latest: false
     """.trimIndent() + "\n" + testJob("build-${'$'}{{ github.run_number }}", "app-*.apk").prependIndent("  ")
 
     val importedSystemPrompt = """

@@ -64,6 +64,7 @@ jobs:
           grep -q "ARIN-PROTECTED: watchdog" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: budgets" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: safe rollback" $D/builder/GitHubClient.kt
+          grep -q "ARIN-PROTECTED: release-gating" $D/builder/ProjectTemplate.kt
           grep -q "ARIN-PROTECTED: ask-before-building" $D/selffix/TaskSummary.kt
           grep -q "ARIN-PROTECTED: whole-problem-consultation" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: whole-problem-consultation" $D/selffix/TaskSummary.kt
@@ -87,7 +88,18 @@ jobs:
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"
 
+      # Private signing key from GitHub Secrets, if set (never stored in the repo or printed). See SIGNING.md.
+      - name: Use the private signing key if one is set
+        env:
+          KS: ${{ secrets.ARIN_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then echo "$KS" | base64 -d > "$RUNNER_TEMP/arin-release.jks"; echo "ARIN_KEYSTORE_FILE=$RUNNER_TEMP/arin-release.jks" >> "$GITHUB_ENV"; echo "Signing with the private key"; else echo "No private key set: using the bundled key (see SIGNING.md)"; fi
+
       - name: Build debug APK
+        env:
+          ARIN_STORE_PASSWORD: ${{ secrets.ARIN_STORE_PASSWORD }}
+          ARIN_KEY_ALIAS: ${{ secrets.ARIN_KEY_ALIAS }}
+          ARIN_KEY_PASSWORD: ${{ secrets.ARIN_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           set -o pipefail
@@ -118,8 +130,9 @@ jobs:
           tag_name: arin-${{ github.run_number }}
           name: Arin v${{ steps.ver.outputs.version }} (build ${{ github.run_number }})
           files: Arin-*.apk
-          # Only main marks the newest release, so a build on the arin branch doesn't replace another app's latest release.
-          make_latest: ${{ github.ref_name == 'main' }}
+          # Published as NOT VERIFIED; the test job marks it verified (and newest on main) only if Arin passes the emulator test.
+          prerelease: true
+          make_latest: false
 
       # One fixed link per branch that always gives the newest APK and source (the owner taps it, it downloads):
       # https://github.com/<owner>/<repo>/releases/download/latest-<branch>/Arin-latest.apk  (and Arin-source.zip)
@@ -177,3 +190,15 @@ jobs:
             arin-test-report.txt
             arin-test-screen.png
           fail_on_unmatched_files: false
+      # ARIN-PROTECTED: release-gating — verified (and newest) only if the emulator test passed.
+      - name: Mark the release verified only if Arin passed the test
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          T="arin-${{ github.run_number }}"
+          if grep -q "RESULT: PASS" arin-test-report.txt; then
+            gh release edit "$T" -R "${{ github.repository }}" --prerelease=false $([ "${{ github.ref_name }}" = main ] && echo --latest)
+          else
+            gh release edit "$T" -R "${{ github.repository }}" --prerelease=true --latest=false
+          fi
