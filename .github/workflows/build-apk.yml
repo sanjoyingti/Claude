@@ -53,6 +53,7 @@ jobs:
           grep -q "ARIN-PROTECTED: heavy-work-off-the-boss" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: boss-minimum-credit" $D/llm/Llm.kt
           grep -q "ARIN-PROTECTED: boss-memory" $D/selffix/ChatMemory.kt
+          grep -q "ARIN-PROTECTED: never-stuck" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: boss-memory" $D/chat/ChatViewModel.kt
           grep -q "ARIN-PROTECTED: explain-after-coding" $D/selffix/TaskSummary.kt
           test -s app/src/main/assets/apk-toolkit-setup.sh

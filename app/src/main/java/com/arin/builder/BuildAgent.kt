@@ -849,12 +849,25 @@ class BuildAgent(
             }
             round++
             currentRound = round
+            // ARIN-PROTECTED: never-stuck — the same error again means the last method failed: change method, not repeat it.
+            val sig = com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) }
+            val same = (sameErrors[sig] ?: 0) + 1
+            sameErrors[sig] = same
+            if (same >= 2 && !self) autoRepair(errors)?.let { step(BuildEvent.Kind.LIBRARY, it) }
+            stuck = same
             // Look the main error up online every time, and give the model what others did to fix it.
-            val web = researchFirst(mainError(errors), errors) // ARIN-PROTECTED: research the internet before every fix
+            val web = researchFirst(mainError(errors) + (if (same >= 3) " solution " + listOf("alternative", "workaround", "fixed by", "correct way")[same % 4] else ""), errors) // ARIN-PROTECTED: research the internet before every fix
             val count = errors.lines().count { it.startsWith("e: ") || it.contains("error:", true) }.coerceAtLeast(1)
             if (crashLog != null) step(BuildEvent.Kind.ERROR, "Fixing the crash (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)}), then building and testing again")
             else step(BuildEvent.Kind.ERROR, "Build failed with $count error${if (count == 1) "" else "s"}: ${plainError(errors)}. Fixing (${com.arin.selffix.AutoFix.roundText(round, maxFixRounds)})")
-            notes = if (workerOn()) privateFix(errors, notes, web) else apply(ask(fixPrompt(errors, notes, web)))
+            if (same >= 3) step(BuildEvent.Kind.THINKING, "The same error came back $same times — trying a completely different method this time")
+            val before = files.toMap()
+            notes = if (workerOn() && same < 6) privateFix(errors, notes, web) else apply(ask(fixPrompt(errors, notes, web)))
+            // Remember what this round changed, so the next round doesn't repeat a fix that didn't work.
+            val changedNow = files.keys.filter { files[it] != before[it] }
+            tried += "Round $round (" + plainError(errors).take(80) + "): changed " +
+                (changedNow.take(6).joinToString { it.substringAfterLast('/') }.ifBlank { "nothing" }) +
+                (lastNotes.firstOrNull()?.let { " — $it" }?.take(160) ?: "")
             saveProject(repo, null)
         }
     }
@@ -1500,7 +1513,7 @@ class BuildAgent(
         // Your model stays the boss: it makes the change. If Claude can't help, your model researches as before.
         if (com.arin.selffix.CreditSaver.on(context) && !workerOn()) {
             val ctx = context!!
-            val sig = com.arin.selffix.CreditSaver.signature(errors)
+            val sig = com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) }
             if (seen < 2) com.arin.selffix.CreditSaver.rememberedFix(ctx, sig)?.let {
                 step(BuildEvent.Kind.THINKING, "Seen this error before — using the fix that worked (no AI needed)")
                 return "A fix that worked before for this exact error (apply it):\n$it"
@@ -1641,12 +1654,44 @@ class BuildAgent(
 
     /** The first compiler or Gradle error, cleaned up to search the web for it. */
     private fun mainError(errors: String): String {
-        val line = errors.lines().map { it.trim() }.firstOrNull { it.startsWith("e: ") || it.contains("error:", true) || it.contains("What went wrong", true) || it.contains("Could not resolve", true) }
-            ?: errors.lines().firstOrNull { it.isNotBlank() } ?: return ""
+        val line = realErrorLine(errors).ifBlank { return "" }
         return "android gradle " + line.removePrefix("e: ")
             .replace(Regex("""file:///\S+?:\d+:\d+\s*"""), "")
             .replace(Regex("""(/[\w.@+-]+){2,}"""), " ")
             .replace(Regex("""\s+"""), " ").trim().take(150)
+    }
+
+    /** How many times each error has come back (by signature), and what each fix round changed. */
+    private val sameErrors = mutableMapOf<String, Int>()
+    private val tried = mutableListOf<String>()
+    private var stuck = 0
+
+    /**
+     * Fixes Arin can make by itself (no AI) for errors that keep coming back: build-tool versions that don't fit.
+     * Returns what it did, or null.
+     */
+    private suspend fun autoRepair(errors: String): String? {
+        val e = errors.lowercase()
+        if ("ksp" in e && deps.any { it.startsWith("plugin:com.google.devtools.ksp:") }) {
+            val newest = resolveDependency("com.google.devtools.ksp:symbol-processing-gradle-plugin:latest")?.substringAfterLast(':') ?: return null
+            val now = deps.first { it.startsWith("plugin:com.google.devtools.ksp:") }
+            if (now.endsWith(":$newest")) return null
+            deps.remove(now); deps += "plugin:com.google.devtools.ksp:$newest"; depsChanged = true
+            return "Set the code generator (KSP) to its newest release, $newest, to fit Kotlin ${ProjectTemplate.KOTLIN}"
+        }
+        // A library version that doesn't exist or doesn't fit: move every saved library to its newest stable release.
+        if (("could not resolve" in e || "could not find" in e || "aarmetadata" in e) && !imported) {
+            var moved = 0
+            deps.filter { !it.startsWith("plugin:") }.forEach { d ->
+                val ksp = d.startsWith("ksp:")
+                val coord = d.removePrefix("ksp:").substringBeforeLast(':')
+                if (!e.contains(coord.substringAfter(':').lowercase())) return@forEach
+                val newest = resolveDependency("$coord:latest") ?: return@forEach
+                if (newest != d.removePrefix("ksp:")) { deps.remove(d); deps += if (ksp) "ksp:$newest" else newest; moved++ }
+            }
+            if (moved > 0) { depsChanged = true; return "Moved $moved library version(s) to the newest stable release" }
+        }
+        return null
     }
 
     private fun fixPrompt(errors: String, notes: List<String>, web: String = "") = buildString {
@@ -1664,6 +1709,20 @@ class BuildAgent(
                 "compileSdk. Write that library's DEPENDENCY line again with version latest (Arin then uses its newest STABLE release), " +
                 "or remove it if Compose/material3 already covers it (androidx.compose.material:material is the OLD Material 2: use material3).")
         }
+        if (tried.isNotEmpty()) {
+            appendLine()
+            appendLine("EARLIER FIX ROUNDS (these did NOT solve it — don't repeat them):")
+            tried.takeLast(8).forEach { appendLine("- $it") }
+        }
+        if (stuck >= 3) {
+            appendLine()
+            appendLine("THIS SAME ERROR HAS COME BACK $stuck TIMES. Your previous fixes did not work, so change method completely. " +
+                "Read the error's exact words and the file and line it names. Try ONE of: (1) the import or name is wrong — find the " +
+                "right class/package for the API you use (check the library's current docs) or write the code without it; (2) a " +
+                "version doesn't fit — use the newest stable library/plugin, or a different library that does the same job; " +
+                "(3) rewrite the failing file from scratch, cleanly, keeping every feature; (4) if a build file is wrong, write it again " +
+                "in full. Never delete a feature the owner asked for.")
+        }
         if (notes.isNotEmpty()) {
             appendLine()
             appendLine("Notes from the build tool:")
@@ -1678,7 +1737,8 @@ class BuildAgent(
             appendLine("Use what fits (you may also <search> or <fetch> for more), and try a different approach than last time.")
         }
         appendLine()
-        val saver = com.arin.selffix.CreditSaver.on(context)
+        // Stuck: send every file in full (the lean view may be hiding the cause).
+        val saver = com.arin.selffix.CreditSaver.on(context) && stuck < 3
         appendLine(if (saver) "Files involved (if you need another file in full, say which and it will be sent):" else "Current files:")
         if (saver) appendFilesLean(errors) else appendFiles(errors)
         appendLine()
@@ -1940,15 +2000,32 @@ class BuildAgent(
             return prose.joinToString(" ").ifBlank { "working out the code" }
         }
 
+        /**
+         * The line that says what is actually wrong. Gradle's headers ("* What went wrong:", "Execution failed for task",
+         * "FAILURE: Build failed with an exception.") are skipped for the line that gives the cause.
+         */
+        fun realErrorLine(errors: String): String {
+            val lines = errors.lines().map { it.trim() }.filter { it.isNotBlank() }
+            lines.firstOrNull { it.startsWith("e: ") }?.let { return it }
+            val header = Regex("""(?i)^(\* what went wrong:?|failure: build failed.*|execution failed for task.*|> ?task .*failed|\* try:.*|build failed.*)$""")
+            val i = lines.indexOfFirst { it.startsWith("* What went wrong", true) }
+            if (i >= 0) lines.drop(i + 1).map { it.removePrefix(">").trim() }.firstOrNull { it.isNotBlank() && !header.matches(it) && !header.matches("> $it") }?.let { return it }
+            lines.firstOrNull { it.contains("error:", true) && !header.matches(it) }?.let { return it }
+            lines.firstOrNull { it.startsWith(">") && !header.matches(it) }?.let { return it.removePrefix(">").trim() }
+            return lines.firstOrNull { !header.matches(it) } ?: lines.firstOrNull().orEmpty()
+        }
+
         /** The main build error, said simply. */
         fun plainError(errors: String): String {
-            val e = errors.lines().firstOrNull { it.startsWith("e: ") || it.contains("error:", true) } ?: errors.lines().firstOrNull { it.isNotBlank() }.orEmpty()
+            val e = realErrorLine(errors)
             val where = Regex("""([A-Za-z0-9_]+\.(kt|java|xml))""").find(e)?.groupValues?.get(1)?.let { " in $it" } ?: ""
             val name = Regex("""Unresolved reference:?\s*'?([A-Za-z0-9_]+)""").find(e)?.groupValues?.get(1)
             return when {
                 name != null -> "the code uses \"$name\"$where, which doesn't exist or isn't imported"
                 e.contains("Type mismatch", true) || e.contains("Argument type mismatch", true) -> "a value has the wrong type$where"
                 e.contains("No value passed for parameter", true) -> "something is called without all the information it needs$where"
+                e.contains("ksp", true) -> "the code generator (KSP) doesn't fit the Kotlin or library versions"
+                e.contains("Plugin", true) && e.contains("not found", true) -> "a build plugin couldn't be found (wrong name or version)"
                 e.contains("Could not resolve", true) || e.contains("Could not find", true) -> "a library couldn't be downloaded (wrong name or version)"
                 e.contains("@Composable", true) -> "screen code is called from a place that can't draw screens$where"
                 e.contains("resource", true) || e.contains("AAPT", true) -> "a picture, color, text or other resource is missing or broken$where"
@@ -1956,7 +2033,7 @@ class BuildAgent(
                 e.contains("Expecting", true) || e.contains("Syntax", true) -> "the code has a typing mistake (like a missing bracket)$where"
                 e.contains("Overload resolution ambiguity", true) || e.contains("Conflicting", true) -> "two things have the same name$where"
                 e.contains("OutOfMemory", true) || e.contains("heap space", true) -> "the build ran out of memory"
-                else -> "a problem$where"
+                else -> "\"" + e.take(90) + "\"" + where
             }
         }
 

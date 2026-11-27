@@ -200,3 +200,11 @@ told they are there.
 - The memory is updated in batches from only the new messages (written by the offline model when you have one, free;
   otherwise briefly by your main model). The worker and helper never see the chat. Nothing is deleted from the chat.
 - Only the owner can change this rule.
+
+## Never stuck on the same error (`builder/BuildAgent.kt`)
+
+- Arin reads the line that says what is really wrong (not Gradle's "What went wrong:" header) for the search and the fix.
+- Every fix round is remembered and shown to the model, so a fix that didn't work isn't repeated.
+- When the same error comes back: Arin fixes build-tool versions by itself (KSP, library versions), searches with new
+  words, sends every file in full, and tells the model to change method completely (never by dropping a feature).
+- Only the owner can change this rule.
