@@ -94,6 +94,11 @@ jobs:
           grep -q "ARIN-PROTECTED: syntax-guard" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/KotlinImports.kt
           grep -q "ARIN-PROTECTED: import-guard" $D/builder/BuildAgent.kt
+          grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/Delegation.kt
+          grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/Worker.kt
+          grep -q "ARIN-PROTECTED: delegation-firewall" $D/selffix/ClaudeHelper.kt
+          grep -q "ARIN-PROTECTED: bounded-scroll" $D/security/SecurityScreen.kt
+          grep -q "ARIN-PROTECTED: tests-gate" .github/arin-test.sh
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"
@@ -113,7 +118,44 @@ jobs:
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log
+          ./gradlew assembleDebug assembleDebugAndroidTest testDebugUnitTest --stacktrace 2>&1 | tee build.log
+
+      - name: Summarize the unit tests
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          t=f=e=s=0; bad=[]
+          for p in glob.glob("app/build/test-results/testDebugUnitTest/*.xml"):
+              r=ET.parse(p).getroot()
+              t+=int(r.get("tests",0)); f+=int(r.get("failures",0)); e+=int(r.get("errors",0)); s+=int(r.get("skipped",0))
+              for c in r.iter("testcase"):
+                  if c.find("failure") is not None or c.find("error") is not None: bad.append(c.get("classname")+"."+c.get("name"))
+          open("unit-test-report.txt","w").write(f"UNIT TESTS: {t} run, {t-f-e-s} passed, {f+e} failed, {s} skipped\n" + "".join("FAILED: "+b+"\n" for b in bad))
+          print(open("unit-test-report.txt").read())
+          PY
+
+      - name: Lint (report only)
+        if: success()
+        continue-on-error: true
+        run: |
+          ./gradlew lintDebug > lint.log 2>&1 || true
+          X=$(ls app/build/reports/lint-results-debug.xml 2>/dev/null)
+          if [ -n "$X" ]; then
+            echo "LINT: $(grep -c 'severity="Error"' $X) errors, $(grep -c 'severity="Warning"' $X) warnings" > lint-report.txt
+          else echo "LINT: did not produce a report" > lint-report.txt; fi
+          cat lint-report.txt
+
+      - name: Keep the test APK and reports for the emulator job
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arin-tests
+          path: |
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            unit-test-report.txt
+            lint-report.txt
+          if-no-files-found: warn
 
       - name: Report compile errors
         if: failure()
@@ -175,6 +217,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download "arin-${{ github.run_number }}" --pattern 'Arin-v*.apk' --output app.apk --clobber
+      - name: Get the test APK and reports
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: arin-tests
+          path: tests
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -188,7 +236,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: bash .github/arin-test.sh app.apk
+          script: bash .github/arin-test.sh app.apk tests/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
       - name: Make sure there is a report
         if: always()
         run: '[ -f arin-test-report.txt ] || echo "RESULT: NO_TEST" > arin-test-report.txt'

@@ -6,7 +6,9 @@ SHOT=arin-test-screen.png
 AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1)
 PKG=$("$AAPT" dump badging "$APK" 2>/dev/null | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
 report() {
-  { echo "RESULT: $1"; [ -n "$2" ] && echo "ERROR: $2"; echo "PACKAGE: $PKG"; [ -f crash.txt ] && cat crash.txt; } > "$R"
+  { echo "RESULT: $1"; [ -n "$2" ] && echo "ERROR: $2"; echo "PACKAGE: $PKG"
+    for f in tests.txt tests/unit-test-report.txt tests/lint-report.txt; do [ -f "$f" ] && cat "$f"; done
+    [ -f crash.txt ] && cat crash.txt; [ -f instr.txt ] && { echo "--- on-device test output ---"; tail -80 instr.txt; }; } > "$R"
   cat "$R"
   exit 0
 }
@@ -38,5 +40,24 @@ if [ -z "$(adb shell pidof "$PKG" | tr -d '\r')" ]; then
 fi
 adb shell monkey -p "$PKG" --pct-syskeys 0 --pct-appswitch 0 --throttle 250 -v 150 > monkey.log 2>&1
 sleep 3
+check
+# ARIN-PROTECTED: tests-gate — the on-device tests (conversation isolation, delegation firewall, Security screen) must pass too.
+TESTAPK="$2"
+if [ -n "$TESTAPK" ] && [ -f "$TESTAPK" ]; then
+  if ! adb install -r -t "$TESTAPK" > instr-install.log 2>&1; then
+    tail -5 instr-install.log > crash.txt
+    report TESTS_NOT_RUN "the test APK couldn't be installed"
+  fi
+  adb shell am instrument -w "$PKG.test/androidx.test.runner.AndroidJUnitRunner" > instr.txt 2>&1
+  if grep -q "^OK (" instr.txt; then
+    echo "ON-DEVICE TESTS: $(grep '^OK (' instr.txt)" > tests.txt
+  else
+    echo "ON-DEVICE TESTS: $(grep -E '^Tests run:' instr.txt || echo 'did not finish')" > tests.txt
+    report TESTS_FAILED "$(grep -E '^Tests run:' instr.txt || echo 'on-device tests failed')"
+  fi
+else
+  echo "ON-DEVICE TESTS: test APK not available" > tests.txt
+  report TESTS_NOT_RUN "the test APK wasn't built"
+fi
 check
 report PASS ""

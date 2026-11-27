@@ -252,6 +252,9 @@ class BuildAgent(
     }
 
     /** This project's persistent memory (survives closing the app, model changes and expired sessions). */
+    private val memKey get() = if (self) "arin-self" else packageName
+    /** The project's requirements, for the delegation gateway to pick the relevant ones from (never all sent). */
+    private fun reqList(): List<String> = mem?.requirementList().orEmpty()
     private val mem: ProjectMemory? by lazy { context?.let { runCatching { ProjectMemory.of(it, if (self) "arin-self" else packageName) }.getOrNull() } }
 
     /**
@@ -1422,7 +1425,7 @@ class BuildAgent(
                     trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(10).joinToString("\n").ifBlank { trimmed.take(1_500) } +
                     (if (diagnosis.isNotBlank()) "\nDIAGNOSIS FROM A SENIOR ENGINEER:\n$diagnosis" else "") +
                     "\nNEED: ${pc.need}\nReturn ONLY the fixed CODE above (the same piece, complete, every line), nothing else."
-                val (who, out) = com.arin.selffix.Worker.run(ctx, task, boss) { _, t -> step(BuildEvent.Kind.THINKING, t) }
+                val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
                 val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
                 if (who.isBlank() || code.isBlank()) continue
                 replacePiece(pc, code); any = true
@@ -1455,7 +1458,7 @@ class BuildAgent(
                 step(BuildEvent.Kind.THINKING, "$boss is instructing the worker: ${pc.need.take(100)} (${pc.file.substringAfterLast('/')})")
                 val task = "FILE: ${pc.file}\nCODE:\n${pc.text}\nERROR:\n" + trimmed.lines().filter { it.contains(pc.file.substringAfterLast('/')) }.take(8).joinToString("\n").ifBlank { trimmed.take(1_500) } +
                     "\nNEED: ${pc.need}\nReturn ONLY the fixed CODE above (the same piece, complete), nothing else."
-                val (who, out) = com.arin.selffix.Worker.run(ctx, task, boss) { _, t -> step(BuildEvent.Kind.THINKING, t) }
+                val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
                 val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
                 if (who.isBlank() || code.isBlank()) { step(BuildEvent.Kind.THINKING, "No worker could fix ${pc.file.substringAfterLast('/')}"); continue }
                 fixed += pc to code
@@ -1619,7 +1622,7 @@ class BuildAgent(
                 "and all other code exactly as it is.\nWHOLE FILE (numbered for you; don't include the numbers):\n" +
                 t.lines().mapIndexed { i, l -> "${i + 1}: $l" }.joinToString("\n") +
                 "\nReturn ONLY the COMPLETE corrected file, every line from the first to the last, no explanation, no ``` fences."
-            val out = if (ctx != null && workerOn()) com.arin.selffix.Worker.run(ctx, task, bossName()) { _, s -> step(BuildEvent.Kind.THINKING, s) }.second else ask(task)
+            val out = if (ctx != null && workerOn()) com.arin.selffix.Worker.runFor(ctx, task, bossName(), project = memKey, requirements = reqList()) { _, s -> step(BuildEvent.Kind.THINKING, s) }.second else ask(task)
             val code = KotlinSyntax.clean(p, out.replace(Regex("(?s)^.*?```[\\w-]*\n"), "").substringBeforeLast("```").let { if (it.isBlank()) out else it })
                 .lines().joinToString("\n") { it.replace(Regex("^\\d+: "), "") }
             val r = KotlinSyntax.scan(code)

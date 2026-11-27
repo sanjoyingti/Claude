@@ -243,6 +243,9 @@ class Settings(context: Context) {
 
     fun key(provider: Provider): String = keys.getString(slot(provider), "").orEmpty()
 
+    /** Every saved secret value (API keys, tokens) — used only to redact them from anything sent to another model. */
+    fun secretValues(): List<String> = runCatching { keys.all.values.mapNotNull { (it as? String)?.trim()?.takeIf { v -> v.length >= 8 } } }.getOrDefault(emptyList())
+
     /** Key and model for a saved API's address, without switching to it. */
     fun keyFor(baseUrl: String): String = keys.getString("Custom@$baseUrl", "").orEmpty()
 

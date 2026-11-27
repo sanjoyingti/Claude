@@ -295,13 +295,15 @@ object ClaudeHelper {
                 Activity.log(source, "⚠️ Claude's 5-hour limit is ${(used * 100).toInt()}% used — the helper is only asked when your model can't fix it alone")
             }
         }
-        val about = question.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() && !it.startsWith("You are") }.orEmpty().take(90)
+        // ARIN-PROTECTED: delegation-firewall — the helper gets only the question brief (no transcript, no secrets).
+        val (brief, did) = Delegation.gate(context, "helper:" + h.name, question, source)
+        val about = brief.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() && !it.startsWith("You are") }.orEmpty().take(90)
         Activity.log(source, "🟣 Asking ${h.label} for help: $about")
         suspend fun via(w: String) = when (w) {
-            "pro" -> viaClaudeCode(context, question,
+            "pro" -> viaClaudeCode(context, brief,
                 if (!hard && CreditSaver.haikuFirst(context)) "haiku" + (h.model.substringAfter('@', "").let { if (it.isBlank()) "" else "@$it" }) else h.model,
                 files, source)
-            else -> viaApi(context, h, w, question, files)
+            else -> viaApi(context, h, w, brief, files)
         }
         val answer = runCatching { via(way) }.recoverCatching { first ->
             // The Claude key failed: try the Claude Code login, and the other way round.
@@ -316,6 +318,7 @@ object ClaudeHelper {
         }.getOrElse { "${h.name} couldn't be reached (${it.message?.take(200)}). Continue on your own." }
             .ifBlank { "${h.name} sent an empty answer. Continue on your own." }
         val failed = answer.contains("couldn't be reached") || answer.contains("sent an empty answer")
+        Delegation.finish(context, did, if (failed) "failed" else "done")
         Activity.log(source, if (failed) "🟣 ${h.name} couldn't help: ${answer.take(120)}"
             else "🟣 ${h.name} answered (${answer.split(Regex("\\s+")).size} words) — using its help")
         return answer

@@ -3621,7 +3621,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         workerAsks++
                         run.liveText = ""
                         run.status = "$bossName is instructing the worker: " + workerTask.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().removePrefix("TASK:").trim().take(90)
-                        val (who, result) = com.arin.selffix.Worker.run(app, workerTask, bossName) { w, s -> run.who = w; run.status = s }
+                        val (who, result) = com.arin.selffix.Worker.runFor(app, workerTask, bossName, tab = run.chat) { w, s -> run.who = w; run.status = s }
                         run.who = bossName
                         run.status = null
                         val step = com.arin.data.CommandRun("worker ${who.ifBlank { "(none)" }}: ${workerTask.take(80)}", result.take(2_000), 0, kind = "tool")

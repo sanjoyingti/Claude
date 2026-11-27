@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.platform.testTag
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -120,16 +122,22 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
             Text("Security", style = MaterialTheme.typography.titleLarge)
         }
-        TabRow(selectedTabIndex = tab) {
-            listOf("Agent", "APK", "Web", "Network", "Evidence").forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i; report = "" }, text = { Text(t, maxLines = 1) }) }
+        // Full, beginner-friendly names; the row scrolls sideways so no name is cut short.
+        androidx.compose.material3.ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
+            TAB_NAMES.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i; report = "" }, text = { Text(t, maxLines = 1, softWrap = false) }) }
         }
-        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // ARIN-PROTECTED: bounded-scroll — the scrolling area always gets a finite height: the space left on screen, or the
+        // screen's height if a parent ever measures it without a limit. A vertical scroll measured with an unlimited
+        // height crashes ("Vertically scrollable component was measured with an infinity maximum height").
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+        val boundedHeight = if (constraints.hasBoundedHeight) maxHeight else androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+        Column(Modifier.fillMaxWidth().heightIn(max = boundedHeight).verticalScroll(rememberScrollState()).padding(16.dp).testTag("security-content"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val small = MaterialTheme.typography.bodySmall
             when (tab) {
                 0 -> {
                     Text("Security Agent — tell me what you want in plain English. I pick the right check and run it, then explain what " +
                         "it found. Everything runs on this phone; checks are safe (no attacks).", style = small)
-                    OutlinedTextField(ask, { ask = it }, label = { Text("e.g. analyse this APK · check example.com · audit my Wi-Fi") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(ask, { ask = it }, label = { Text("e.g. analyse this APK · check example.com · audit my Wi-Fi") }, maxLines = 5, modifier = Modifier.fillMaxWidth())
                     Permission(allowed) { allowed = it }
                     Button(onClick = { agent(ask) }, enabled = !busy && ask.isNotBlank()) { Text("Go") }
                     if (agentNote.isNotBlank()) Text(agentNote, style = small, color = MaterialTheme.colorScheme.primary)
@@ -203,8 +211,12 @@ fun SecurityScreen(vm: ChatViewModel, onBack: () -> Unit) {
                 }
             }
         }
+        } // bounded-scroll
     }
 }
+
+/** The Security tabs, named so a beginner knows what each one does. */
+val TAB_NAMES = listOf("Security Agent", "APK Analysis", "Website & API Security", "Wi-Fi & Network Security", "Digital Evidence & Forensics")
 
 /** Simple mode: the title, the summary of findings and the next step — the full report stays one switch away. */
 private fun simple(report: String): String {

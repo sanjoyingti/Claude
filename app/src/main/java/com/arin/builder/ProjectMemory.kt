@@ -69,6 +69,9 @@ class ProjectMemory private constructor(private val file: java.io.File, private 
         save()
     }
 
+    /** Plain requirement texts (the delegation gateway sends only the ones relevant to a task). */
+    fun requirementList(): List<String> = arr("requirements").let { r -> (0 until r.length()).map { r.getJSONObject(it).optString("text") }.filter { it.isNotBlank() } }
+
     fun requirementsText(max: Int = 12): String {
         val r = arr("requirements")
         if (r.length() == 0) return ""

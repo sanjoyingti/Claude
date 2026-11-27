@@ -117,7 +117,20 @@ object Worker {
     }
 
     /** Runs [task] on the first worker that accepts it (asking the helper when the worker wants). "" if none could. */
-    suspend fun run(c: Context, task: String, boss: String = "your model", system: String = SYSTEM, onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
+    suspend fun run(c: Context, task: String, boss: String = "your model", system: String = SYSTEM, onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> =
+        runFor(c, task, boss, system, onStatus = onStatus)
+
+    /** [run] for a project: the relevant [requirements] of [project] go with the brief. */
+    suspend fun runFor(c: Context, task0: String, boss: String = "your model", system: String = SYSTEM, tab: String = "", project: String? = null,
+                       requirements: List<String> = emptyList(), onStatus: (who: String, text: String) -> Unit = { _, _ -> }): Pair<String, String> {
+        // ARIN-PROTECTED: delegation-firewall — the worker gets only the task brief (no transcript, no secrets).
+        val (task, did) = Delegation.gate(c, "worker", task0, tab, project, requirements)
+        val result = runInner(c, task, boss, system, onStatus)
+        Delegation.finish(c, did, if (result.second.isBlank()) "failed" else "done")
+        return result
+    }
+
+    private suspend fun runInner(c: Context, task: String, boss: String, system: String, onStatus: (who: String, text: String) -> Unit): Pair<String, String> {
         val helper = ClaudeHelper.helper(c).name
         for (t in targets(c)) {
             val me = nice(t.model)
