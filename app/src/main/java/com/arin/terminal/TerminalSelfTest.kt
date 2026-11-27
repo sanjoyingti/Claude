@@ -19,7 +19,14 @@ object TerminalSelfTest {
         val out = mutableListOf<Check>()
         fun add(name: String, ok: Boolean, detail: String) { out += Check(name, ok, detail.take(300)) }
         val setup = Linux.run(c, "mkdir -p $base/chatA/game $base/chatB && echo A > $base/chatA/only-in-A.txt && echo B > $base/chatB/only-in-B.txt && echo ready", 60_000L)
-        if (setup.exitCode != 0) return listOf(Check("Scratch folders", false, setup.combined()))
+        if (setup.exitCode != 0) {
+            // Classify the failure with evidence: the shell failing at start-up with ENOSYS ("Function not implemented")
+            // before any of the test's own commands means PRoot can't run on this kernel — not a working-folder defect.
+            val all = setup.combined()
+            val atStart = Regex("""(shell-init|/dev/null|cannot duplicate pipe)[^\n]*Function not implemented""").containsMatchIn(all)
+            return listOf(Check("Scratch folders", false, (if (atStart) "ENVIRONMENT: PRoot cannot run on this kernel (system calls fail before the script starts). " else "") +
+                environment(c) + " — " + all))
+        }
         try {
             // 1) a `cd` holds for the next command of the same task
             val r1 = Linux.run(c, "cd game", 60_000L, workDir = "$base/chatA")
@@ -62,4 +69,9 @@ object TerminalSelfTest {
 
     fun report(checks: List<Check>): String =
         "Terminal test: ${checks.count { it.ok }} of ${checks.size} passed\n" + checks.joinToString("\n") { (if (it.ok) "PASS " else "FAIL ") + it.name + " — " + it.detail }
+
+    /** Where the test ran: Android version, kernel, CPU type and PRoot mode (for telling emulator limits from app defects). */
+    fun environment(c: Context): String = "Android API ${android.os.Build.VERSION.SDK_INT}, kernel ${System.getProperty("os.version")}, " +
+        "ABI ${android.os.Build.SUPPORTED_ABIS.firstOrNull()}, emulator=${android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.HARDWARE.contains("ranchu")}, " +
+        "PRoot ${if (Linux.noSeccomp(c)) "compatible" else "fast"} mode"
 }

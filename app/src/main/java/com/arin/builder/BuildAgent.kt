@@ -1540,6 +1540,18 @@ class BuildAgent(
     // the before/after; only then is it built again.
     private class Piece(val file: String, val start: Int, val end: Int, val text: String, val need: String) { var origin: Piece? = null }
 
+    /**
+     * ARIN-PROTECTED: project-map-in-build — Arin's own check (no AI; the worker never sees the project): from this build's
+     * current project map, the classes/functions in [old] that other files use and that [new] no longer declares.
+     * A fixed piece that drops one of them would break those files, so it is rejected.
+     */
+    private fun lostUsedNames(path: String, old: String, new: String): List<String> = runCatching {
+        val g = com.arin.selffix.ProjectMaps.forFiles("build:$memKey", files)
+        val users = g.dependents(path).mapNotNull { g.files[it] }
+        val before = com.arin.selffix.ProjectGraph.parse(path, old); val after = com.arin.selffix.ProjectGraph.parse(path, new)
+        (before.classes + before.functions).filter { n -> n !in after.classes && n !in after.functions && users.any { n in it.uses } }
+    }.getOrDefault(emptyList())
+
     private suspend fun privateFix(errors: String, notesIn: List<String>, web: String): List<String> {
         val ctx = context ?: return notesIn
         val boss = bossName()
@@ -1576,6 +1588,8 @@ class BuildAgent(
                 val (who, out) = com.arin.selffix.Worker.runFor(ctx, task, boss, project = memKey, requirements = reqList(), ownerTexts = ownerTexts()) { _, t -> step(BuildEvent.Kind.THINKING, t) }
                 val code = out.replace(Regex("(?s)^.*?```[\\w-]*\\n"), "").substringBeforeLast("```").trim()
                 if (who.isBlank() || code.isBlank()) continue
+                val lost = lostUsedNames(pc.file, pc.text, code)
+                if (lost.isNotEmpty()) { step(BuildEvent.Kind.THINKING, "Rejected the fix for ${pc.file.substringAfterLast('/')}: it removes ${lost.joinToString()} that other files use"); continue }
                 replacePiece(pc, code); any = true
             }
             if (any) { step(BuildEvent.Kind.THINKING, "Fixed — building again (the build itself checks the fix)"); return notesIn }

@@ -219,3 +219,6 @@ terminal/Linux.kt|proot-fallback|b1f5b8811f87
 terminal/RetryGuard.kt|bounded-retry|0c854381189a
 terminal/TerminalSelfTest.kt|terminal-self-test|f880982b7fc3
 voice/VoiceScreen.kt|ai-helper in every tab|fc42063188ae
+builder/BuildAgent.kt|project-map-in-build|7fb6d60b738c
+chat/ChatViewModel.kt|project-map-in-chat|a86781820ee1
+selffix/ProjectGraph.kt|project-map|e33091b2652d

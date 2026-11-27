@@ -117,7 +117,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             com.arin.selffix.Orchestrator.loadCheckpoint(taskFile(run.chat))?.takeIf { it.progress != "finished" } else null
         val ledger = resumed?.ledger ?: com.arin.selffix.Orchestrator.Ledger(com.arin.selffix.Orchestrator.record(runId, run.chat, projectId, userSaid))
         val d = com.arin.selffix.Orchestrator.diagnose(ledger.task.original, ledger.requirements.size)
-        val plan = com.arin.selffix.Orchestrator.choose(d, workerOn, claudeHelperOn, orchestratorStats)
+        val hasMap = projectFolder(run.chat)?.let { f -> listOf("build.gradle", "build.gradle.kts", "settings.gradle.kts", "settings.gradle", "src", "app").any { java.io.File(f, it).exists() } } == true
+        val plan = com.arin.selffix.Orchestrator.choose(d, workerOn, claudeHelperOn, orchestratorStats, projectMap = hasMap)
             .let { pl -> resumed?.approach?.let { pl.copy(approach = it, reason = "resumed: " + pl.reason) } ?: pl }
         run.ctx = com.arin.selffix.RunContext(runId, run.chat, run.chatTitle, projectId, p, m, workDirOf(run.chat).orEmpty(), claudeHelperOn, workerOn, ledger.task.original)
         run.ledger = ledger
@@ -128,6 +129,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             "requirements" to ledger.requirements.joinToString(",") { it.id }))
         com.arin.selffix.Activity.log("chat", "🧭 Plan: " + plan.line().take(200))
     }
+
+    /** This chat's project folder in Linux (its work folder), when one is set. */
+    private fun projectFolder(chat: String): java.io.File? = workDirOf(chat)?.takeIf { it.isNotBlank() && it != "/root" && it != "~" }
+        ?.let { java.io.File(com.arin.terminal.Linux.rootfs(getApplication()), it.trimStart('/')) }?.takeIf { it.isDirectory }
+
+    /** The current project map of this chat's folder (refreshed: only changed files are re-read), or null. */
+    private fun projectMapFor(chat: String): com.arin.selffix.ProjectGraph? =
+        projectFolder(chat)?.let { f -> runCatching { com.arin.selffix.ProjectMaps.forFolder("folder:" + workDirOf(chat), f) }.getOrNull() }
 
     /** The completion checkpoint: ledger statuses from what the answer and the executed steps show; outcome recorded. */
     private fun finishRun(run: Run, answer: String, ran: List<com.arin.data.CommandRun>, failure: String?, workerAccepted: Boolean) {
@@ -3304,6 +3313,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 var helperTakeovers = 0
                 var helperConsulted = false
                 var workerAsks = 0
+                var reviewsDone = 0
                 val bossName = com.arin.selffix.Worker.nice(m)
                 // ARIN-PROTECTED: boss-minimum-credit — worker mode: your main model gets a short history, short replies,
                 // no harness and least thinking; the worker and helper do the heavy work.
@@ -3697,7 +3707,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         run.liveText = ""
                         run.status = "$bossName asked ${com.arin.selffix.ClaudeHelper.helper(app).name} for help — ${com.arin.selffix.ClaudeHelper.helper(app).name} is helping $bossName"
                         run.who = com.arin.selffix.ClaudeHelper.helper(app).name
-                        val answer = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question = claudeQ, ownerTexts = ownerWords) { }
+                        val helperMap = withContext(Dispatchers.IO) { projectMapFor(run.chat)?.focus(claudeQ, max = 4, maxChars = 1_500) }.orEmpty()
+                        val answer = com.arin.selffix.ClaudeHelper.ask(source = "chat", context = app, question = if (helperMap.isBlank()) claudeQ else claudeQ + "\n\n" + helperMap, ownerTexts = ownerWords) { }
                         run.who = bossName
                         run.status = "${com.arin.selffix.ClaudeHelper.helper(app).name} helped; $bossName is continuing"
                         run.status = null
@@ -3714,7 +3725,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         workerAsks++
                         run.liveText = ""
                         run.status = "$bossName is instructing the worker: " + workerTask.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().removePrefix("TASK:").trim().take(90)
-                        val wr = com.arin.selffix.Worker.runDetailed(app, workerTask, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
+                        // ARIN-PROTECTED: project-map-in-chat — the worker gets only the related part of this chat's project map.
+                        val pmap = withContext(Dispatchers.IO) { projectMapFor(run.chat) }
+                        val mapNote = pmap?.focus(workerTask).orEmpty()
+                        val mapFiles = if (mapNote.isBlank()) emptyList() else pmap!!.relevant(workerTask)
+                        if (pmap != null) com.arin.selffix.Orchestrator.log(runLog, run.ctx?.runId.orEmpty(), run.chat, "map", mapOf("project" to pmap.projectId,
+                            "version" to pmap.version, "files" to pmap.files.size.toString(), "given" to mapFiles.joinToString(",")))
+                        val brief = com.arin.selffix.Orchestrator.delegationBrief(workerTask, run.plan, mapNote)
+                        val wr = com.arin.selffix.Worker.runDetailed(app, brief, bossName, tab = run.chat, ownerTexts = ownerWords) { w, s -> run.who = w; run.status = s }
                         var who = wr.who
                         var result = if (wr.ok) wr.text else ""
                         // ARIN-PROTECTED: refusal-review — a worker that declined gets a bounded review: its exact answer and
@@ -3769,11 +3787,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             "(don't reword the task to get around it); after a technical failure, do it yourself, briefly.]"
                             else { lastWorkerResult = result
                                 // ARIN-PROTECTED: evidence-check — a worker's "done" is checked against its task (no AI call).
-                                val acc = com.arin.selffix.Orchestrator.accept(result, com.arin.selffix.Orchestrator.Evidence(deliverable = result),
+                                val acc = com.arin.selffix.Orchestrator.accept(result, com.arin.selffix.Orchestrator.Evidence(deliverable = result,
+                                    requiredRefs = if (run.plan?.approach == com.arin.selffix.Orchestrator.Approach.INVESTIGATE_FIRST) mapFiles else emptyList()),
                                     com.arin.selffix.Orchestrator.Ledger(com.arin.selffix.Orchestrator.record(run.ctx?.runId.orEmpty(), run.chat, "", workerTask)))
                                 if (acc.accepted) workerAccepted = true
+                                // The plan chose an independent review: one helper call that challenges the result.
+                                val review = if (acc.accepted && claudeHelperOn && run.plan?.approach == com.arin.selffix.Orchestrator.Approach.MIDDLE_WITH_HELPER_REVIEW &&
+                                    reviewsDone < (run.plan?.budget?.reviews ?: 0)) {
+                                    reviewsDone++
+                                    run.status = "${com.arin.selffix.ClaudeHelper.helper(app).name} is reviewing the worker's result"
+                                    runCatching { com.arin.selffix.ClaudeHelper.ask(app, com.arin.selffix.Orchestrator.reviewQuestion(workerTask, result, mapNote),
+                                        source = "chat", ownerTexts = ownerWords) { run.status = it } }.getOrDefault("")
+                                } else ""
+                                if (review.isNotBlank() && com.arin.selffix.Orchestrator.reviewFoundIssues(review)) workerAccepted = false
                                 (if (acc.accepted) "" else "[Arin check: ${acc.status} — ${acc.reason}. Don't accept this as done without evidence.]\n") +
-                                "[WORKER RESULT from $who — inspect it. If it's right, answer the person and write " +
+                                (if (review.isNotBlank()) "[INDEPENDENT REVIEW by ${com.arin.selffix.ClaudeHelper.helper(app).name} (model output, unverified):\n${review.take(6_000)}]\n" else "") +
+                                "[WORKER RESULT from $who (Middle-model output: unverified until checked against the source or a command) — inspect it. If it's right, answer the person and write " +
                                 "${com.arin.selffix.Worker.RESULT_TAG} where its output should appear (don't copy it). If it's wrong, send directions " +
                                 "in another <ask_worker>.]\n" + result.take(16_000) })
                         continue

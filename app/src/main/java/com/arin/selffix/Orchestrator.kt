@@ -11,7 +11,7 @@ import java.io.File
  */
 object Orchestrator {
     enum class TaskType { QUESTION, SMALL_CHANGE, FEATURE, DEBUG, BUILD, RESEARCH, SECURITY_REVIEW, OTHER }
-    enum class Approach { DIRECT, MIDDLE, MIDDLE_WITH_HELPER_REVIEW, HELPER_SPECIALIST }
+    enum class Approach { DIRECT, MIDDLE, MIDDLE_WITH_HELPER_REVIEW, HELPER_SPECIALIST, INVESTIGATE_FIRST }
     enum class ReqStatus { NOT_STARTED, INVESTIGATING, IN_PROGRESS, IMPLEMENTED, VERIFIED, BLOCKED, FAILED }
     enum class Status { COMPLETED, REFUSED, BLOCKED, FAILED, INCOMPLETE, NEEDS_REVIEW }
 
@@ -122,24 +122,27 @@ object Orchestrator {
     }
 
     /** Cost of each approach in model calls (for comparing a cheaper alternative). */
-    fun cost(a: Approach) = when (a) { Approach.DIRECT -> 1; Approach.MIDDLE -> 2; Approach.HELPER_SPECIALIST -> 3; Approach.MIDDLE_WITH_HELPER_REVIEW -> 4 }
+    fun cost(a: Approach) = when (a) { Approach.DIRECT -> 1; Approach.MIDDLE -> 2; Approach.INVESTIGATE_FIRST -> 2; Approach.HELPER_SPECIALIST -> 3; Approach.MIDDLE_WITH_HELPER_REVIEW -> 4 }
 
     /**
      * First choice: the cheapest approach expected to be correct. Measured success (when there is enough) can move the
      * choice to a costlier approach that actually works better, or back to a cheaper one that works just as well.
      */
-    fun choose(d: Diagnosis, middle: Boolean, helper: Boolean, stats: Stats? = null): Plan {
+    fun choose(d: Diagnosis, middle: Boolean, helper: Boolean, stats: Stats? = null, projectMap: Boolean = false): Plan {
         val budget = budgetFor(d)
         val candidates = buildList {
             add(Approach.DIRECT)
             if (middle) add(Approach.MIDDLE)
             if (helper) add(Approach.HELPER_SPECIALIST)
             if (middle && helper) add(Approach.MIDDLE_WITH_HELPER_REVIEW)
+            if (middle && projectMap) add(Approach.INVESTIGATE_FIRST)
         }
         val needed = when {
             d.needsSpecialist && helper -> if (middle && d.risk >= 2) Approach.MIDDLE_WITH_HELPER_REVIEW else Approach.HELPER_SPECIALIST
             d.type == TaskType.QUESTION && d.complexity == 1 -> Approach.DIRECT
             d.risk == 3 && middle && helper && budget.reviews > 0 -> Approach.MIDDLE_WITH_HELPER_REVIEW
+            // A change to an existing project: the worker first traces the related files from the project map.
+            projectMap && middle && d.type in setOf(TaskType.FEATURE, TaskType.DEBUG, TaskType.SMALL_CHANGE) && d.complexity >= 2 -> Approach.INVESTIGATE_FIRST
             d.complexity >= 2 || d.type in setOf(TaskType.FEATURE, TaskType.DEBUG, TaskType.BUILD, TaskType.RESEARCH) ->
                 if (middle) Approach.MIDDLE else Approach.DIRECT
             else -> Approach.DIRECT
@@ -158,6 +161,7 @@ object Orchestrator {
             Approach.MIDDLE -> listOf("boss: plan + accept", "middle: investigate, implement, test")
             Approach.HELPER_SPECIALIST -> listOf("boss: plan + accept", "helper: specialist part only")
             Approach.MIDDLE_WITH_HELPER_REVIEW -> listOf("boss: plan + accept", "middle: implement + test", "helper: adversarial review")
+            Approach.INVESTIGATE_FIRST -> listOf("boss: plan + accept", "middle: trace the related files, then implement + test")
         }
         return Plan(pick, why, budget, roles)
     }
@@ -172,8 +176,8 @@ object Orchestrator {
         if (current.budget.retries <= 0) return null
         val next = if (unclear && tried.size <= 1) current.approach  // same executor once, with a corrected brief
         else (if (failure == Outcome.Kind.NETWORK_OR_PROVIDER_FAILURE) listOf(Approach.HELPER_SPECIALIST, Approach.DIRECT, Approach.MIDDLE)
-              else listOf(Approach.HELPER_SPECIALIST, Approach.MIDDLE, Approach.DIRECT))
-            .filter { (it != Approach.MIDDLE || middle) && (it != Approach.HELPER_SPECIALIST || helper) }
+              else listOf(Approach.HELPER_SPECIALIST, Approach.INVESTIGATE_FIRST, Approach.MIDDLE, Approach.DIRECT))
+            .filter { (it != Approach.MIDDLE && it != Approach.INVESTIGATE_FIRST || middle) && (it != Approach.HELPER_SPECIALIST || helper) }
             .firstOrNull { it !in tried } ?: return null
         val why = when (failure) {
             Outcome.Kind.MISUNDERSTOOD_OBJECTIVE, Outcome.Kind.INSUFFICIENT_INFORMATION -> "restate the task with the missing detail"
@@ -194,7 +198,9 @@ object Orchestrator {
 
     /** What actually happened (not what a model says happened). */
     data class Evidence(val commands: List<Pair<String, Int>> = emptyList(), val filesChanged: List<String> = emptyList(),
-                        val deliverable: String = "")
+                        val deliverable: String = "",
+                        /** Source files the result must cite (investigate-first): a result naming none of them has no source evidence. */
+                        val requiredRefs: List<String> = emptyList())
 
     data class Acceptance(val status: Status, val missing: List<String>, val reason: String) {
         val accepted get() = status == Status.COMPLETED
@@ -214,6 +220,8 @@ object Orchestrator {
         if (!verdict.kind.ok) return Acceptance(statusOf(verdict), ledger.open().map { it.id }, "${verdict.kind}: ${verdict.reason}".take(200))
         val failedCmd = evidence.commands.firstOrNull { it.second != 0 }
         if (failedCmd != null) return Acceptance(Status.FAILED, ledger.open().map { it.id }, "command failed (exit ${failedCmd.second}): ${failedCmd.first.take(80)}")
+        if (evidence.requiredRefs.isNotEmpty() && evidence.requiredRefs.none { r -> body.contains(r.substringAfterLast('/')) })
+            return Acceptance(Status.NEEDS_REVIEW, ledger.open().map { it.id }, "no source evidence: cites none of the mapped files")
         val content = evidence.deliverable.ifBlank { body }
         val claimOnly = claimsDone.containsMatchIn(body) && content.length < 160 && evidence.commands.isEmpty() && evidence.filesChanged.isEmpty()
         if (claimOnly) return Acceptance(Status.NEEDS_REVIEW, ledger.open().map { it.id }, "claims completion without any deliverable or executed step")
@@ -224,6 +232,29 @@ object Orchestrator {
         return if (missing.isEmpty()) Acceptance(Status.COMPLETED, emptyList(), "deliverable covers every open requirement")
         else Acceptance(Status.INCOMPLETE, missing, "not covered: ${missing.joinToString()}")
     }
+
+    /**
+     * The task as handed to the worker: the Boss's task, the focused project map (only the related files), and for
+     * investigate-first the evidence format. Instructions only — no extra AI call.
+     */
+    fun delegationBrief(task: String, plan: Plan?, mapNote: String): String = buildString {
+        append(task)
+        if (mapNote.isNotBlank()) append("\n\n").append(mapNote)
+        if (plan?.approach == Approach.INVESTIGATE_FIRST && mapNote.isNotBlank()) append("\nFirst read the files above that matter, then do the task. " +
+            "For each finding give FILE, FUNCTION/CLASS, what the source actually shows, the change, its expected effect and how to verify it. " +
+            "Label anything you didn't see in the source as ASSUMPTION. Don't claim you ran or tested anything you didn't.")
+    }
+
+    /** One adversarial review by the helper (only when the plan chose a review). */
+    fun reviewQuestion(task: String, result: String, mapNote: String): String =
+        "Independently review this implementation by another model. Task:\n$task\n\n" +
+            (if (mapNote.isNotBlank()) "$mapNote\n" else "") +
+            "Implementation:\n\"\"\"\n${result.take(12_000)}\n\"\"\"\n\nFind incorrect assumptions, missing dependencies, incomplete parts, " +
+            "regressions, security or data-integrity problems, concurrency issues and claims without evidence. Start with " +
+            "VERDICT: OK or VERDICT: ISSUES, then list each issue with the file and the fix. Don't rewrite what is correct."
+
+    /** True when the review found problems (or gave no clear verdict). */
+    fun reviewFoundIssues(answer: String): Boolean = !Regex("""(?i)VERDICT:\s*OK\b""").containsMatchIn(answer)
 
     // ---- Durable checkpoint (resume after interruption) and per-run diagnostics ----
 

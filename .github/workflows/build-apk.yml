@@ -125,6 +125,9 @@ jobs:
           grep -q "ARIN-PROTECTED: evidence-check" $D/chat/ChatViewModel.kt
           grep -q "ARIN-PROTECTED: proot-fallback" $D/terminal/Linux.kt
           grep -q "ARIN-PROTECTED: strict-tab-scope" $D/selffix/TabScope.kt
+          grep -q "ARIN-PROTECTED: project-map " $D/selffix/ProjectGraph.kt
+          grep -q "ARIN-PROTECTED: project-map-in-chat" $D/chat/ChatViewModel.kt
+          grep -q "ARIN-PROTECTED: project-map-in-build" $D/builder/BuildAgent.kt
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"

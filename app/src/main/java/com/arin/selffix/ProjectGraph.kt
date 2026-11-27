@@ -6,7 +6,7 @@ package com.arin.selffix
  * and to see what a change could break (impact), instead of re-scanning the whole project. One graph per project id;
  * never mixed with another project.
  */
-class ProjectGraph private constructor(val projectId: String, val files: Map<String, Node>) {
+class ProjectGraph private constructor(val projectId: String, val files: Map<String, Node>, val version: String = "") {
     data class Node(val path: String, val pkg: String, val classes: List<String>, val functions: List<String>,
                     val imports: List<String>, val uses: Set<String>)
 
@@ -38,6 +38,32 @@ class ProjectGraph private constructor(val projectId: String, val files: Map<Str
         }.filter { it.second > 0 }.sortedByDescending { it.second }.take(max).map { it.first }
     }
 
+    private fun isTest(p: String) = p.contains("/test/") || p.contains("/androidTest/") || p.substringAfterLast('/').substringBeforeLast('.').endsWith("Test")
+
+    /** Test files that exercise something declared in [path]. */
+    fun testsFor(path: String): List<String> = dependents(path).filter(::isTest)
+
+    /**
+     * Focused context for one task: only the files related to [task], each with what it declares, what it relies on,
+     * who uses it and which tests cover it. Unrelated files are left out; at most [maxChars].
+     */
+    fun focus(task: String, max: Int = 6, maxChars: Int = 2_500): String {
+        val hits = relevant(task, max)
+        if (hits.isEmpty()) return ""
+        val b = StringBuilder("PROJECT MAP (source version $version; ${hits.size} of ${files.size} files — only the ones related to this task):\n")
+        for (p in hits) {
+            val n = files[p] ?: continue
+            val line = "- $p" + (if (n.classes.isNotEmpty()) " | declares ${n.classes.take(6).joinToString()}" else "") +
+                (if (n.functions.isNotEmpty()) " | functions ${n.functions.take(8).joinToString()}" else "") +
+                dependencies(p).take(5).let { if (it.isEmpty()) "" else " | uses ${it.joinToString()}" } +
+                dependents(p).filterNot(::isTest).take(5).let { if (it.isEmpty()) "" else " | used by ${it.joinToString()}" } +
+                testsFor(p).take(3).let { if (it.isEmpty()) " | no tests" else " | tests ${it.joinToString()}" } + "\n"
+            if (b.length + line.length > maxChars) break
+            b.append(line)
+        }
+        return b.toString()
+    }
+
     /** Impact before a change: what to edit, what depends on it, what to re-test. */
     fun impact(paths: List<String>): String = paths.joinToString("\n") { p ->
         val d = dependents(p)
@@ -54,26 +80,66 @@ class ProjectGraph private constructor(val projectId: String, val files: Map<Str
         private val noise = setOf("fun", "val", "var", "class", "object", "return", "import", "package", "private", "override", "String", "Int",
             "Boolean", "List", "Map", "Unit", "this", "null", "true", "false", "when", "else", "Long", "Double", "Any")
 
+        fun isSource(p: String) = p.endsWith(".kt") || p.endsWith(".java") || p.endsWith(".kts")
+
         /** Builds the graph from source text (path → content). Only .kt / .java / .kts files are read. */
-        fun build(projectId: String, sources: Map<String, String>): ProjectGraph {
-            val nodes = sources.filterKeys { it.endsWith(".kt") || it.endsWith(".java") || it.endsWith(".kts") }.map { (path, text) ->
+        fun build(projectId: String, sources: Map<String, String>, version: String = ""): ProjectGraph =
+            ProjectGraph(projectId, sources.filterKeys(::isSource).map { (path, text) -> path to parse(path, text) }.toMap(), version)
+
+        /** Graph from already-parsed nodes (incremental refresh). */
+        fun of(projectId: String, nodes: Map<String, Node>, version: String) = ProjectGraph(projectId, nodes, version)
+
+        fun parse(path: String, text: String): Node {
                 val noComments = text.replace(Regex("""/\*[\s\S]*?\*/"""), " ").replace(Regex("""//[^\n]*"""), " ")
                 val classes = classRe.findAll(noComments).map { it.groupValues[1] }.distinct().toList()
                 val funs = (funRe.findAll(noComments) + composableRe.findAll(noComments)).map { it.groupValues[1] }.distinct().toList()
                 val own = (classes + funs).toSet()
                 val uses = word.findAll(noComments).map { it.value }.filter { it !in own && it !in noise }.toSet()
-                path to Node(path, pkgRe.find(noComments)?.groupValues?.get(1).orEmpty(), classes, funs,
+                return Node(path, pkgRe.find(noComments)?.groupValues?.get(1).orEmpty(), classes, funs,
                     importRe.findAll(noComments).map { it.groupValues[1] }.toList(), uses)
-            }.toMap()
-            return ProjectGraph(projectId, nodes)
-        }
-
-        /** Reads a project folder on disk (skipping build output), up to [maxFiles] source files. */
-        fun scan(projectId: String, root: java.io.File, maxFiles: Int = 600): ProjectGraph {
-            val src = root.walkTopDown().onEnter { it.name !in setOf("build", ".gradle", ".git", "node_modules", ".idea") }
-                .filter { it.isFile && (it.extension == "kt" || it.extension == "java" || it.extension == "kts") && it.length() < 400_000 }
-                .take(maxFiles).associate { it.relativeTo(root).path to runCatching { it.readText() }.getOrDefault("") }
-            return build(projectId, src)
         }
     }
+}
+
+/**
+ * ARIN-PROTECTED: project-map — one current map per project id (never shared between projects). Refreshed on every use:
+ * only files whose content (or size/time on disk) changed are re-read, removed files drop out, and the map records the
+ * source version it describes, so a stale map never stands in for the current source.
+ */
+object ProjectMaps {
+    private class Entry(val graph: ProjectGraph, val sig: Map<String, String>)
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Entry>()
+
+    private fun version(sig: Map<String, String>) = sig.entries.sortedBy { it.key }.joinToString("|") { it.key + "=" + it.value }
+        .hashCode().toUInt().toString(16)
+
+    private fun refresh(projectId: String, sig: Map<String, String>, read: (String) -> String): ProjectGraph {
+        val old = cache[projectId]
+        if (old != null && old.sig == sig) return old.graph
+        val nodes = sig.keys.associateWith { p ->
+            val prev = old?.graph?.files?.get(p)
+            if (prev != null && old.sig[p] == sig[p]) prev else ProjectGraph.parse(p, read(p))
+        }
+        return ProjectGraph.of(projectId, nodes, version(sig)).also { cache[projectId] = Entry(it, sig) }
+    }
+
+    /** From source text held in memory (a build's files). */
+    fun forFiles(projectId: String, files: Map<String, String>): ProjectGraph {
+        val src = files.filterKeys(ProjectGraph::isSource)
+        return refresh(projectId, src.mapValues { it.value.hashCode().toString(16) + ":" + it.value.length }) { src[it].orEmpty() }
+    }
+
+    /** From a project folder on disk (a chat's work folder); null when it holds no source files. */
+    fun forFolder(projectId: String, root: java.io.File, maxFiles: Int = 600): ProjectGraph? {
+        if (!root.isDirectory) return null
+        val found = root.walkTopDown().onEnter { it.name !in setOf("build", ".gradle", ".git", "node_modules", ".idea", ".cxx") }
+            .filter { it.isFile && ProjectGraph.isSource(it.name) && it.length() < 400_000 }.take(maxFiles).toList()
+        if (found.isEmpty()) return null
+        val byPath = found.associateBy { it.relativeTo(root).path }
+        return refresh(projectId, byPath.mapValues { "${it.value.lastModified()}:${it.value.length()}" }) { p ->
+            runCatching { byPath.getValue(p).readText() }.getOrDefault("")
+        }
+    }
+
+    fun invalidate(projectId: String) { cache.remove(projectId) }
 }

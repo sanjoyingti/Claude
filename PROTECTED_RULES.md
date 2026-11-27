@@ -332,3 +332,8 @@ told they are there.
 - project-graph: project-scoped map of files, classes, functions and dependents (library; not yet used by the chat flow).
 - proot-fallback: PRoot's compatible mode is used only where the kernel rejects the fast mode.
 - strict-tab-scope (1.25.1): every tab's work (each chat, each build, Arin Update, Security) runs tagged with its own id; helper sessions, harness sessions and the research cache are keyed by it, and untagged calls get a one-off session — nothing is shared between tabs.
+
+## 1.26.0 — Project map connected
+- project-map: one current map per project id; only changed files are re-read, deleted files drop out, each map records its source version.
+- project-map-in-chat: when a chat has a project folder, the worker (and the helper, when asked) gets only the related files from the map; investigate-first tasks must cite mapped files as evidence; a plan with review gets one independent helper review.
+- project-map-in-build: Arin-side only (the build worker still never sees the project): a fixed piece that removes a class/function other files use is rejected.

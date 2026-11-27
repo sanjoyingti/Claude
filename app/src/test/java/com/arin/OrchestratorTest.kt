@@ -151,4 +151,72 @@ class OrchestratorTest {
         assertEquals("a/Coins.kt", g.relevant("how is the CoinWallet reward added?").first())
         assertTrue(g.impact(listOf("a/Coins.kt")).contains("used by a/Shop.kt"))
     }
+
+    // ---- Build 108 continuation: project map in the delegation path ----
+
+    private fun project(): java.io.File {
+        val root = createTempDir("proj")
+        fun w(p: String, t: String) = java.io.File(root, p).apply { parentFile.mkdirs(); writeText(t) }
+        w("build.gradle.kts", "plugins { }")
+        repeat(40) { i -> w("app/src/main/java/demo/pay/Payment$i.kt", "package demo.pay\nclass PaymentStep$i { fun charge$i() {} }\n") }
+        w("app/src/main/java/demo/video/VideoUploader.kt", "package demo.video\nclass VideoUploader(val p: VideoPicker) { fun upload(uri: String) { p.pick() } }\n")
+        w("app/src/main/java/demo/video/VideoPicker.kt", "package demo.video\nclass VideoPicker { fun pick(): String = \"\" }\n")
+        w("app/src/main/java/demo/ui/UploadScreen.kt", "package demo.ui\n@Composable fun UploadScreen(u: VideoUploader) { u.upload(\"x\") }\n")
+        w("app/src/test/java/demo/VideoUploaderTest.kt", "package demo\nclass VideoUploaderTest { fun t() { VideoUploader(VideoPicker()).upload(\"a\") } }\n")
+        w("app/build/generated/Junk.kt", "class ShouldNotBeRead")
+        return root
+    }
+
+    @Test fun mapAcceptance_focusedContextRefreshAndVerification() {
+        val root = project()
+        val task = "Change the video upload so the VideoUploader rejects files over 100 MB and shows an error on the UploadScreen."
+        val g = com.arin.selffix.ProjectMaps.forFolder("folder:/root/demo", root)!!
+        assertEquals(45, g.files.size)                      // build output is skipped
+        val note = g.focus(task)
+        assertTrue(note.contains("VideoUploader.kt") && note.contains("UploadScreen.kt"))
+        assertFalse(note.contains("Payment"))               // unrelated files are not sent
+        assertTrue(note.contains("tests app/src/test/java/demo/VideoUploaderTest.kt"))
+        // The Boss picks investigate-first for a change to an existing project, with no extra AI call.
+        val plan = Orchestrator.choose(Orchestrator.diagnose(big), middle = true, helper = true, projectMap = true)
+        assertEquals(Approach.INVESTIGATE_FIRST, plan.approach)
+        val brief = Orchestrator.delegationBrief(task, plan, note)
+        assertTrue(brief.startsWith(task) && brief.contains("PROJECT MAP") && brief.contains("ASSUMPTION"))
+        // A result that cites no mapped file has no source evidence; one that does is checked normally.
+        val l = Orchestrator.Ledger(Orchestrator.record("r", "c", "folder:/root/demo", task))
+        val refs = g.relevant(task)
+        assertEquals(Status.NEEDS_REVIEW, Orchestrator.accept("I changed the upload size limit and the error message now shows for big files.",
+            Orchestrator.Evidence(requiredRefs = refs), l).status)
+        assertEquals(Status.COMPLETED, Orchestrator.accept("FILE VideoUploader.kt, FUNCTION upload: added a 100 MB size check that rejects files over the limit. " +
+            "FILE UploadScreen.kt: shows an error when the VideoUploader rejects a file. Verify with VideoUploaderTest.", Orchestrator.Evidence(requiredRefs = refs), l).status)
+        // After a modification the map is refreshed: new version, changed file re-read, unchanged files reused.
+        val before = g.files.getValue("app/src/main/java/demo/pay/Payment1.kt")
+        val f = java.io.File(root, "app/src/main/java/demo/video/VideoUploader.kt")
+        f.writeText(f.readText() + "\nfun checkSize(bytes: Long) = bytes <= 100_000_000\n"); f.setLastModified(f.lastModified() + 5_000)
+        java.io.File(root, "app/src/main/java/demo/pay/Payment2.kt").delete()
+        val g2 = com.arin.selffix.ProjectMaps.forFolder("folder:/root/demo", root)!!
+        assertNotEquals(g.version, g2.version)
+        assertTrue("checkSize" in g2.files.getValue("app/src/main/java/demo/video/VideoUploader.kt").functions)
+        assertSame(before, g2.files.getValue("app/src/main/java/demo/pay/Payment1.kt"))
+        assertFalse(g2.files.containsKey("app/src/main/java/demo/pay/Payment2.kt"))
+        // Unchanged source → the same map (no re-scan of content).
+        assertSame(g2, com.arin.selffix.ProjectMaps.forFolder("folder:/root/demo", root))
+    }
+
+    @Test fun mapsOfDifferentProjectsNeverMix() {
+        val a = com.arin.selffix.ProjectMaps.forFiles("build:app.one", mapOf("A.kt" to "class Alpha { fun one() {} }"))
+        val b = com.arin.selffix.ProjectMaps.forFiles("build:app.two", mapOf("B.kt" to "class Beta { fun two() {} }"))
+        assertEquals(setOf("A.kt"), a.files.keys); assertEquals(setOf("B.kt"), b.files.keys)
+        assertTrue(a.declaring("Beta").isEmpty() && b.declaring("Alpha").isEmpty())
+    }
+
+    @Test fun helperReviewVerdictAndEscalationToInvestigation() {
+        assertFalse(Orchestrator.reviewFoundIssues("VERDICT: OK — the change is complete."))
+        assertTrue(Orchestrator.reviewFoundIssues("VERDICT: ISSUES\n1. UploadScreen.kt never shows the error."))
+        assertTrue(Orchestrator.reviewFoundIssues("Looks fine I guess"))   // no clear verdict → not accepted as a pass
+        val q = Orchestrator.reviewQuestion("task X", "result Y", "PROJECT MAP ...")
+        assertTrue(q.contains("task X") && q.contains("result Y") && q.contains("PROJECT MAP") && q.contains("VERDICT"))
+        val plan = Orchestrator.choose(Orchestrator.diagnose(big), true, false, projectMap = true)
+        val next = Orchestrator.escalate(plan.copy(approach = Approach.MIDDLE), Outcome.Kind.TOOL_EXECUTION_FAILURE, setOf(Approach.MIDDLE), true, false)!!
+        assertEquals(Approach.INVESTIGATE_FIRST, next.approach)
+    }
 }
