@@ -613,9 +613,9 @@ object Linux {
         context: Context,
         command: String,
         timeoutMs: Long = 15 * 60_000L,
-        onOutput: ((String) -> Unit)? = null,
         /** The folder this task works in (kept per chat by the caller); null = the home folder. */
         workDir: String? = null,
+        onOutput: ((String) -> Unit)? = null,
     ): Termux.Result = withContext(Dispatchers.IO) {
         if (!installed(context)) return@withContext Termux.Result("", "", null, "Linux isn't installed. Open Settings → Linux and tap Install Linux.")
         val root = rootfs(context)
