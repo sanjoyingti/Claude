@@ -89,6 +89,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val liveCommands = mutableStateListOf<com.arin.data.CommandRun>()
         val steering = mutableStateListOf<String>()
         @Volatile var steerPending = false
+        @Volatile var steerNow = false
         var job: Job? = null
         var checkpointJob: Job? = null
     }
@@ -1958,10 +1959,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun chatBuildAppName(): String = chatBuildSession()?.project?.appName ?: "the app"
 
+    /** Every build running from this chat (several can run at once): session id → app name. */
+    fun runningBuildsHere(): List<Pair<String, String>> {
+        com.arin.builder.BuildRunner.runningCount // read so the bar updates
+        val ids = (follows.values.filter { it.chat == chatId }.map { it.session } + listOfNotNull(linkedBuild(chatId))).distinct()
+        stoppedTick
+        return ids.filter { it !in stoppedNow }.mapNotNull { id -> com.arin.builder.BuildRunner.session(id)?.takeIf { it.running }?.let { id to (it.project?.appName ?: "the app") } }
+    }
+
     /** Stops this chat's build only; what's built so far stays saved, so it can be resumed. */
-    fun stopChatBuild() {
+    fun stopChatBuild() { linkedBuild(chatId)?.let { stopBuild(it) } }
+
+    /**
+     * Stops exactly one build, at once: its message says Stopped immediately and its work is cancelled; what's built so
+     * far stays saved (Resume carries on). Other builds keep running.
+     */
+    private val stoppedNow = mutableSetOf<String>()
+    private var stoppedTick by mutableStateOf(0)
+
+    fun stopBuild(sid: String) {
         val app = getApplication<Application>()
-        val sid = linkedBuild(chatId) ?: return
+        stoppedNow += sid; stoppedTick++ // gone from the screen at once
+        com.arin.builder.BuildRunner.session(sid)?.let { s ->
+            s.steering.clear()
+            s.timeline += com.arin.builder.TimelineItem.Event(com.arin.builder.BuildEvent(com.arin.builder.BuildEvent.Kind.STEP, "⏹ Stopped by you"))
+        }
         val session = com.arin.builder.BuildRunner.session(sid)
         com.arin.builder.BuildService.stop(app, sid)
         follows.remove(sid)?.let { f ->
@@ -1973,6 +1995,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             // Give the service a moment to wind down and save its checkpoint.
             repeat(20) { if (session?.running != true) return@repeat; kotlinx.coroutines.delay(500) }
             if (session != null) com.arin.builder.BuildRunner.saveNow(app, session)
+            stoppedNow -= sid; stoppedTick++
             refreshChatBuild()
         }
     }
@@ -2815,6 +2838,26 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Thrown inside a stream to stop it when the person steers. */
     private class SteerInterrupt : Exception()
 
+    /**
+     * "Send now": the reply stops at once — even while the model is still thinking — and goes on with what it has done
+     * plus the queued message(s).
+     */
+    fun sendSteerNow() {
+        val r = runFor() ?: return
+        if (r.steering.isEmpty()) return
+        r.steerPending = true
+        r.steerNow = true
+        notice = "Sent now — Arin carries on from where it is, following your message"
+    }
+
+    private fun <T> steerable(f: kotlinx.coroutines.flow.Flow<T>, r: Run): kotlinx.coroutines.flow.Flow<T> = kotlinx.coroutines.flow.channelFlow {
+        val j = launch { f.collect { send(it) } }
+        while (j.isActive) {
+            if (r.steerNow) { r.steerNow = false; j.cancel(); throw SteerInterrupt() }
+            kotlinx.coroutines.delay(200)
+        }
+    }
+
     /** The reply already holds a complete tool step: stop reading and act on it now (speed). */
     private class StepReady : Exception()
 
@@ -3228,8 +3271,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                 try {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
-                                    try { Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
-                                        boss = bossLean).collect { d ->
+                                    try { steerable(Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
+                                        boss = bossLean), run).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
                                         val nowMs = System.currentTimeMillis()

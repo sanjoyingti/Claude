@@ -609,8 +609,9 @@ private fun Composer(
                 androidx.compose.material3.TextButton(onClick = onCancelEdit) { Text("Cancel") }
             }
         }
-        // A build from this chat is running: it can be stopped here (and resumed later).
-        if (vm.chatBuildRunning()) {
+        // Every build running from this chat, each with its own Stop (stops only that one, at once; resume later).
+        val builds = vm.runningBuildsHere()
+        builds.forEachIndexed { i, (sid, name) ->
             Surface(
                 color = MaterialTheme.colorScheme.secondaryContainer,
                 shape = MaterialTheme.shapes.medium,
@@ -618,12 +619,11 @@ private fun Composer(
             ) {
                 Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Building ${vm.chatBuildAppName()}… progress is saved as it goes." +
-                            (com.arin.builder.BuildRunner.runningCount.let { n -> if (n > 1) " ($n builds running)" else "" }),
+                        (if (builds.size > 1) "Build ${i + 1}: " else "") + "building $name… progress is saved as it goes.",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.weight(1f),
                     )
-                    androidx.compose.material3.TextButton(onClick = { vm.stopChatBuild() }) { Text("Stop") }
+                    androidx.compose.material3.TextButton(onClick = { vm.stopBuild(sid) }) { Text("Stop", color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
@@ -687,6 +687,7 @@ private fun Composer(
                         maxLines = 3,
                         modifier = Modifier.weight(1f, fill = false),
                     )
+                    androidx.compose.material3.TextButton(onClick = { vm.sendSteerNow() }) { Text("Send now") }
                     androidx.compose.material3.TextButton(onClick = { vm.removeSteer(i) }) { Text("✕") }
                 }
             }
