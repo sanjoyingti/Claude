@@ -1595,12 +1595,13 @@ class BuildAgent(
         for (p in candidates) {
             val t = files[p] ?: continue
             val r = KotlinSyntax.scan(t)
-            val fenced = Regex("""(?m)^\s*```""").containsMatchIn(t)
+            val fenced = Regex("""(?m)^\s*```""").containsMatchIn(t) || KotlinSyntax.misplacedImports(t)
             if (r.ok && !fenced && p !in force && p !in syntaxBroken) continue
-            val fixed = if (!r.ok || fenced) KotlinSyntax.repair(p, t) else null
+            // Arin's own repair first (fences, prose, imports in the middle, stray/missing braces) — no AI.
+            val fixed = KotlinSyntax.repair(p, t)
             if (fixed != null && fixed != t) {
                 files[p] = fixed; pendingFiles[p] = fixed.toByteArray(); changed++
-                step(BuildEvent.Kind.FILE, "Arin repaired a typing mistake in ${p.substringAfterLast('/')} (${if (fenced) "text/fences left in the code, " else ""}${r.describe()}) — no AI needed")
+                step(BuildEvent.Kind.FILE, "Arin repaired a typing mistake in ${p.substringAfterLast('/')} (${if (fenced) "imports/text left in the middle of the code, " else ""}${r.describe()}) — no AI needed")
                 ledger("Syntax check: ${p.substringAfterLast('/')}", "FIXED by Arin (${r.describe()})")
                 syntaxBroken -= p; continue
             }
@@ -1642,7 +1643,8 @@ class BuildAgent(
         val now0 = if (src.start >= 0 && src.end <= text.length && text.substring(src.start, src.end) == src.text)
             text.substring(0, src.start) + code + text.substring(src.end)
         else if (text.contains(src.text)) text.replaceFirst(src.text, code) else return
-        var now = now0
+        // A piece may come back with import lines on top: those belong in the file's import block, not mid-file.
+        var now = if (src.file.endsWith(".kt")) KotlinSyntax.hoistImports(now0) else now0
         // ARIN-PROTECTED: syntax-guard — a fixed piece must not break the file's brackets.
         if (src.file.endsWith(".kt") || src.file.endsWith(".kts")) {
             val before = KotlinSyntax.scan(text); val after = KotlinSyntax.scan(now)

@@ -87,6 +87,49 @@ object KotlinSyntax {
         return Report(braces, parens, brackets, stray, unclosed)
     }
 
+    private val importLine = Regex("""^\s*import\s+[\w.`]+(\.\*)?(\s+as\s+\w+)?\s*;?\s*$""")
+    private val packageLine = Regex("""^\s*package\s+[\w.]+\s*;?\s*$""")
+
+    /** Index of the first line after the file header (package, imports, file annotations, comments, blanks). */
+    private fun headerEnd(lines: List<String>): Int {
+        var inComment = false
+        for ((i, l) in lines.withIndex()) {
+            val t = l.trim()
+            if (inComment) { if (t.contains("*/")) inComment = false; continue }
+            if (t.startsWith("/*")) { if (!t.contains("*/")) inComment = true; continue }
+            if (t.isEmpty() || t.startsWith("//") || t.startsWith("@file:") || packageLine.matches(l) || importLine.matches(l)) continue
+            return i
+        }
+        return lines.size
+    }
+
+    /** True when an import or package line sits below the code (a model pasted it into the middle of the file). */
+    fun misplacedImports(text: String): Boolean {
+        val lines = text.lines(); val end = headerEnd(lines)
+        return lines.drop(end).any { importLine.matches(it) || packageLine.matches(it) }
+    }
+
+    /**
+     * ARIN-PROTECTED: syntax-guard — import lines a model wrote in the middle of the code ("Expecting member
+     * declaration") are moved to the import block at the top; a second package line is removed. No AI.
+     */
+    fun hoistImports(text: String): String {
+        val lines = text.lines(); val end = headerEnd(lines)
+        val stray = lines.drop(end).filter { importLine.matches(it) }
+        if (stray.isEmpty() && lines.drop(end).none { packageLine.matches(it) }) return text
+        val body = lines.drop(end).filterNot { importLine.matches(it) || packageLine.matches(it) }
+        val head = lines.take(end).toMutableList()
+        val have = head.filter { importLine.matches(it) }.map { it.trim().removeSuffix(";") }.toMutableSet()
+        val add = stray.map { it.trim().removeSuffix(";") }.filter { have.add(it) }
+        if (add.isNotEmpty()) {
+            val lastImport = head.indexOfLast { importLine.matches(it) }
+            val pkg = head.indexOfFirst { packageLine.matches(it) }
+            val at = if (lastImport >= 0) lastImport + 1 else if (pkg >= 0) pkg + 1 else head.indexOfLast { it.trim().startsWith("@file:") } + 1
+            head.addAll(at, if (lastImport < 0) listOf("") + add else add)
+        }
+        return (head + body).joinToString("\n")
+    }
+
     /** Removes ``` fences and explanation text a model left around the code. */
     fun clean(path: String, text: String): String {
         var t = text.replace("\r\n", "\n")
@@ -107,6 +150,7 @@ object KotlinSyntax {
             while (lines.size > 1 && lines.last().trim().let { it.isNotEmpty() && prose.matches(it) && !code.containsMatchIn(it) && it.contains(' ') }) lines.removeAt(lines.lastIndex)
             t = lines.joinToString("\n")
         }
+        if (path.endsWith(".kt")) t = hoistImports(t)
         return t.trimEnd() + "\n"
     }
 
@@ -139,6 +183,6 @@ object KotlinSyntax {
 
     /** Is this an error report about broken code structure (a typing mistake), not about types or libraries? */
     fun isSyntaxError(errors: String): Boolean = Regex(
-        """(?i)(syntax error|expecting a top level declaration|expecting ['"]?[})\]]|expecting member declaration|unexpected tokens|unclosed comment|missing ['"]?\}|unexpected end of file|incomplete code|expecting an element|unresolved reference: ``)""",
+        """(?i)(syntax error|expecting a top level declaration|imports are only allowed in the beginning of file|expecting ['"]?[})\]]|expecting member declaration|unexpected tokens|unclosed comment|missing ['"]?\}|unexpected end of file|incomplete code|expecting an element|unresolved reference: ``)""",
     ).containsMatchIn(errors)
 }
