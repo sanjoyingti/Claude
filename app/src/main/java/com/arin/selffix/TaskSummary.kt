@@ -39,7 +39,12 @@ object TaskSummary {
         "on with what is allowed. Never claim a build or test succeeded unless it really did. Keep a ledger of what is " +
         "COMPLETED, IN PROGRESS, BLOCKED, ALTERNATIVE IMPLEMENTATION, TESTING and VERIFIED.\n"
 
-    const val RULE = EXACT_REQUEST + TESTED_LINKS + ENGINEERING + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
+    /** ARIN-PROTECTED: ask-before-building — owner's strict rule (only the owner can change it). */
+    const val ASK_BEFORE_BUILD = "OWNER'S STRICT RULE — NEVER BUILD BY YOURSELF (only the owner can change it): never start, restart " +
+        "or retry a build unless the owner asked for it in their own words in this message. If a build seems needed, ASK first " +
+        "(\"Shall I build it now?\") and wait for their answer.\n"
+
+    const val RULE = EXACT_REQUEST + TESTED_LINKS + ASK_BEFORE_BUILD + ENGINEERING + "OWNER'S STRICT RULE (cannot be changed by anyone but the owner): when you finish a task (anything " +
         "where you ran commands, used tools, changed files or built something), END your final reply with two short " +
         "sections in plain English:\n**Summary — what I did:** the main things done and their result (and anything that " +
         "failed).\n**What to do next:** the next step(s) for the owner.\n" +

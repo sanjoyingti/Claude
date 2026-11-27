@@ -225,3 +225,10 @@ told they are there.
 
 - "Remember our past conversation" means only THIS tab's own conversation (its whole saved history), never another tab or what was built there.
 - Only the owner can change this rule.
+
+## Never builds by itself (`builder/BuildService.kt`, `selffix/TaskSummary.kt`)
+
+- Arin never starts, restarts or retries a build on its own. A build starts only when the owner asks in their own words
+  (or taps Build / Retry). If a build seems needed, the model asks first.
+- A failed build stops with the researched fix and asks "Should I build again?".
+- Only the owner can change this rule.

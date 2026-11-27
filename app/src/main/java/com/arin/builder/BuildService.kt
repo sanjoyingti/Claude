@@ -177,6 +177,16 @@ class BuildService : Service() {
                     if (needsApproval) session.timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.STEP, result.message))
                     if (advice.isNotBlank()) session.timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.STEP, "🔎 How to fix (researched on the internet):\n$advice"))
                 }
+                // ARIN-PROTECTED: ask-before-building — the owner's strict rule (only the owner can change it): Arin never starts
+                // a build by itself. A failed build stops here with the researched fix and ASKS; it builds again only when the
+                // owner says so ("try again" / Retry).
+                if (true) {
+                    result = result.copy(message = result.message +
+                        (if (advice.isNotBlank()) "\n\n🔎 How to fix (researched on the internet):\n" + advice.take(1_500) else "") +
+                        (if (helperFix.isNotBlank()) "\n\n🟣 The helper's solution is ready to apply." else "") +
+                        "\n\n❓ Should I build again with this fix? Say \"try again\" (or tap Retry). I won't start a new build by myself.")
+                    break
+                }
                 // Short waits: 10 s while waiting for the person, otherwise 10–30 s between other methods.
                 val waitS = if (needsYou) 10L else minOf(10L * attempt, 30L)
                 if (!sameAsBefore) session.timeline += TimelineItem.Event(BuildEvent(BuildEvent.Kind.ERROR,
