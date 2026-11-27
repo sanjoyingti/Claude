@@ -49,7 +49,7 @@ object Worker {
         return "WORKER MODE IS ON. The team: you (the boss, the only one who talks to the person), the worker (${names(c)}, a " +
             "different model that does the heavy work) and the AI helper (helps the worker). OWNER'S STRICT RULE: you only direct and " +
             "inspect; you NEVER write code (not even a few lines), long text, research summaries or long analysis yourself. Keep your " +
-            "own replies short and answer FAST: decide quickly, don't deliberate at length. For any code, " +
+            "own replies short: think as deeply as the problem needs, but write little. For any code, " +
             "long text, long analysis or multi-step work, do NOT do it yourself — write <ask_worker>TASK: everything the worker " +
             "needs (it cannot see the person or this chat)</ask_worker> as the LAST thing in your reply and stop. Its result comes " +
             "back to you: inspect it; if it's wrong, send directions in another <ask_worker>. To show the worker's output to the " +

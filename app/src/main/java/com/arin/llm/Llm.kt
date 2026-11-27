@@ -42,7 +42,9 @@ object Llm {
      * to its API (never through the Claude Code harness, whose own instructions cost thousands of tokens per message)
      * and thinks as little as the service allows (DeepSeek's billed thinking switched off).
      */
-    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null, cache: Boolean = false, endpoint: CustomApi.Endpoint? = null, conv: String = "", boss: Boolean = false): Flow<Delta> {
+    fun stream(provider: Provider, key: String, model: String, system: String, turns: List<Turn>, maxTokens: Int? = null, cache: Boolean = false, endpoint: CustomApi.Endpoint? = null, conv: String = "", boss: Boolean = false,
+               /** A big problem or puzzle: the main model thinks fully, even in worker mode (smart thinking). */
+               hard: Boolean = false): Flow<Delta> {
         // ARIN-PROTECTED: tab-isolation — each chat gets its own Claude Code session; one chat never reuses another's.
         val purpose = if (conv.isBlank()) "chat" else "chat:$conv"
         if (provider.needsKey && key.isBlank()) {
@@ -51,7 +53,7 @@ object Llm {
         if (model.isBlank()) throw LlmException("Pick a model first, or type a model id in Settings → Custom API.")
         return when (provider) {
             Provider.Free -> freeStream(model, system, turns, maxTokens)
-            Provider.Gemini -> lessThinking(boss) { low -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }
+            Provider.Gemini -> lessThinking(boss && !hard) { low -> openAiStream("$GEMINI_BASE/chat/completions", bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low) }
             // OpenAI's newer models take max_completion_tokens; leave ChatGPT on its default.
             Provider.ChatGPT -> openAiStream("$OPENAI_BASE/chat/completions", bearer(key), model, system, turns)
             Provider.Claude -> anthropicStream("$ANTHROPIC_BASE/messages", anthropicHeaders(key), key, model, system, turns, maxTokens, cache)
@@ -59,7 +61,7 @@ object Llm {
             Provider.ClaudeCode -> com.arin.claudecode.Harness.stream(model, system, turns, purpose = purpose)
             Provider.Custom -> (endpoint ?: CustomApi.current()).let { ep ->
                 val direct0 = when (ep.format) {
-                    ApiFormat.OpenAI -> lessThinking(boss) { low -> withUsage(ep.chatUrl()) { u -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low, usage = u) } }
+                    ApiFormat.OpenAI -> lessThinking(boss && !hard) { low -> withUsage(ep.chatUrl()) { u -> openAiStream(ep.chatUrl(), bearer(key), model, system, turns, maxTokens = maxTokens, lowReasoning = low, usage = u) } }
                     ApiFormat.Anthropic -> anthropicStream(ep.chatUrl(), customAnthropicHeaders(key), key, model, system, turns, maxTokens, cache)
                 }
                 // ARIN-PROTECTED: credit-saver — stay under a free pool's requests-per-minute limit (waits, never fails).

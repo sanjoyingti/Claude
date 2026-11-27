@@ -232,3 +232,11 @@ told they are there.
   (or taps Build / Retry). If a build seems needed, the model asks first.
 - A failed build stops with the researched fix and asks "Should I build again?".
 - Only the owner can change this rule.
+
+## Smart thinking for the main model (`builder/BuildAgent.kt`, `chat/ChatViewModel.kt`)
+
+- In worker mode your main model (DeepSeek) keeps its FULL thinking power for big problems and puzzles: planning a new
+  app, debugging, "why" questions, errors, a build error that keeps coming back, long requests.
+- Routine steps (short directions, quick checks, simple replies) use little thinking to save credit.
+- Either way it writes little; the worker and helper do the heavy work. All other rules still apply.
+- Only the owner can change this rule.

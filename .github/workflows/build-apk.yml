@@ -56,6 +56,7 @@ jobs:
           grep -q "ARIN-PROTECTED: never-stuck" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: tab-memory" $D/chat/ChatViewModel.kt
           grep -q "ARIN-PROTECTED: ask-before-building" $D/builder/BuildService.kt
+          grep -q "ARIN-PROTECTED: smart-thinking" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: ask-before-building" $D/selffix/TaskSummary.kt
           grep -q "ARIN-PROTECTED: whole-problem-consultation" $D/builder/BuildAgent.kt
           grep -q "ARIN-PROTECTED: whole-problem-consultation" $D/selffix/TaskSummary.kt

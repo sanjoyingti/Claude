@@ -3193,6 +3193,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // ARIN-PROTECTED: boss-minimum-credit — worker mode: your main model gets a short history, short replies,
                 // no harness and least thinking; the worker and helper do the heavy work.
                 val bossLean = !offline && com.arin.selffix.Worker.on(app)
+                // ARIN-PROTECTED: smart-thinking — your main model keeps its full thinking power for big problems and
+                // puzzles (planning, debugging, "why", errors), and answers quickly (little thinking, little credit) otherwise.
+                val hardWords = Regex("""(?i)\b(why|debug|bug|error|crash|fail|fix|plan|design|architect|puzzle|solve|prove|calculate|algorithm|optimi[sz]e|compare|analy[sz]e|investigate|reverse|complex|difficult|hard|build|app)\b""")
                 var lastWorkerResult = ""
                 var helperGuides = 0
                 var lastGuided = -1
@@ -3296,7 +3299,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                                     run.who = bossName
                                     if (run.status == null) run.status = "$bossName is working on your message"
                                     try { steerable(Llm.stream(p, key, m, system + (if (formatHint) PLAIN_TOOLS_NOTE else ""), sent, cache = saveCredits, endpoint = endpoint, conv = run.chat,
-                                        boss = bossLean), run).collect { d ->
+                                        boss = bossLean, hard = bossLean && (userSaid.length > 400 || hardWords.containsMatchIn(userSaid) ||
+                                            ran.any { it.kind != "steer" && (it.exitCode ?: 0) != 0 })), run).collect { d ->
                                         if (run.steerPending) throw SteerInterrupt()
                                         if (firstAt == 0L) { firstAt = System.currentTimeMillis(); waitJob.cancel(); run.status = null }
                                         val nowMs = System.currentTimeMillis()

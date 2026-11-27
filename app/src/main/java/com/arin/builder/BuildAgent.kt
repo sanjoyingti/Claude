@@ -1357,13 +1357,18 @@ class BuildAgent(
         step(BuildEvent.Kind.FILE, "Put the fixed piece into ${src.file.substringAfterLast('/')}")
     }
 
-    /** A short answer from your model (the boss), with little thinking, for inspecting. */
+    /**
+     * A short answer from your model (the boss). ARIN-PROTECTED: smart-thinking — routine checks are quick (little
+     * thinking, little credit); a big problem (planning a new app, an error that keeps coming back) gets its full
+     * thinking power. Either way it writes little: the worker and helper still do the heavy work.
+     */
     private suspend fun bossSay(prompt: String): String {
+        val hard = stuck >= 2 || (req.project == null && !self && files.isEmpty()) || prompt.length > 12_000
         val out = StringBuilder()
         runCatching {
             kotlinx.coroutines.withTimeoutOrNull(180_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
-                    "You are the supervisor of an AI coding worker. Be brief.", req.endpoint(), boss = workerOn())
+                    "You are the supervisor of an AI coding worker. Think as deeply as the problem needs; write briefly.", req.endpoint(), boss = workerOn(), hard = hard)
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
