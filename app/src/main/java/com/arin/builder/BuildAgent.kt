@@ -116,6 +116,8 @@ class BuildAgent(
 ) {
     /** Set when waiting for GitHub was cut short by a direction from the person. */
     private var steerNow = false
+    /** This build's tab id (from its TabScope): every model conversation of this build is keyed by it, never shared. */
+    private var buildTab = "build:untagged-" + System.nanoTime()
     /** Every direction the person sent while this build ran: kept in every later prompt, in the order sent. */
     private val steered = mutableListOf<String>()
 
@@ -302,7 +304,7 @@ class BuildAgent(
         for (attempt in 1..2) {
             text = runCatching {
                 val sb = StringBuilder()
-                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, input)), system, req.endpoint(), boss = true, conv = "build:$memKey:brief")
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, input)), system, req.endpoint(), boss = true, conv = "$buildTab|build:$memKey:brief")
                     .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
                 sb.toString().trim()
             }.getOrDefault("")
@@ -321,7 +323,7 @@ class BuildAgent(
                 missing.joinToString("\n") { "- $it" }
             val again = runCatching {
                 val sb = StringBuilder()
-                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, fixMsg)), system, req.endpoint(), boss = true, conv = "build:$memKey:brief")
+                streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, fixMsg)), system, req.endpoint(), boss = true, conv = "$buildTab|build:$memKey:brief")
                     .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
                 sb.toString().trim()
             }.getOrDefault("")
@@ -411,6 +413,7 @@ class BuildAgent(
     // after every piece of coding, the owner gets a detailed plain-English explanation of what was made or changed, then
     // suggestions to change, improve or update it, and the offer to build. Only the owner can change this rule.
     suspend fun run(): BuildResult {
+        buildTab = com.arin.selffix.TabScope.current()  // strict-tab-scope: this build's own model sessions
         if (!self && !imported) runCatching { stabilizeDeps() }
         mem?.let { m ->
             m.noteRequest(req.description)
@@ -478,7 +481,7 @@ class BuildAgent(
         } else runCatching {
             kotlinx.coroutines.withTimeoutOrNull(240_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
-                    "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint(), conv = "build:$memKey:explain")
+                    "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint(), conv = "$buildTab|build:$memKey:explain")
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
@@ -1310,7 +1313,7 @@ class BuildAgent(
             // model starts again WITH the direction (not queued for later).
             val steeredNow = try { resilient(
                 attempt = { model -> streamModel(target.provider, target.key, model, working.toList(), if (target.worker) workSystem else system, target.endpoint,
-                    conv = "build:$memKey" + if (target.worker) ":worker" else "") },
+                    conv = "$buildTab|build:$memKey" + if (target.worker) ":worker" else "") },
                 model = target.model,
                 fallback = { if (req.provider != com.arin.llm.Provider.Free) null else alternativeModel(req.provider, req.apiKey, req.model) }, // ARIN-PROTECTED: never change the Custom API — nor Claude, GPT or the Claude Code login: only the person switches them
                 onRetry = { step(BuildEvent.Kind.STEP, it) },
@@ -1546,7 +1549,7 @@ class BuildAgent(
      * A fixed piece that drops one of them would break those files, so it is rejected.
      */
     private fun lostUsedNames(path: String, old: String, new: String): List<String> = runCatching {
-        val g = com.arin.selffix.ProjectMaps.forFiles("build:$memKey", files)
+        val g = com.arin.selffix.ProjectMaps.forFiles("$buildTab|build:$memKey", files)
         val users = g.dependents(path).mapNotNull { g.files[it] }
         val before = com.arin.selffix.ProjectGraph.parse(path, old); val after = com.arin.selffix.ProjectGraph.parse(path, new)
         (before.classes + before.functions).filter { n -> n !in after.classes && n !in after.functions && users.any { n in it.uses } }
@@ -1926,7 +1929,7 @@ class BuildAgent(
         runCatching {
             kotlinx.coroutines.withTimeoutOrNull(180_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
-                    "You are the supervisor of an AI coding worker. Think as deeply as the problem needs; write briefly.", req.endpoint(), boss = workerOn(), hard = hard, conv = "build:$memKey:boss")
+                    "You are the supervisor of an AI coding worker. Think as deeply as the problem needs; write briefly.", req.endpoint(), boss = workerOn(), hard = hard, conv = "$buildTab|build:$memKey:boss")
                     .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
@@ -2144,7 +2147,8 @@ class BuildAgent(
         // Your model stays the boss: it makes the change. If Claude can't help, your model researches as before.
         if (com.arin.selffix.CreditSaver.on(context) && !workerOn()) {
             val ctx = context!!
-            val sig = com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) }
+            // strict-tab-scope: a remembered fix holds this build's code, so it is reused only by this same build tab.
+            val sig = buildTab + "|" + com.arin.selffix.CreditSaver.signature(errors).ifBlank { realErrorLine(errors).take(160) }
             if (seen < 2) com.arin.selffix.CreditSaver.rememberedFix(ctx, sig)?.let {
                 step(BuildEvent.Kind.THINKING, "Seen this error before — using the fix that worked (no AI needed)")
                 return "A fix that worked before for this exact error (apply it):\n$it"

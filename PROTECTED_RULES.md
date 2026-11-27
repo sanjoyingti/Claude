@@ -339,3 +339,5 @@ told they are there.
 - project-map-in-build: Arin-side only (the build worker still never sees the project): a fixed piece that removes a class/function other files use is rejected.
 - 1.26.1: a chat reply's task record is saved in the background (not awaited), so the reply reaches the chat first and a build it starts keeps its live progress message (1.25.0 regression fixed; nothing removed).
 - 1.26.2 build-tab-shows-running: opening an empty Build tab displays a build already running (e.g. started from a chat); display only, each build keeps its own session and tab isolation.
+- 1.26.3: typing in a chat while its build runs always steers that build (also while the chat's model is replying); every build's model conversations are keyed by its own tab (no sharing between two builds of the same app).
+- 1.26.3 (cont.): a chat's model sees only its own build — build failure notes are kept per chat, build links come only from that chat's own build (never the Build tab's or the open chat's), and remembered build fixes and build project maps are reused only within the same build tab.

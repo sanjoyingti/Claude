@@ -2280,7 +2280,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val text = text0 + result.message.substringAfter("📥", "").let { if (it.isBlank()) "" else "\n\n📥" + it } +
             // ARIN-PROTECTED: explain-after-coding — the code explained in plain English, with suggestions.
             (if (result.explanation.isNotBlank()) "\n\n" + result.explanation.trim() else "")
-        lastFailure = if (result.success) "" else
+        // strict-tab-scope: the failure is kept for the chat this build belongs to only (never another tab's prompt).
+        val failChat = f.chat
+        var lastFailure = if (result.success) "" else
             "The last Build mode run ($name) FAILED. Reason: ${result.message}" +
                 (if (result.log.isNotBlank()) " Error log (the full list is in the chat message):\n${result.log.take(4_000)}\n" else "") +
                 (result.runUrl?.let { " Full log: $it ." } ?: "") +
@@ -2289,6 +2291,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             lastFailure = "The last build ($name) produced an APK, but its emulator test found a problem: ${result.testNote} " +
                 "When the person asks to fix it, emit a <build> tag naming the same app that says to fix this crash.\n\n"
         }
+        if (failChat != null) { if (lastFailure.isEmpty()) lastFailures.remove(failChat) else lastFailures[failChat] = lastFailure }
         postToBuildChat(f.chat, Message(fromUser = false, text = text), progressId, steps)
         if (result.success) result.phoneInstallPath?.let { path ->
             runCatching { com.arin.builder.ApkInstaller.install(getApplication(), java.io.File(path)) }
@@ -2308,12 +2311,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Details of the last failed build, for the model to explain or fix. */
-    private var lastFailure = ""
+    /** Details of each chat's last failed build, for that chat's model only (keyed by chat id). */
+    private val lastFailures = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    /** The latest build's links, for the model to give when asked. */
-    private fun latestBuildInfo(): String {
-        val mine = com.arin.builder.BuildRunner.session(linkedBuild(chatId))
+    /**
+     * The latest build's links, for the model to give when asked — only [chat]'s own build (strict-tab-scope: never the
+     * Build tab's or another chat's build, and never the chat that happens to be open on screen).
+     */
+    private fun latestBuildInfo(chat: String): String {
+        val mine = com.arin.builder.BuildRunner.session(linkedBuild(chat))
         if (mine?.running == true) {
             val step = mine.timeline.lastOrNull { it is com.arin.builder.TimelineItem.Event }
                 as? com.arin.builder.TimelineItem.Event
@@ -2322,8 +2328,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 ". Its steps show in the chat and the links will be posted when it's done. Don't send another <build> for THIS app " +
                 "until it finishes (a different app can be built at the same time); answer other questions normally.\n\n"
         }
-        if (lastFailure.isNotEmpty()) return lastFailure
-        val p = (mine ?: com.arin.builder.BuildRunner.current).project ?: return ""
+        lastFailures[chat]?.takeIf { it.isNotEmpty() }?.let { return it }
+        val p = mine?.project ?: return ""
         val apk = p.lastApkUrl ?: return ""
         return "Latest app built in Build mode: ${p.appName}" + (if (p.selfUpdate) " (Arin itself)" else "") +
             ". APK download: $apk . Source code zip: ${com.arin.builder.BuildRunner.sourceZipUrl(p)} . " +
@@ -3007,12 +3013,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // "Roll back" / "undo the last change": the app's files go back to how they were before the last change
         // (safe: a new commit on top, so it can itself be undone). Only on the owner's own words.
         if (!streaming && Regex("""(?i)^\s*(please\s+)?(roll\s*back|undo (the |my )?last (change|update|build))\b""").containsMatchIn(text) && rollBack(text)) return
-        // A build from this chat is running: what you type steers it (followed at its next step).
-        if (text.isNotBlank() && !streaming && chatBuildRunning()) {
+        // A build from this chat is running: what you type steers it (followed at its next step) — also while this
+        // chat's model is replying, so a direction always reaches the build. Only this chat's own build.
+        if (text.isNotBlank() && chatBuildRunning()) {
             chatBuildSession()?.steer(text)
-            messages += Message(fromUser = true, text = "↪ $text")
-            messages += Message(fromUser = false, text = "↪ Sent to the build — it follows this at its next step. (Tap Stop on the build to stop it.)")
-            persist()
+            if (streaming) {
+                // The reply in progress would drop messages added under it; the direction shows in the build's steps.
+                notice = "↪ Sent to the build — it follows this at its next step."
+            } else {
+                messages += Message(fromUser = true, text = "↪ $text")
+                messages += Message(fromUser = false, text = "↪ Sent to the build — it follows this at its next step. (Tap Stop on the build to stop it.)")
+                persist()
+            }
             return
         }
         if (streaming) {
@@ -3283,12 +3295,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     topics = Prompt.topics(
                         history.filter { it.fromUser }.takeLast(3).joinToString("\n") { it.text } +
                             // A pending build failure keeps the build rules in.
-                            (if (lastFailure.isNotEmpty()) "\nbuild" else "") + (if (deep) "\nfetch" else ""),
+                            (if (!lastFailures[run.chat].isNullOrEmpty()) "\nbuild" else "") + (if (deep) "\nfetch" else ""),
                         hasBuild = hasChatBuild,
                         usedTerminal = history.takeLast(8).any { it.commands.isNotEmpty() },
                         reaChat = reaChat,
                     ),
-                ) + latestBuildInfo() + (if (reaChat && com.arin.mcp.Mcp.status(com.arin.mcp.Mcp.REA.name) == null)
+                ) + latestBuildInfo(run.chat) + (if (reaChat && com.arin.mcp.Mcp.status(com.arin.mcp.Mcp.REA.name) == null)
                     "\n\nREA STATUS (live, from the app): REA is switched ON for this chat but it is NOT installed or not running, " +
                     "so its tools are unavailable. Don't claim it works and don't try to install it with terminal commands. " +
                     "If asked, say it isn't installed yet and that the person should tap \"Install REA\" above the message box " +
