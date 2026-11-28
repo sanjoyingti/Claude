@@ -694,6 +694,21 @@ private fun Composer(
                 }
             }
         }
+        // Directions for this chat's running build (sent while the chat was replying): pinned at once.
+        vm.buildDirectionsHere().forEach { note ->
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.padding(bottom = 6.dp),
+            ) {
+                Text(
+                    "↪ Sent to the build — it follows this at its next step: $note",
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 3,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
+        }
         vm.readingFile?.let { name ->
             Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)

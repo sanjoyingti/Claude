@@ -382,7 +382,7 @@ class BuildService : Service() {
             // chunk or GitHub request, and cancel their GitHub requests already in flight. Then the job is cancelled.
             // Only the stopped build: other builds (other tabs) keep running. What's built so far stays saved.
             val targets = if (sessionId == null) BuildRunner.sessions.values.toList() else listOfNotNull(BuildRunner.session(sessionId))
-            targets.forEach { it.stopRequested = true; it.steering.clear() }
+            targets.forEach { it.stopRequested = true; it.steering.clear(); com.arin.terminal.Linux.stopTab("build:" + it.id) }
             val tags = targets.map { "build:" + it.id }.toSet()
             runCatching {
                 val d = Http.client.dispatcher

@@ -676,6 +676,10 @@ object Linux {
         } catch (e: Exception) {
             return@withContext Termux.Result("", "", null, "Couldn't start Linux: ${e.message}")
         }
+        // ARIN-PROTECTED: tab-process-stop — every command is registered under its tab (chat / build), so Stop kills
+        // exactly that tab's commands and everything they started — other tabs' commands keep running.
+        val tabId = coroutineContext[com.arin.selffix.TabScope]?.id ?: ""
+        active.getOrPut(tabId) { java.util.concurrent.ConcurrentHashMap.newKeySet() }.add(process)
         val out = StringBuffer()
         val err = StringBuffer()
         val finished = kotlinx.coroutines.CompletableDeferred<Int?>()
@@ -712,15 +716,46 @@ object Linux {
             }
             Termux.Result(out.toString(), err.toString(), code, null, cwd = cwd)
         } catch (e: TimeoutCancellationException) {
-            process.destroy()
+            kill(process)
             Termux.Result(out.toString(), err.toString(), null, "Stopped after ${timeoutMs / 60_000} min without finishing.")
         } catch (e: kotlinx.coroutines.CancellationException) {
-            process.destroy() // Stop was pressed
+            kill(process) // Stop was pressed: the command and everything it started
             throw e
         } finally {
+            active[tabId]?.remove(process)
             runCatching { script.delete() }
             runCatching { cwdFile.delete() }
         }
+    }
+
+    /** Commands running now, per tab (TabScope id). */
+    private val active = java.util.concurrent.ConcurrentHashMap<String, MutableSet<Process>>()
+
+    /** Stop: kills every command [tab] is running now, with everything they started. */
+    fun stopTab(tab: String) { active[tab]?.toList()?.forEach { kill(it) } }
+
+    private fun pidOf(p: Process): Int? =
+        runCatching { (p.javaClass.getMethod("pid").invoke(p) as Number).toInt() }.getOrNull()
+            ?: runCatching { p.javaClass.getDeclaredField("pid").apply { isAccessible = true }.getInt(p) }.getOrNull()
+
+    /** Kills [p] and all its descendants (Gradle, Java, npm…), deepest first — a plain destroy leaves those running. */
+    fun kill(p: Process) {
+        runCatching {
+            val root = pidOf(p) ?: return@runCatching
+            val kids = HashMap<Int, MutableList<Int>>()
+            File("/proc").listFiles()?.forEach { d ->
+                val pid = d.name.toIntOrNull() ?: return@forEach
+                runCatching {
+                    val ppid = File(d, "stat").readText().substringAfterLast(')').trim().split(' ')[1].toInt()
+                    kids.getOrPut(ppid) { mutableListOf() }.add(pid)
+                }
+            }
+            val order = mutableListOf<Int>()
+            fun walk(x: Int, depth: Int) { if (depth > 64) return; kids[x]?.forEach { walk(it, depth + 1) }; order += x }
+            walk(root, 0)
+            order.filter { it != root }.forEach { runCatching { android.os.Process.sendSignal(it, 9) } }
+        }
+        runCatching { p.destroyForcibly() }
     }
 
     /** True once this device was found to need PRoot's compatible (no-seccomp) mode. */

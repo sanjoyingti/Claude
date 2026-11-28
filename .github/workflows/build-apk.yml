@@ -135,6 +135,8 @@ jobs:
           grep -q "ARIN-PROTECTED: phone-test" $D/terminal/DeviceTest.kt
           grep -q "ARIN-PROTECTED: keyless-base-url" $D/llm/Models.kt
           grep -q "ARIN-PROTECTED: no-callback-crash" $D/llm/Http.kt
+          grep -q "ARIN-PROTECTED: instant-reply-stop" $D/chat/ChatViewModel.kt
+          grep -q "ARIN-PROTECTED: tab-process-stop" $D/terminal/Linux.kt
           grep -q 'applicationId = "com.arin.app"' app/build.gradle.kts
           grep -q 'arin-debug.keystore' app/build.gradle.kts
           echo "Protected rules OK"

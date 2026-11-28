@@ -90,6 +90,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             set(v) { statusNow = v; if (v != null) com.arin.selffix.Activity.log("chat", v) }
         val liveCommands = mutableStateListOf<com.arin.data.CommandRun>()
         val steering = mutableStateListOf<String>()
+        /** Stop was tapped and the reply-so-far is already in the chat: the job only winds down behind. */
+        var shownStopped = false
         @Volatile var steerPending = false
         @Volatile var steerNow = false
         var job: Job? = null
@@ -1969,6 +1971,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun buildLinks() = getApplication<Application>().getSharedPreferences("chat_builds", android.content.Context.MODE_PRIVATE)
     private fun linkBuild(chat: String, project: String) = buildLinks().edit().putString(chat, project).apply()
 
+    /** Directions sent to a chat's running build while the chat was replying: pinned until the build picks them up. */
+    val buildDirections = mutableStateListOf<Pair<String, String>>()
+
+    /** This open chat's pinned build directions. */
+    fun buildDirectionsHere(): List<String> = chatId?.let { c -> buildDirections.filter { it.first == c }.map { it.second } } ?: emptyList()
+
     /** The place a chat named for its build ("build on github"), shown first when it's asked where to build. Per chat. */
     private val namedPlace = java.util.concurrent.ConcurrentHashMap<String, BuildTarget>()
 
@@ -2161,6 +2169,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         f.job = viewModelScope.launch {
             var last = ""
             while (true) {
+                // A pinned direction goes once the build has picked it up (or the build stopped).
+                f.chat?.let { c -> buildDirections.removeAll { it.first == c && (!session.running || it.second !in session.steering) } }
                 val text = buildProgressText(title, done = false, session)
                 if (text != last) {
                     last = text
@@ -3056,8 +3066,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isNotBlank() && chatBuildRunning()) {
             chatBuildSession()?.steer(text)
             if (streaming) {
-                // The reply in progress would drop messages added under it; the direction shows in the build's steps.
-                notice = "↪ Sent to the build — it follows this at its next step."
+                // The reply in progress would drop messages added under it: the direction is pinned above the message box
+                // at once (until the build picks it up) and shows in the build's steps.
+                chatId?.let { buildDirections += it to text }
             } else {
                 messages += Message(fromUser = true, text = "↪ $text")
                 messages += Message(fromUser = false, text = "↪ Sent to the build — it follows this at its next step. (Tap Stop on the build to stop it.)")
@@ -3182,9 +3193,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         reply()
     }
 
-    /** Stops the open chat's reply (other chats keep working). */
+    /**
+     * ARIN-PROTECTED: instant-reply-stop — Stops the open chat's reply at the tap (other chats keep working): this chat's
+     * running commands and everything they started are killed, the reply so far is posted as stopped, and the chat is
+     * free at once. The reply's job winds down behind without posting again or touching a newer reply.
+     */
     fun stop() {
-        runFor()?.job?.cancel()
+        val r = runFor() ?: return
+        if (r.shownStopped) return
+        r.shownStopped = true
+        com.arin.terminal.Linux.stopTab("chat:" + r.chat)
+        r.checkpointJob?.cancel()
+        r.job?.cancel()
+        runs.remove(r.chat)
+        if (r.chat == chatKey()) {
+            if (messages.size != r.base.size || messages.lastOrNull()?.id != r.base.lastOrNull()?.id) { messages.clear(); messages.addAll(r.base) }
+            messages.add(Message(fromUser = false, text = Prompt.clean(r.liveText).trim().ifBlank { "(Stopped)" } + "\n\n⏹ Stopped by you.",
+                thinking = r.liveThinking, commands = r.liveCommands.toList()))
+            persist()
+        }
     }
 
     /** Writes [r]'s chat to disk with the reply-so-far as a resumable (interrupted) message. */
@@ -4148,8 +4175,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // posts its progress message first and the realign below wipes it (no build progress in the chat).
                 val finAnswer = Prompt.clean(answer); val finRan = ran.toList(); val finFailure = failure; val finAccepted = workerAccepted
                 ArinApp.scope.launch(Dispatchers.IO) { runCatching { finishRun(run, finAnswer, finRan, finFailure, finAccepted) } }
-                runs.remove(run.chat)
-                if (run.chat == chatKey()) {
+                if (runs[run.chat] === run) runs.remove(run.chat)  // never a newer reply's run
+                if (run.shownStopped) {
+                    // Stop already posted the reply so far (instant stop): nothing more to show.
+                } else if (run.chat == chatKey()) {
                     // This chat is open: show the answer here. Append in place (no full-list rebuild) when nothing
                     // moved; only realign if the user navigated away and back during the reply.
                     if (messages.size != run.base.size || messages.lastOrNull()?.id != run.base.lastOrNull()?.id) {
@@ -4167,7 +4196,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 ReplyService.stop(app) // counted: the notification stays while any other task still runs
                 // ARIN-PROTECTED: research-first-error-help — a failed reply: search the internet first, then say how to fix it.
-                if (failure != null && !stopped && run.chat != TEMP_CHAT) {
+                if (failure != null && !stopped && !run.shownStopped && run.chat != TEMP_CHAT) {
                     val err = failure!!
                     val target = run.chat
                     // Keep running in the background while researching the error and carrying on.

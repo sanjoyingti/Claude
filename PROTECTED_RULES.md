@@ -359,3 +359,8 @@ told they are there.
 
 ## 1.30.1
 - no-callback-crash: a model service's error while streaming (seen on Android 17: 'The service is having trouble' → SIGABRT) can no longer escape OkHttp's callback; every problem ends the reply with a readable error; an error reply is read at most 64 KB / 3 s (never waited on to its end). Same in builds. Tested by StreamErrorTest.
+
+## 1.31.0
+- instant-reply-stop: Stop on a chat reply posts the reply so far as "⏹ Stopped by you" and frees the chat at the tap; the reply's job winds down behind without posting again or touching a newer reply.
+- tab-process-stop: every Linux command is registered under its tab; Stop (chat reply or build) kills that tab's commands and everything they started (Gradle, Java, npm…), other tabs untouched.
+- Directions sent to a running build while the chat is replying are pinned above the message box at once, until the build picks them up.
