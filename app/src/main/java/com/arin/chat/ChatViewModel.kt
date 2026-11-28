@@ -1235,9 +1235,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             }) to false
             "build_app" -> {
                 val problem = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    startBuild(arg("name"), arg("description"), BuildTarget.BUILD_TAB)
+                    startBuild(arg("name"), arg("description"), BuildTarget.BUILD_TAB, writeFirst = true)
                 }
-                (problem ?: "The build started in Arin's Build tab (GitHub). Progress and the APK link show there.") to (problem != null)
+                (problem ?: "The code is being written in Arin's Build tab. Once it's written and explained, the owner is asked where to build it (GitHub first); the APK link shows there after the emulator test.") to (problem != null)
             }
             else -> "Unknown tool $name" to true
         }
@@ -1969,6 +1969,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun buildLinks() = getApplication<Application>().getSharedPreferences("chat_builds", android.content.Context.MODE_PRIVATE)
     private fun linkBuild(chat: String, project: String) = buildLinks().edit().putString(chat, project).apply()
 
+    /** The place a chat named for its build ("build on github"), shown first when it's asked where to build. Per chat. */
+    private val namedPlace = java.util.concurrent.ConcurrentHashMap<String, BuildTarget>()
+
+    private val GITHUB_FIRST = "GitHub comes first: every APK has to pass the emulator test on GitHub before you get it. Sign in with GitHub in " +
+        "Settings → GitHub (or tap \"On this phone\" — it only compiles there; the APK still needs GitHub's emulator test)."
+
     /** strict-tab-scope: the build belongs to this chat — its app history is kept for this chat only. */
     private fun markBuildOwner(session: com.arin.builder.BuildSession) {
         if (chatId == null) persist()
@@ -2247,12 +2253,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val changed = result.message.removePrefix(com.arin.builder.BuildAgent.CODE_READY).split(',').filter { it.isNotBlank() }
             postToBuildChat(f.chat, Message(fromUser = false,
                 text = "✍️ **The code for ${project?.appName ?: "the app"} is written** (${changed.size} file${if (changed.size == 1) "" else "s"}).\n\n" +
-                    (if (result.explanation.isNotBlank()) result.explanation.trim() + "\n\n" else "") + "_Where should I build it?_",
+                    (if (result.explanation.isNotBlank()) result.explanation.trim() + "\n\n" else "") + "_Where should I build it?_" +
+                    (namedPlace.remove(f.chat ?: "")?.let { "_ You said " + when (it) { BuildTarget.PHONE -> "this phone"; BuildTarget.CODESPACE -> "a Codespace"; else -> "GitHub" } + " — tap it to confirm._" } ?: "") +
+                    "\n\n_Every APK is tested on GitHub's Android emulator before you get it, so GitHub is the first choice._",
                 pendingBuild = "where\u0000$sessionId"), progressId, steps)
             return
         }
         val name = project?.appName ?: "The app"
         val phoneOnly = project?.owner == com.arin.builder.BuildAgent.LOCAL_OWNER
+        if (result.success && phoneOnly && result.phoneApk == null && project?.selfUpdate != true) {
+            // test-before-handover: compiled on the phone, not tested — ask to build + test it on GitHub (nothing starts by itself).
+            postToBuildChat(f.chat, Message(fromUser = false, text = "🧪 **$name compiles on this phone, but you don't get the APK yet.**\n\n" +
+                "Every app must first be opened and tested on an Android emulator, and a phone can't run one. " + result.message.substringAfter("Why GitHub wasn't used:", "").trim().let { if (it.isBlank()) "" else "\n\n**Why it was built on the phone:** $it" } +
+                (result.phoneSourceZip?.let { "\n\n- **Source code (zip):** `$it`" } ?: "") +
+                "\n\n_Tap **On GitHub** to build it there and run the emulator test — the APK link comes when it passes._",
+                pendingBuild = "where\u0000$sessionId"), progressId, steps)
+            return
+        }
         val text0 = if (result.success && phoneOnly) buildString {
             append("✅ **$name is built on this phone.**\n\n")
             result.phoneApk?.let { append("- **APK:** `$it`\n") }
@@ -2371,7 +2388,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         val phoneReady = com.arin.terminal.Linux.androidBuildReady(app)
         // Where to build: the phone (built-in Linux), or GitHub's cloud shown in the chat or the Build tab. Auto picks one.
-        val onPhone = target == BuildTarget.PHONE || (target == BuildTarget.AUTO && phoneReady && token.isBlank())
+        // ARIN-PROTECTED: github-first — GitHub is the first choice (only GitHub's emulator can test an app before you get
+        // its APK); the phone is used only when you pick it. Auto never quietly switches to the phone.
+        val onPhone = target == BuildTarget.PHONE
         val inBuildTab = target == BuildTarget.BUILD_TAB
         val inCodespace = target == BuildTarget.CODESPACE
         return when {
@@ -2381,6 +2400,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "To build in a Codespace, sign in with GitHub in Settings → GitHub first."
             !onPhone && token.isBlank() && !phoneReady ->
                 "To build apps, sign in with GitHub in Settings → GitHub, or install the Android build tools in Settings → Linux to build on this phone. Then ask again."
+            !onPhone && !writeFirst && token.isBlank() -> GITHUB_FIRST
             chatBuildRunning() && (name.isBlank() || name.equals(chatBuildSession()?.project?.appName, ignoreCase = true)) ->
                 "${chatBuildAppName()} is still building in this chat. Wait for it or tap Stop — a different app can be built at the same time."
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
@@ -2449,8 +2469,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val tl = session.timeline.toList()
         val lastUser = tl.indexOfLast { it is com.arin.builder.TimelineItem.User }
         val lastResult = tl.indexOfLast { it is com.arin.builder.TimelineItem.Result }
-        val unfinished = lastUser > lastResult ||
-            (tl.getOrNull(lastResult) as? com.arin.builder.TimelineItem.Result)?.let { !it.success } == true
+        val lastRes = tl.getOrNull(lastResult) as? com.arin.builder.TimelineItem.Result
+        // Unfinished: stopped, failed, written but not built yet, or compiled only on the phone (not tested yet).
+        val unfinished = lastUser > lastResult || lastRes?.let { !it.success || it.message.startsWith(com.arin.builder.BuildAgent.CODE_READY) ||
+            session.project?.owner == com.arin.builder.BuildAgent.LOCAL_OWNER } == true
         if (!unfinished) return null
         // Only a short "build it on github"-style order; asking for changes makes a new round of coding.
         if (said.none { it.trim().split(Regex("\\s+")).size <= 10 && Prompt.namedBuildTarget(it) != null }) return null
@@ -2474,13 +2496,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val token = githubToken()
         val phoneReady = com.arin.terminal.Linux.androidBuildReady(app)
         val target = when (where) {
-            "auto" -> if (phoneReady && token.isBlank()) "phone" else "github"
+            "auto" -> "github"  // github-first
             "chat", "buildtab" -> "github"
             else -> where
         }
         when {
             target == "phone" && !phoneReady -> return "To build on this phone, install the Android build tools in Settings → Linux first (it shows the download progress)."
-            target != "phone" && token.isBlank() -> return "To build on GitHub, sign in with GitHub in Settings → GitHub first."
+            target != "phone" && token.isBlank() -> return GITHUB_FIRST
         }
         markBuildOwner(session)
         com.arin.builder.BuildService.start(
@@ -4066,7 +4088,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         ArinApp.scope.launch(kotlinx.coroutines.Dispatchers.Main) {
                             // Stopped earlier and now told where ("build on github"): carry on from where it stopped
                             // (the code already written is kept), only at the place they named.
-                            (continueStoppedBuild(saidAll, target) ?: startBuild(name, description, target))?.let { if (it.isNotEmpty()) notice = it }
+                            // ARIN-PROTECTED: ask-where-after-coding — new coding is always written first, explained with
+                        // suggestions, and then you're asked where to build (the place you named is shown first).
+                        (continueStoppedBuild(saidAll, target) ?: namedPlace.put(run.chat, target).let { startBuild(name, description, BuildTarget.AUTO, writeFirst = true) })?.let { if (it.isNotEmpty()) notice = it }
                         }
                     } else if (ordered && run.chat == chatKey()) {
                         // Told to build: write the code now; where to build is asked once it's written.

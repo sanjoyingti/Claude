@@ -246,6 +246,9 @@ class BuildAgent(
 
     private fun localRepo(name: String) = GitHubClient.Repo(LOCAL_OWNER, name, "main", "")
 
+    /** Why this build fell back to the phone (shown to the owner), blank when GitHub wasn't tried or worked. */
+    private var githubNote = ""
+
     /** Creates the repo on GitHub, or switches to a phone-only build if GitHub refuses and the phone can build. */
     private suspend fun createRepoOrLocal(name: String, description: String): GitHubClient.Repo {
         if (localOnly) return localRepo(name)
@@ -255,6 +258,7 @@ class BuildAgent(
         } catch (e: ProviderException) {
             if (!phoneCan) throw e
             step(BuildEvent.Kind.ERROR, e.message ?: "GitHub refused to create the repository")
+            githubNote = "GitHub refused to create the repository (${(e.message ?: "unknown").take(200)})."
             step(BuildEvent.Kind.STEP, "Building on this phone instead (no GitHub needed)")
             localOnly = true
             localRepo(name)
@@ -657,6 +661,7 @@ class BuildAgent(
                 throw e
             } catch (e: Throwable) {
                 ledger("GitHub access", "BLOCKED — " + (e.message ?: "unknown").take(200))
+                githubNote = "GitHub couldn't be used (${(e.message ?: "unknown").take(200)}). Check the GitHub token in Settings → GitHub."
                 if (!phoneCan || req.project != null && req.project.owner != LOCAL_OWNER) throw e
                 step(BuildEvent.Kind.STEP, "GitHub isn't available (${e.message}); building on this phone only")
                 localOnly = true
@@ -944,7 +949,8 @@ class BuildAgent(
                                 true,
                                 "It compiles on this phone, but I can't hand it over yet: every app must first be opened and tested " +
                                     "on an Android emulator, and a phone can't run one. Say \"build on github\" — GitHub builds it, " +
-                                    "tests it on its emulator, and then you get the download link.",
+                                    "tests it on its emulator, and then you get the download link." +
+                                    (if (githubNote.isNotBlank()) " Why GitHub wasn't used: $githubNote" else ""),
                                 phoneSourceZip = zip,
                             )
                         }

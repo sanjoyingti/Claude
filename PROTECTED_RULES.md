@@ -345,3 +345,8 @@ told they are there.
 ## 1.27.0
 - instant-stop: Stop flags the build at the tap (it halts at its next step, model output chunk or GitHub request), cancels that build's GitHub requests in flight, and never retries after Stop; other tabs' builds keep running.
 - per-tab app history: an app's saved history (requirements, errors tried, commits, rollback) belongs to the tab that built it ("chat:<id>|<app>" or the Build tab session); the older shared history moves once to the first tab that opens it.
+
+## 1.28.0
+- github-first: GitHub is the first choice; Auto / "Let Arin decide" always means GitHub; the phone is used only when picked; with no GitHub token you're asked to sign in instead of a silent phone build.
+- ask-where-after-coding: every new coding round is written first, explained with suggestions, then you're asked where to build (a place you named is shown first); typing a place after the code is written builds that code (no rewrite).
+- test-before-handover unchanged: a phone-only build gives no APK; it now says why GitHub wasn't used and offers "On GitHub" to build and run the emulator test (nothing starts by itself).
