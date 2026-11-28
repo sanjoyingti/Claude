@@ -228,3 +228,4 @@ chat/ChatViewModel.kt|ask-where-after-coding|b27786ef0c4b
 chat/ChatViewModel.kt|github-first|4fd29b9e1ea5
 terminal/DeviceTest.kt|phone-test|9b721f630cac
 llm/Models.kt|keyless-base-url|211f62a35c83
+llm/Http.kt|no-callback-crash|8b6ee2d965f4

@@ -356,3 +356,6 @@ told they are there.
 
 ## 1.30.0
 - keyless-base-url: Settings → Custom API → "Add by base URL only (no API key)": a service is added with just its base URL; "List all models" reads every model from the service's own list (searchable), with or without a key; a keyless Custom API is never blocked for a missing key and sends no Authorization header.
+
+## 1.30.1
+- no-callback-crash: a model service's error while streaming (seen on Android 17: 'The service is having trouble' → SIGABRT) can no longer escape OkHttp's callback; every problem ends the reply with a readable error; an error reply is read at most 64 KB / 3 s (never waited on to its end). Same in builds. Tested by StreamErrorTest.

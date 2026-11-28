@@ -57,15 +57,15 @@ object Http {
                 close(if (call.isCanceled()) null else e)
             }
 
+            // no-callback-crash: nothing escapes this callback; errors end the stream instead (see llm/Http.kt).
             override fun onResponse(call: Call, response: Response) {
-                response.use { resp ->
-                    if (!resp.isSuccessful) {
-                        val text = resp.body?.string().orEmpty()
-                        close(ProviderException(resp.code, errorMessage(resp.code, text)))
-                        return
-                    }
-                    try {
-                        val source = resp.body!!.source()
+                try {
+                    response.use { resp ->
+                        if (!resp.isSuccessful) {
+                            close(ProviderException(resp.code, errorMessage(resp.code, com.arin.llm.Http.errorBody(resp))))
+                            return
+                        }
+                        val source = resp.body?.source() ?: run { close(java.io.IOException("The service sent an empty reply")); return }
                         while (!source.exhausted()) {
                             val line = source.readUtf8Line() ?: break
                             if (!line.startsWith("data:")) continue
@@ -74,9 +74,11 @@ object Http {
                             if (data.isNotEmpty()) trySendBlocking(data)
                         }
                         close()
-                    } catch (e: IOException) {
-                        close(if (call.isCanceled()) null else e)
                     }
+                } catch (e: IOException) {
+                    close(if (call.isCanceled()) null else e)
+                } catch (t: Throwable) {
+                    close(if (call.isCanceled()) null else java.io.IOException("The reply couldn't be read (${t.javaClass.simpleName})", t))
                 }
             }
         })

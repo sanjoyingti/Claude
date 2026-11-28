@@ -57,14 +57,17 @@ object Http {
                 close(if (call.isCanceled()) null else LlmException(networkMessage(e)))
             }
 
+            // ARIN-PROTECTED: no-callback-crash — nothing may escape this network callback (an exception thrown here
+            // kills the whole app on OkHttp's thread; on Android 17 it aborted the app). Every problem ends the reply
+            // with a readable error instead, and an error reply is read only up to 64 KB, never waited on to the end.
             override fun onResponse(call: Call, response: Response) {
-                response.use { resp ->
-                    if (!resp.isSuccessful) {
-                        close(LlmException(errorMessage(resp.code, resp.body?.string().orEmpty())))
-                        return
-                    }
-                    try {
-                        val source = resp.body!!.source()
+                try {
+                    response.use { resp ->
+                        if (!resp.isSuccessful) {
+                            close(LlmException(errorMessage(resp.code, errorBody(resp))))
+                            return
+                        }
+                        val source = resp.body?.source() ?: run { close(LlmException("The service sent an empty reply. Try again.")); return }
                         while (!source.exhausted()) {
                             val line = source.readUtf8Line() ?: break
                             if (!line.startsWith("data:")) continue
@@ -73,14 +76,27 @@ object Http {
                             if (data.isNotEmpty()) trySendBlocking(data)
                         }
                         close()
-                    } catch (e: IOException) {
-                        close(if (call.isCanceled()) null else LlmException(networkMessage(e)))
                     }
+                } catch (e: IOException) {
+                    close(if (call.isCanceled()) null else LlmException(networkMessage(e)))
+                } catch (t: Throwable) {
+                    close(if (call.isCanceled()) null else LlmException("The reply couldn't be read (${t.javaClass.simpleName}). Try again."))
                 }
             }
         })
         awaitClose { call.cancel() }
     }
+
+    /**
+     * What an error reply says: at most 64 KB, waiting at most 3 s — an event-stream error may never finish, so it is
+     * never read to its end.
+     */
+    fun errorBody(resp: Response): String = runCatching {
+        val src = resp.body?.source() ?: return ""
+        src.timeout().timeout(3, java.util.concurrent.TimeUnit.SECONDS)
+        runCatching { src.request(64_000) }
+        src.buffer.clone().readUtf8().take(64_000)
+    }.getOrDefault("")
 
     fun parseObject(data: String): JsonObject? = runCatching { json.parseToJsonElement(data).jsonObject }.getOrNull()
 
@@ -115,7 +131,8 @@ object Http {
             }
 
             override fun onResponse(call: Call, response: Response) {
-                if (cont.isActive) cont.resumeWith(Result.success(response)) else response.close()
+                runCatching { if (cont.isActive) cont.resumeWith(Result.success(response)) else response.close() }
+                    .onFailure { runCatching { response.close() } }
             }
         })
     }
