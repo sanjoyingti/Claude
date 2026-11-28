@@ -350,3 +350,6 @@ told they are there.
 - github-first: GitHub is the first choice; Auto / "Let Arin decide" always means GitHub; the phone is used only when picked; with no GitHub token you're asked to sign in instead of a silent phone build.
 - ask-where-after-coding: every new coding round is written first, explained with suggestions, then you're asked where to build (a place you named is shown first); typing a place after the code is written builds that code (no rewrite).
 - test-before-handover unchanged: a phone-only build gives no APK; it now says why GitHub wasn't used and offers "On GitHub" to build and run the emulator test (nothing starts by itself).
+
+## 1.29.0
+- phone-test: choosing "On this phone" runs the same open-and-tap test on the owner's phone via Wireless debugging (adb in Arin's Linux, this phone only); the APK is handed over only when it passes. Off Developer options / Wireless debugging / Wi-Fi / not paired → a step-by-step reminder (and a pairing notification) instead. GitHub stays the first choice; test-before-handover unchanged for every other case.

@@ -2264,9 +2264,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (result.success && phoneOnly && result.phoneApk == null && project?.selfUpdate != true) {
             // test-before-handover: compiled on the phone, not tested — ask to build + test it on GitHub (nothing starts by itself).
             postToBuildChat(f.chat, Message(fromUser = false, text = "🧪 **$name compiles on this phone, but you don't get the APK yet.**\n\n" +
-                "Every app must first be opened and tested on an Android emulator, and a phone can't run one. " + result.message.substringAfter("Why GitHub wasn't used:", "").trim().let { if (it.isBlank()) "" else "\n\n**Why it was built on the phone:** $it" } +
+                "Every app must first be opened and tested — on GitHub's Android emulator, or on this phone with Wireless debugging. " +
+                result.message.substringAfter("Why GitHub wasn't used:", "").substringBefore("To test on this phone:").trim().let { if (it.isBlank()) "" else "\n\n**Why it was built on the phone:** $it" } +
+                result.message.substringAfter("To test on this phone:", "").trim().let { if (it.isBlank()) "" else "\n\n**To test on this phone:** $it" } +
                 (result.phoneSourceZip?.let { "\n\n- **Source code (zip):** `$it`" } ?: "") +
-                "\n\n_Tap **On GitHub** to build it there and run the emulator test — the APK link comes when it passes._",
+                "\n\n_Tap **On GitHub** (first choice) to build it there and run the emulator test, or **On this phone** to test it here — the APK comes when a test passes._",
                 pendingBuild = "where\u0000$sessionId"), progressId, steps)
             return
         }
@@ -2274,6 +2276,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             append("✅ **$name is built on this phone.**\n\n")
             result.phoneApk?.let { append("- **APK:** `$it`\n") }
             result.phoneSourceZip?.let { append("- **Source code (zip):** `$it`\n") }
+            if (result.testNote.isNotBlank()) append("\n**App test:** ${result.testNote}\n")
             append("\nAndroid's install screen opens now. Both files are in Arin's folder (Builds).")
         } else if (result.success && project != null) buildString {
             append(if (project.selfUpdate) "✅ **The new version of Arin is built.**\n\n" else "✅ **$name is built.**\n\n")
@@ -2500,6 +2503,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             "chat", "buildtab" -> "github"
             else -> where
         }
+        // phone-test: building here is tested here too — remind what to turn on (Developer options, Wireless debugging).
+        if (target == "phone" && phoneReady) com.arin.terminal.DeviceTest.reminder(app)?.let { notice = "📱 $it" }
         when {
             target == "phone" && !phoneReady -> return "To build on this phone, install the Android build tools in Settings → Linux first (it shows the download progress)."
             target != "phone" && token.isBlank() -> return GITHUB_FIRST

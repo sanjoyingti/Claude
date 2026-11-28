@@ -98,6 +98,11 @@
             android:name=".terminal.TermuxResultReceiver"
             android:exported="false" />
 
+        <!-- The pairing code typed into the "Pair Arin for testing on this phone" notification. -->
+        <receiver
+            android:name=".terminal.DeviceTest$PairReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".widget.ArinWidget"
             android:exported="false"

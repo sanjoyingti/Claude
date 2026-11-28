@@ -943,6 +943,33 @@ class BuildAgent(
                             step(BuildEvent.Kind.DONE, "Done")
                             if (self) return BuildResult(true, "The new version of Arin is built on this phone.",
                                 phoneApk = out.apkPath, phoneSourceZip = zip, phoneInstallPath = out.installFile?.absolutePath)
+                            // You chose this phone: the same open-and-tap test runs on this phone itself (Wireless debugging).
+                            // The APK is handed over only when it passes; if something is off, you're told what to turn on.
+                            var phoneTestNote = ""
+                            if (req.target == "phone" && context != null) {
+                                val ready = com.arin.terminal.DeviceTest.reminder(context)
+                                if (ready != null) phoneTestNote = ready else {
+                                    step(BuildEvent.Kind.STEP, "Testing it on this phone: it opens and gets tapped around for about a minute — please don't touch the phone")
+                                    val t = com.arin.terminal.DeviceTest.run(context, out.installFile ?: java.io.File(out.apkPath), packageName)
+                                    when (t.kind) {
+                                        com.arin.terminal.DeviceTest.Kind.PASS -> {
+                                            step(BuildEvent.Kind.DONE, "Tested on this phone: it opens, and tapping around didn't crash it")
+                                            ledger("Phone test (open + tap around)", "PASSED")
+                                            return BuildResult(true, "Built and tested on this phone.", phoneApk = out.apkPath, phoneSourceZip = zip,
+                                                phoneInstallPath = out.installFile?.absolutePath,
+                                                testNote = "Tested on this phone: it opens, and tapping around didn't crash it.")
+                                        }
+                                        com.arin.terminal.DeviceTest.Kind.CRASH -> {
+                                            ledger("Phone test (open + tap around)", "FAILED — ${t.detail.take(150)}")
+                                            return BuildResult(false, "It compiles, but the test on this phone failed: ${t.detail}. Say \"fix it\" and I'll fix it and test again.",
+                                                log = "RUNTIME PROBLEM (the app builds, but fails when it runs on the phone).\n${t.detail}\n${t.log}".take(6_000), phoneSourceZip = zip)
+                                        }
+                                        com.arin.terminal.DeviceTest.Kind.NEEDS_PAIRING ->
+                                            phoneTestNote = "Arin isn't paired with Wireless debugging yet: open Settings → Developer options → Wireless debugging → Pair device with pairing code, and type the code into Arin's notification. Then tap \"On this phone\" again."
+                                        else -> phoneTestNote = t.detail
+                                    }
+                                }
+                            }
                             // ARIN-PROTECTED: test-before-handover — a phone can't run an Android emulator, so a phone-only build
                             // is not handed over: it must be tested on GitHub's emulator first.
                             return BuildResult(
@@ -950,7 +977,8 @@ class BuildAgent(
                                 "It compiles on this phone, but I can't hand it over yet: every app must first be opened and tested " +
                                     "on an Android emulator, and a phone can't run one. Say \"build on github\" — GitHub builds it, " +
                                     "tests it on its emulator, and then you get the download link." +
-                                    (if (githubNote.isNotBlank()) " Why GitHub wasn't used: $githubNote" else ""),
+                                    (if (githubNote.isNotBlank()) " Why GitHub wasn't used: $githubNote" else "") +
+                                    (if (phoneTestNote.isNotBlank()) " To test on this phone: $phoneTestNote" else ""),
                                 phoneSourceZip = zip,
                             )
                         }
