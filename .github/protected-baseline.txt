@@ -231,3 +231,4 @@ llm/Models.kt|keyless-base-url|211f62a35c83
 llm/Http.kt|no-callback-crash|8b6ee2d965f4
 chat/ChatViewModel.kt|instant-reply-stop|e573007b9d94
 terminal/Linux.kt|tab-process-stop|06d466b357b6
+app/ReplyService.kt|safe-service-stop|08a2e64b9780

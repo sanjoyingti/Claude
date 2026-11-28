@@ -364,3 +364,4 @@ told they are there.
 - instant-reply-stop: Stop on a chat reply posts the reply so far as "⏹ Stopped by you" and frees the chat at the tap; the reply's job winds down behind without posting again or touching a newer reply.
 - tab-process-stop: every Linux command is registered under its tab; Stop (chat reply or build) kills that tab's commands and everything they started (Gradle, Java, npm…), other tabs untouched.
 - Directions sent to a running build while the chat is replying are pinned above the message box at once, until the build picks them up.
+- 1.31.1 safe-service-stop: the background service never stops under a newer start request (stopSelf(startId), and not at all if work started again) — fixes an app crash when a reply ended or was stopped and another started right away (found by InstantStopTest).

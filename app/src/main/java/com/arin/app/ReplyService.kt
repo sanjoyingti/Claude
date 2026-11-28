@@ -26,9 +26,14 @@ class ReplyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // ARIN-PROTECTED: safe-service-stop — new work may have started meanwhile (e.g. a reply sent right after
+            // another one ended or was stopped): its start request is still queued, and stopping the service under it
+            // makes Android kill the whole app ("did not then call startForeground"). So: keep running if anything holds
+            // it again, and stop only for the newest request (stopSelf(startId)), never a later one.
+            if (holders.isNotEmpty()) return START_NOT_STICKY
             releaseLocks()
             stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            stopSelf(startId)
             return START_NOT_STICKY
         }
         // Keep the processor and Wi-Fi awake with the screen off, so downloads, builds and replies keep going.
