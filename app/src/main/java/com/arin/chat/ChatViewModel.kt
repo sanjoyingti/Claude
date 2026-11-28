@@ -2025,7 +2025,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val token = githubToken()
         when {
             token.isBlank() && project?.owner != com.arin.builder.BuildAgent.LOCAL_OWNER -> { notice = "Sign in with GitHub in Settings first."; return }
-            provider.needsKey && settings.key(provider).isBlank() -> { notice = "Add your ${provider.label} key in Settings."; return }
+            provider.keyMissing(settings.key(provider)) -> { notice = "Add your ${provider.label} key in Settings."; return }
         }
         markBuildOwner(session)
         com.arin.builder.BuildService.start(
@@ -2406,7 +2406,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             !onPhone && !writeFirst && token.isBlank() -> GITHUB_FIRST
             chatBuildRunning() && (name.isBlank() || name.equals(chatBuildSession()?.project?.appName, ignoreCase = true)) ->
                 "${chatBuildAppName()} is still building in this chat. Wait for it or tap Stop — a different app can be built at the same time."
-            provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
+            provider.keyMissing(settings.key(provider)) -> "Add your ${provider.label} key in Settings."
             else -> {
                 // A follow-up in the same chat ("try again", "add dark mode") keeps working on the same app.
                 // This chat's saved build (survives restarts). Other builds may be running at the same time.
@@ -2639,7 +2639,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             token.isBlank() -> "To update Arin, sign in with GitHub in Settings → GitHub, then ask again."
             com.arin.builder.BuildRunner.sessions.values.any { it.running && (it.project?.selfUpdate == true || it.pending?.selfUpdate == true) } ->
                 "An update of Arin is already building. Wait for it to finish."
-            provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
+            provider.keyMissing(settings.key(provider)) -> "Add your ${provider.label} key in Settings."
             else -> {
                 val session = com.arin.builder.BuildRunner.createSession()
                 markBuildOwner(session)
@@ -2829,7 +2829,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             token.isBlank() -> "To update Arin, sign in with GitHub in Settings → GitHub first."
             com.arin.builder.BuildRunner.sessions.values.any { it.running && (it.project?.selfUpdate == true || it.pending?.selfUpdate == true) } ->
                 "An update of Arin is already building. Wait for it, or press Stop."
-            provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
+            provider.keyMissing(settings.key(provider)) -> "Add your ${provider.label} key in Settings."
             else -> {
                 val resume = retry && previous?.project?.selfUpdate == true
                 val session = if (resume) previous!! else com.arin.builder.BuildRunner.createSession()
@@ -4880,6 +4880,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun hasKeyFor(api: com.arin.data.SavedApi) = settings.apiKey(api).isNotBlank()
+
+    /** All models of the service at [url] (the key typed, else the saved one, else none — base URL only). */
+    suspend fun listModelsAt(old: com.arin.data.SavedApi?, url: String, key: String, format: com.arin.llm.ApiFormat): List<com.arin.llm.ModelOption> =
+        com.arin.llm.Llm.modelsAt(com.arin.llm.CustomApi.normalize(url, format), format, key.ifBlank { old?.let { settings.apiKey(it) }.orEmpty() })
 
     /** The saved API in use right now, if any. */
     fun currentSavedApi(): com.arin.data.SavedApi? {

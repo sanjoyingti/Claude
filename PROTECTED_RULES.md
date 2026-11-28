@@ -353,3 +353,6 @@ told they are there.
 
 ## 1.29.0
 - phone-test: choosing "On this phone" runs the same open-and-tap test on the owner's phone via Wireless debugging (adb in Arin's Linux, this phone only); the APK is handed over only when it passes. Off Developer options / Wireless debugging / Wi-Fi / not paired → a step-by-step reminder (and a pairing notification) instead. GitHub stays the first choice; test-before-handover unchanged for every other case.
+
+## 1.30.0
+- keyless-base-url: Settings → Custom API → "Add by base URL only (no API key)": a service is added with just its base URL; "List all models" reads every model from the service's own list (searchable), with or without a key; a keyless Custom API is never blocked for a missing key and sends no Authorization header.

@@ -47,7 +47,7 @@ object Llm {
                hard: Boolean = false): Flow<Delta> {
         // ARIN-PROTECTED: tab-isolation — each chat gets its own Claude Code session; one chat never reuses another's.
         val purpose = if (conv.isBlank()) "chat:oneoff-" + System.nanoTime() else "chat:$conv" // no conv id: a one-off session, never a shared one
-        if (provider.needsKey && key.isBlank()) {
+        if (provider.keyMissing(key)) {
             throw LlmException("Add your ${provider.label} API key in Settings, or switch to Free models.")
         }
         if (model.isBlank()) throw LlmException("Pick a model first, or type a model id in Settings → Custom API.")
@@ -185,7 +185,7 @@ object Llm {
     /** The provider's current models, newest-looking first; falls back to the built-in list. */
     suspend fun models(provider: Provider, key: String): List<ModelOption> {
         val fallback = DefaultModels.of(provider)
-        if (provider.needsKey && key.isBlank()) return fallback
+        if (provider.keyMissing(key)) return fallback
         val found = runCatching {
             when (provider) {
                 Provider.Free -> (runCatching { freeModels() }.getOrDefault(emptyList()) + runCatching { llm7Models() }.getOrDefault(emptyList()))
@@ -216,9 +216,10 @@ object Llm {
         return found.ifEmpty { fallback }
     }
 
-    private fun bearer(key: String) = mapOf("Authorization" to "Bearer $key")
+    /** No key (a base-URL-only Custom API): no Authorization header at all. */
+    private fun bearer(key: String) = if (key.isBlank()) emptyMap() else mapOf("Authorization" to "Bearer $key")
 
-    private fun anthropicHeaders(key: String) = mapOf("x-api-key" to key, "anthropic-version" to ANTHROPIC_VERSION)
+    private fun anthropicHeaders(key: String) = (if (key.isBlank()) emptyMap() else mapOf("x-api-key" to key)) + mapOf("anthropic-version" to ANTHROPIC_VERSION)
 
     /** Claude-compatible gateways accept either header; send both. */
     private fun customAnthropicHeaders(key: String) = anthropicHeaders(key) + bearer(key)
@@ -233,6 +234,33 @@ object Llm {
         val headers = if (CustomApi.format == ApiFormat.Anthropic) customAnthropicHeaders(key) else bearer(key)
         return listIds(CustomApi.modelsUrl(), headers, "data", "id", if (CustomApi.format == ApiFormat.Anthropic) "display_name" else "name")
             .filter { m -> notChat.none { m.id.lowercase().contains(it) } }
+    }
+
+    /**
+     * Every model a service at [baseUrl] offers, read from its own model list — with [key] when given, or with no key at
+     * all (a base-URL-only service). Accepts {"data":[…]}, {"models":[…]} or a plain array, of ids or objects.
+     */
+    suspend fun modelsAt(baseUrl: String, format: ApiFormat, key: String): List<ModelOption> {
+        val base = baseUrl.trimEnd('/')
+        val url = if (format == ApiFormat.Anthropic) (if (base.endsWith("/v1")) "$base/models" else "$base/v1/models") else "$base/models"
+        val headers = if (format == ApiFormat.Anthropic) customAnthropicHeaders(key) else bearer(key)
+        val root = Http.getJson(url, headers)
+        val items = when (root) {
+            is JsonArray -> root
+            is JsonObject -> (root["data"] as? JsonArray) ?: (root["models"] as? JsonArray) ?: return emptyList()
+            else -> return emptyList()
+        }
+        return items.mapNotNull { el ->
+            when (el) {
+                is JsonPrimitive -> el.contentOrNull?.let { ModelOption(it, it) }
+                is JsonObject -> {
+                    val id = listOf("id", "name", "model").firstNotNullOfOrNull { (el[it] as? JsonPrimitive)?.contentOrNull } ?: return@mapNotNull null
+                    val label = listOf("display_name", "title", "name").firstNotNullOfOrNull { (el[it] as? JsonPrimitive)?.contentOrNull } ?: id
+                    ModelOption(id, label)
+                }
+                else -> null
+            }
+        }.distinctBy { it.id }
     }
 
     private suspend fun listIds(url: String, headers: Map<String, String>, arrayKey: String, idKey: String, labelKey: String?): List<ModelOption> {

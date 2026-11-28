@@ -51,7 +51,7 @@ fun AiChoices(vm: ChatViewModel, close: () -> Unit) {
         val on = vm.provider == p
         val note = when {
             p == com.arin.llm.Provider.ClaudeCode && !vm.ccConnected -> " · sign in in the Claude Code tab"
-            p.needsKey && !vm.hasKey(p) -> " · no key"
+            p.needsKey && p != com.arin.llm.Provider.Custom && !vm.hasKey(p) -> " · no key"
             else -> ""
         }
         DropdownMenuItem(

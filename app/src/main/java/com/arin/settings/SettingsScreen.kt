@@ -798,7 +798,14 @@ private fun MyApis(vm: ChatViewModel) {
 /** One form for an API: name, base URL, key, model and request format. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-internal fun ApiForm(vm: ChatViewModel, old: com.arin.data.SavedApi?, onClose: () -> Unit, preset: com.arin.llm.CustomApi.Preset? = null) {
+internal fun ApiForm(vm: ChatViewModel, old: com.arin.data.SavedApi?, onClose: () -> Unit, preset: com.arin.llm.CustomApi.Preset? = null,
+                     /** Add a service by its base URL only: no key field. */
+                     keyless: Boolean = false) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var found by remember { mutableStateOf<List<com.arin.llm.ModelOption>?>(null) }
+    var listing by remember { mutableStateOf(false) }
+    var listProblem by remember { mutableStateOf<String?>(null) }
+    var search by remember { mutableStateOf("") }
     var name by remember { mutableStateOf(old?.name ?: preset?.name ?: "") }
     var url by remember { mutableStateOf(old?.baseUrl ?: preset?.baseUrl ?: "") }
     var key by remember { mutableStateOf("") }
@@ -810,7 +817,7 @@ internal fun ApiForm(vm: ChatViewModel, old: com.arin.data.SavedApi?, onClose: (
     var confirmDelete by remember { mutableStateOf(false) }
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onClose,
-        title = { Text(if (old == null) "Add API" else "Edit API") },
+        title = { Text(if (keyless) "Add by base URL (no key)" else if (old == null) "Add API" else "Edit API") },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
@@ -818,15 +825,35 @@ internal fun ApiForm(vm: ChatViewModel, old: com.arin.data.SavedApi?, onClose: (
             ) {
                 OutlinedTextField(name, { name = it.take(40) }, label = { Text("Name") }, placeholder = { Text("My API") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(url, { url = it.trim(); problem = null }, label = { Text("Base URL") }, placeholder = { Text("https://example.com/v1") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
+                if (!keyless) OutlinedTextField(
                     key, { key = it.trim() },
-                    label = { Text("API key") },
-                    placeholder = { Text(if (old != null && vm.hasKeyFor(old)) "Saved (leave empty to keep it)" else "Paste the key") },
+                    label = { Text("API key (optional)") },
+                    placeholder = { Text(if (old != null && vm.hasKeyFor(old)) "Saved (leave empty to keep it)" else "Leave empty if the service needs no key") },
                     singleLine = true,
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(model, { model = it.trim() }, label = { Text("Model id") }, placeholder = { Text("e.g. deepseek-v4.1-flash") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                // Every model the service offers, read from its own list (works with no key when the service allows it).
+                androidx.compose.material3.OutlinedButton(enabled = url.isNotBlank() && !listing, onClick = {
+                    listing = true; listProblem = null
+                    scope.launch {
+                        val r = runCatching { vm.listModelsAt(old, url, key, format) }
+                        listing = false
+                        r.onSuccess { found = it; if (it.isEmpty()) listProblem = "The service didn't return a model list. Type the model id instead." }
+                         .onFailure { listProblem = "Couldn't list models: ${it.message?.take(160)}" }
+                    }
+                }) { Text(if (listing) "Listing models…" else "List all models") }
+                listProblem?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                found?.takeIf { it.isNotEmpty() }?.let { all ->
+                    if (all.size > 12) OutlinedTextField(search, { search = it }, label = { Text("Search ${all.size} models") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    val shown = all.filter { search.isBlank() || it.id.contains(search, true) || it.label.contains(search, true) }
+                    Text("${all.size} models" + (if (shown.size > 60) " — showing 60 of ${shown.size}, type to search" else ""),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        shown.take(60).forEach { m -> FilterChip(selected = model == m.id, onClick = { model = m.id }, label = { Text(m.id) }) }
+                    }
+                }
                 com.arin.llm.CustomApi.presetFor(com.arin.llm.CustomApi.normalize(url, format))?.models?.takeIf { it.isNotEmpty() }?.let { list ->
                     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         list.forEach { (label, id) -> FilterChip(selected = model == id, onClick = { model = id }, label = { Text(label) }) }
@@ -849,7 +876,7 @@ internal fun ApiForm(vm: ChatViewModel, old: com.arin.data.SavedApi?, onClose: (
         },
         confirmButton = {
             TextButton(onClick = {
-                problem = vm.saveApi(old, name, url, key, model, format)
+                problem = vm.saveApi(old, name, url, if (keyless) "" else key, model, format)
                 if (problem == null) onClose()
             }) { Text("Save and use") }
         },
@@ -990,7 +1017,11 @@ private fun CustomApiSettings(vm: ChatViewModel) {
             androidx.compose.material3.AssistChip(onClick = { preset = p }, label = { Text("+ " + p.name) })
         }
     }
+    // Any service that needs no key: just its base URL, then list all its models and pick one.
+    var keylessForm by remember { mutableStateOf(false) }
+    androidx.compose.material3.OutlinedButton(onClick = { keylessForm = true }, modifier = Modifier.padding(top = 6.dp)) { Text("＋ Add by base URL only (no API key)") }
     preset?.let { p -> ApiForm(vm, null, onClose = { preset = null }, preset = p) }
+    if (keylessForm) ApiForm(vm, null, onClose = { keylessForm = false }, keyless = true)
 }
 
 @Composable

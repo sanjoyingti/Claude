@@ -227,3 +227,4 @@ builder/BuildService.kt|instant-stop|6c131efec92e
 chat/ChatViewModel.kt|ask-where-after-coding|b27786ef0c4b
 chat/ChatViewModel.kt|github-first|4fd29b9e1ea5
 terminal/DeviceTest.kt|phone-test|9b721f630cac
+llm/Models.kt|keyless-base-url|211f62a35c83

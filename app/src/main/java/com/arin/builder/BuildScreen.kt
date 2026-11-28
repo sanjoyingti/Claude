@@ -619,7 +619,7 @@ private fun BuildComposer(chat: ChatViewModel, vm: BuildViewModel, onOpenSetting
                         text.isBlank() && attached.isEmpty() -> "Describe what you want."
                         project == null && name.isBlank() -> "Give the app a name."
                         chat.githubToken().isBlank() -> "Sign in with GitHub in Settings first."
-                        chat.provider.needsKey && chat.key(chat.provider).isBlank() -> "Add your ${chat.provider.label} key in Settings."
+                        chat.provider.keyMissing(chat.key(chat.provider)) -> "Add your ${chat.provider.label} key in Settings."
                         chat.model.isBlank() -> "Pick a model on the chat screen first."
                         else -> null
                     }

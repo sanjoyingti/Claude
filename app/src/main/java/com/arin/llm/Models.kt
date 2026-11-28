@@ -9,6 +9,13 @@ enum class Provider(val label: String, val needsKey: Boolean, val keyHint: Strin
     Custom("Custom API", needsKey = true, keyHint = "your service's dashboard"),
     /** The person's Claude Pro/Max login from the Claude Code tab: no API key needed. */
     ClaudeCode("Claude (Claude Code login)", needsKey = false, keyHint = "Claude Code tab → sign in"),
+    ;
+
+    /**
+     * ARIN-PROTECTED: keyless-base-url — true when this provider can't be used without a key and none is saved. A Custom API may be keyless — added
+     * with only its base URL — so it is never blocked here; the service itself answers if it does need a key.
+     */
+    fun keyMissing(key: String): Boolean = needsKey && key.isBlank() && this != Custom
 }
 
 /** One model a provider offers. */
