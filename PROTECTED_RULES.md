@@ -341,3 +341,7 @@ told they are there.
 - 1.26.2 build-tab-shows-running: opening an empty Build tab displays a build already running (e.g. started from a chat); display only, each build keeps its own session and tab isolation.
 - 1.26.3: typing in a chat while its build runs always steers that build (also while the chat's model is replying); every build's model conversations are keyed by its own tab (no sharing between two builds of the same app).
 - 1.26.3 (cont.): a chat's model sees only its own build — build failure notes are kept per chat, build links come only from that chat's own build (never the Build tab's or the open chat's), and remembered build fixes and build project maps are reused only within the same build tab.
+
+## 1.27.0
+- instant-stop: Stop flags the build at the tap (it halts at its next step, model output chunk or GitHub request), cancels that build's GitHub requests in flight, and never retries after Stop; other tabs' builds keep running.
+- per-tab app history: an app's saved history (requirements, errors tried, commits, rollback) belongs to the tab that built it ("chat:<id>|<app>" or the Build tab session); the older shared history moves once to the first tab that opens it.

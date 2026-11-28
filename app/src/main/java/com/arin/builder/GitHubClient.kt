@@ -22,14 +22,23 @@ import java.util.Base64
 import java.util.zip.ZipInputStream
 
 /** The bits of the GitHub REST API that Build Mode needs. */
-class GitHubClient(private val token: String) {
+class GitHubClient(
+    private val token: String,
+    /** Tags every request with this build's id, so Stop can cancel exactly this build's requests in flight. */
+    private val tag: String? = null,
+    /** True once this build was stopped: no new request is sent. */
+    private val stopped: () -> Boolean = { false },
+) {
     private val api = "https://api.github.com"
     private val jsonType = "application/json".toMediaType()
 
-    private fun request(url: String) = Request.Builder().url(url)
+    private fun request(url: String): Request.Builder {
+        if (stopped()) throw kotlinx.coroutines.CancellationException("Stopped by you")
+        return Request.Builder().url(url).apply { if (tag != null) tag(String::class.java, tag) }
         .header("Authorization", "Bearer $token")
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
+    }
 
     /** Retries a request through brief network drops (2 s, 5 s, 10 s, 20 s). */
     private suspend fun <T> retrying(block: suspend () -> T): T {
@@ -38,6 +47,7 @@ class GitHubClient(private val token: String) {
             try {
                 return block()
             } catch (e: java.io.IOException) {
+                if (stopped()) throw kotlinx.coroutines.CancellationException("Stopped by you")  // cancelled by Stop: no retry
                 kotlinx.coroutines.delay(w)
             }
         }

@@ -113,6 +113,10 @@ class BuildAgent(
     private val takeSteering: () -> List<String> = { emptyList() },
     /** True when a direction is waiting (checked while GitHub builds, so it's applied right away). */
     private val hasSteering: () -> Boolean = { false },
+    /** True once Stop was tapped for this build: every step, model chunk and GitHub request checks it. */
+    private val isStopped: () -> Boolean = { false },
+    /** Tag on this build's GitHub requests (so Stop can cancel the ones in flight). */
+    private val httpTag: String? = null,
 ) {
     /** Set when waiting for GitHub was cut short by a direction from the person. */
     private var steerNow = false
@@ -131,7 +135,7 @@ class BuildAgent(
         return "\n\nTHE OWNER'S DIRECTIONS, sent while you were working (follow them exactly; they win where they conflict " +
             "with the above, and nothing else that was asked may be dropped):\n" + steered.joinToString("\n") { "- $it" }
     }
-    private val gh = GitHubClient(req.githubToken)
+    private val gh = GitHubClient(req.githubToken, httpTag, isStopped)
     private val slug = (req.project?.appName ?: req.appName).lowercase().replace(Regex("[^a-z0-9]+"), "").ifEmpty { "app" }.take(30)
     /** The package the person asked for ("package com.example.calendar"), else one made from the app name. */
     private val packageName = req.project?.packageName
@@ -207,7 +211,11 @@ class BuildAgent(
     /** The helper's plan is asked for once per build, before the model writes its first code. */
     private var helperPlanned = false
 
+    /** Ends this build at once when Stop was tapped. */
+    private fun halt() { if (isStopped()) throw kotlinx.coroutines.CancellationException("Stopped by you") }
+
     private fun step(kind: BuildEvent.Kind, text: String) {
+        halt()
         LiveFeed.add(if (kind == BuildEvent.Kind.THINKING) "…" else "Build", text)
         emit(BuildEvent(kind, text))
     }
@@ -305,7 +313,7 @@ class BuildAgent(
             text = runCatching {
                 val sb = StringBuilder()
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, input)), system, req.endpoint(), boss = true, conv = "$buildTab|build:$memKey:brief")
-                    .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
+                    .collect { halt(); if (!it.startsWith(THOUGHT)) sb.append(it) }
                 sb.toString().trim()
             }.getOrDefault("")
             if (text.length > 20) break
@@ -324,7 +332,7 @@ class BuildAgent(
             val again = runCatching {
                 val sb = StringBuilder()
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, fixMsg)), system, req.endpoint(), boss = true, conv = "$buildTab|build:$memKey:brief")
-                    .collect { if (!it.startsWith(THOUGHT)) sb.append(it) }
+                    .collect { halt(); if (!it.startsWith(THOUGHT)) sb.append(it) }
                 sb.toString().trim()
             }.getOrDefault("")
             if (again.length > 20 && com.arin.selffix.Requirements.uncovered(asked, again).size < missing.size) text = again
@@ -372,7 +380,11 @@ class BuildAgent(
 
     /** Which workers declined in this build, and why (from their real answers). */
     private val workerRefusals = mutableListOf<String>()
-    private val mem: ProjectMemory? by lazy { context?.let { runCatching { ProjectMemory.of(it, if (self) "arin-self" else packageName) }.getOrNull() } }
+    // strict-tab-scope: the app's history belongs to the tab that started the build (a chat, or this Build tab session).
+    private val mem: ProjectMemory? by lazy { context?.let { runCatching {
+        val owner = BuildRunner.session(buildTab.removePrefix("build:"))?.ownerTab?.ifBlank { null } ?: buildTab
+        ProjectMemory.of(it, owner + "|" + (if (self) "arin-self" else packageName))
+    }.getOrNull() } }
 
     /**
      * ARIN-PROTECTED: impact-analysis — before fixing or changing code, Arin itself (no AI) finds every other file that
@@ -482,7 +494,7 @@ class BuildAgent(
             kotlinx.coroutines.withTimeoutOrNull(240_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
                     "You explain software to people who are not programmers, clearly and kindly, in plain English.", req.endpoint(), conv = "$buildTab|build:$memKey:explain")
-                    .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
+                    .collect { halt(); if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
         if (!workerOn()) context?.let { com.arin.selffix.CreditSaver.addUsage(it, prompt.length + out.length) }
@@ -1318,6 +1330,7 @@ class BuildAgent(
                 fallback = { if (req.provider != com.arin.llm.Provider.Free) null else alternativeModel(req.provider, req.apiKey, req.model) }, // ARIN-PROTECTED: never change the Custom API — nor Claude, GPT or the Claude Code login: only the person switches them
                 onRetry = { step(BuildEvent.Kind.STEP, it) },
             ).collect { raw ->
+                halt()
                 if (hasSteering()) throw SteerNow()
                 if (raw.startsWith(THOUGHT)) {
                     // Show what the model is thinking, live, under the current step.
@@ -1930,7 +1943,7 @@ class BuildAgent(
             kotlinx.coroutines.withTimeoutOrNull(180_000) {
                 streamModel(req.provider, req.apiKey, req.model, listOf(ChatMessage(Role.USER, prompt)),
                     "You are the supervisor of an AI coding worker. Think as deeply as the problem needs; write briefly.", req.endpoint(), boss = workerOn(), hard = hard, conv = "$buildTab|build:$memKey:boss")
-                    .collect { if (!it.startsWith(THOUGHT)) out.append(it) }
+                    .collect { halt(); if (!it.startsWith(THOUGHT)) out.append(it) }
             }
         }
         context?.let { com.arin.selffix.CreditSaver.addUsage(it, prompt.length + out.length) }

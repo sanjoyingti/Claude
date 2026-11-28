@@ -59,6 +59,7 @@ class BuildService : Service() {
         }
         val appName = request.project?.appName ?: request.appName
         session.running = true
+        session.stopRequested = false
         jobs[session.id] = scope.launch(com.arin.selffix.TabScope("build:" + session.id)) {
             // The agent parses big model replies and project files: keep that work off the main thread,
             // or the screen freezes and Android closes the app ("isn't responding").
@@ -78,6 +79,8 @@ class BuildService : Service() {
                         attemptReq,
                         context = this@BuildService,
                         takeSteering = { generateSequence { session.steering.poll() }.toList() },
+                        isStopped = { session.stopRequested },
+                        httpTag = "build:" + session.id,
                         hasSteering = { session.steering.isNotEmpty() },
                         emit = { event ->
                             com.arin.selffix.Activity.log(if (request.selfUpdate || request.project?.selfUpdate == true) "arin-update" else "build",
@@ -118,6 +121,7 @@ class BuildService : Service() {
                     com.arin.CrashLog.record(this@BuildService, e, "build")
                     BuildResult(false, friendly(e), log = e.stackTraceToString().take(2_000))
                 }
+                if (session.stopRequested) { result = BuildResult(false, "Stopped."); break }
                 // Directions sent after the agent's last step: carry on with them instead of stopping.
                 if (result.success && session.steering.isNotEmpty()) {
                     val more = generateSequence { session.steering.poll() }.toList().joinToString("\n")
@@ -374,6 +378,16 @@ class BuildService : Service() {
 
         /** Stops one build ([sessionId]), or every build when it's null. Progress so far stays saved. */
         fun stop(context: Context, sessionId: String? = null) {
+            // ARIN-PROTECTED: instant-stop — at the tap: flag the build(s) so they halt at their next step, model output
+            // chunk or GitHub request, and cancel their GitHub requests already in flight. Then the job is cancelled.
+            // Only the stopped build: other builds (other tabs) keep running. What's built so far stays saved.
+            val targets = if (sessionId == null) BuildRunner.sessions.values.toList() else listOfNotNull(BuildRunner.session(sessionId))
+            targets.forEach { it.stopRequested = true; it.steering.clear() }
+            val tags = targets.map { "build:" + it.id }.toSet()
+            runCatching {
+                val d = Http.client.dispatcher
+                (d.runningCalls() + d.queuedCalls()).filter { it.request().tag(String::class.java) in tags }.forEach { it.cancel() }
+            }
             context.startService(Intent(context, BuildService::class.java).setAction(ACTION_STOP)
                 .apply { if (sessionId != null) putExtra(EXTRA_SESSION, sessionId) })
         }

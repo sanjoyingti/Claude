@@ -176,6 +176,12 @@ class ProjectMemory private constructor(private val file: java.io.File, private 
         @Synchronized
         fun of(c: Context, key: String): ProjectMemory = cache.getOrPut(key) {
             val f = java.io.File(c.filesDir, "project-memory/" + key.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json")
+            // Per-tab history ("<tab>|<app>"): the app's older shared history moves to the first tab that opens it,
+            // so afterwards no other tab can read it.
+            if (!f.exists() && key.contains('|')) {
+                val legacy = java.io.File(c.filesDir, "project-memory/" + key.substringAfterLast('|').replace(Regex("[^A-Za-z0-9._-]"), "_") + ".json")
+                if (legacy.exists()) runCatching { f.parentFile?.mkdirs(); legacy.renameTo(f) }
+            }
             val j = runCatching { JSONObject(f.readText()) }.getOrDefault(JSONObject().put("key", key).put("created", System.currentTimeMillis()))
             ProjectMemory(f, j)
         }

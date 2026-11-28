@@ -1968,6 +1968,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun buildLinks() = getApplication<Application>().getSharedPreferences("chat_builds", android.content.Context.MODE_PRIVATE)
     private fun linkBuild(chat: String, project: String) = buildLinks().edit().putString(chat, project).apply()
+
+    /** strict-tab-scope: the build belongs to this chat — its app history is kept for this chat only. */
+    private fun markBuildOwner(session: com.arin.builder.BuildSession) {
+        if (chatId == null) persist()
+        chatId?.let { session.ownerTab = "chat:$it" }
+    }
     private fun linkedBuild(chat: String?): String? = chat?.let { buildLinks().getString(it, null) }
 
     /** What the last build of this chat's app left behind: shown above the message box with Resume / Restart. */
@@ -2015,6 +2021,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             token.isBlank() && project?.owner != com.arin.builder.BuildAgent.LOCAL_OWNER -> { notice = "Sign in with GitHub in Settings first."; return }
             provider.needsKey && settings.key(provider).isBlank() -> { notice = "Add your ${provider.label} key in Settings."; return }
         }
+        markBuildOwner(session)
         com.arin.builder.BuildService.start(
             app,
             com.arin.builder.BuildRequest(
@@ -2049,7 +2056,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         val project = chatBuildSession()?.project ?: return false
         if (project.owner == com.arin.builder.BuildAgent.LOCAL_OWNER || project.selfUpdate) return false
-        val mem = com.arin.builder.ProjectMemory.of(app, project.packageName)
+        val mem = com.arin.builder.ProjectMemory.of(app, "chat:${chatId.orEmpty()}|" + project.packageName)  // this chat's history only
         val (head, to) = mem.lastRollback() ?: return false
         if (to.isBlank()) return false
         messages += Message(fromUser = true, text = said)
@@ -2391,6 +2398,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val session = if (same) linked!! else com.arin.builder.BuildRunner.createSession()
                 val appName = if (same) current!!.appName
                     else name.ifBlank { description.split(Regex("\\s+")).take(3).joinToString(" ").take(30) }
+                markBuildOwner(session)
                 com.arin.builder.BuildService.start(
                     app,
                     com.arin.builder.BuildRequest(
@@ -2474,6 +2482,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             target == "phone" && !phoneReady -> return "To build on this phone, install the Android build tools in Settings → Linux first (it shows the download progress)."
             target != "phone" && token.isBlank() -> return "To build on GitHub, sign in with GitHub in Settings → GitHub first."
         }
+        markBuildOwner(session)
         com.arin.builder.BuildService.start(
             app,
             base.copy(
@@ -2606,6 +2615,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             provider.needsKey && settings.key(provider).isBlank() -> "Add your ${provider.label} key in Settings."
             else -> {
                 val session = com.arin.builder.BuildRunner.createSession()
+                markBuildOwner(session)
                 com.arin.builder.BuildService.start(
                     app,
                     com.arin.builder.BuildRequest(
@@ -2796,6 +2806,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             else -> {
                 val resume = retry && previous?.project?.selfUpdate == true
                 val session = if (resume) previous!! else com.arin.builder.BuildRunner.createSession()
+                markBuildOwner(session)
                 com.arin.builder.BuildService.start(
                     app,
                     com.arin.builder.BuildRequest(

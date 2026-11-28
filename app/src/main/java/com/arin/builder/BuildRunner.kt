@@ -47,6 +47,10 @@ class BuildSession(val id: String) {
 
     /** Directions the person sent while the build runs; the agent reads them at its next step. */
     val steering = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    /** The tab that started this build ("chat:<id>"), or "" for the Build tab: its app history is kept per this tab. */
+    @Volatile var ownerTab: String = ""
+    /** Set the moment Stop is tapped: the build halts at its very next step, model output chunk or GitHub request. */
+    @Volatile var stopRequested: Boolean = false
 
     /** Steers the running build: shown in its steps, followed at the agent's next step. */
     fun steer(text: String) {
